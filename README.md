@@ -15,6 +15,8 @@
 
 <p align="center"><a href="https://github.com/inquiline-app/inquiline/releases/latest"><b>Download Inquiline</b></a></p>
 
+<p align="center"><img src="docs/images/inquiline.jpg" alt="Asphalt, Play Store, Subway Surfers and Clash Royale, each in its own Mac window"></p>
+
 Each Android app gets its own window, Dock icon and menu, and shows up in Launchpad, Spotlight and Finder like any other Mac app.
 
 - **Real Android 15**, running on your Mac's own CPU, without translation
@@ -36,6 +38,8 @@ Inquiline runs real Android 15 in a small virtual machine, built on the virtuali
 - macOS 14 Sonoma or later
 - 8 GB of memory; 16 GB or more is better for big games
 - About 3 GB of free disk space, plus room for your apps
+
+So far it's been tested on a Mac mini with M4 (macOS 27) and a MacBook Air with M2 and 8 GB (macOS 26). If you try it on another Mac, please [tell us how it went](https://github.com/inquiline-app/inquiline/issues/new/choose), whether it works or not.
 
 ## Install
 

@@ -1,0 +1,23 @@
+name: It works on my Mac
+description: Tell us Inquiline runs on a Mac we haven't tried.
+labels: [tested]
+body:
+  - type: input
+    id: mac
+    attributes:
+      label: Mac
+      placeholder: MacBook Pro, M1 Pro, 16 GB
+    validations:
+      required: true
+  - type: input
+    id: macos
+    attributes:
+      label: macOS version
+      placeholder: macOS 15.5
+    validations:
+      required: true
+  - type: textarea
+    id: apps
+    attributes:
+      label: Apps you tried
+      description: Which apps and games, and how they ran.

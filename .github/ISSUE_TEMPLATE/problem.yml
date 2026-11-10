@@ -1,0 +1,38 @@
+name: Report a problem
+description: Something doesn't work, or works badly.
+labels: [bug]
+body:
+  - type: input
+    id: mac
+    attributes:
+      label: Mac
+      description: From Apple menu > About This Mac.
+      placeholder: MacBook Air, M2, 8 GB
+    validations:
+      required: true
+  - type: input
+    id: macos
+    attributes:
+      label: macOS version
+      placeholder: macOS 26.6
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Inquiline version
+      description: Select Inquiline in the Applications folder and choose File > Get Info.
+      placeholder: 0.1.1
+  - type: input
+    id: app
+    attributes:
+      label: Android app
+      description: Which app, if it's about one app.
+      placeholder: Asphalt Legends
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what happened instead. Screenshots help.
+    validations:
+      required: true
