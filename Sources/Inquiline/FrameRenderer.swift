@@ -1,6 +1,7 @@
 import Darwin
 import Foundation
 import Metal
+import MetalFX
 import QuartzCore
 
 /// Draws an app's Android frames in its window as Android drew them: no video encoding.
@@ -26,6 +27,13 @@ final class FrameRenderer {
     private var height = 0
     private var slotSize = 0
     private var textures: [MTLTexture] = []
+
+    /// The window's size in pixels. Frames are made this size with MetalFX, Apple's upscaler
+    /// for Mac games, which keeps edges and text sharp; scaling by the layer alone blurs them.
+    private let outputLock = NSLock()
+    private var windowPixels = CGSize.zero
+    private var scaler: MTLFXSpatialScaler?
+    private var scaled: MTLTexture?
 
     init?() {
         guard let device = MTLCreateSystemDefaultDevice(), let queue = device.makeCommandQueue(),
@@ -63,6 +71,7 @@ final class FrameRenderer {
         self.width = width
         self.height = height
         layer.drawableSize = CGSize(width: width, height: height)
+        scaler = nil
         textures = []
         let page = Int(getpagesize())
         slotSize = (width * height * 4 + page - 1) / page * page
@@ -86,10 +95,21 @@ final class FrameRenderer {
         let slot = nextSlot
         nextSlot = (nextSlot + 1) % Self.slots
         guard copy(resource: resource, offset: UInt64(slot * slotSize)),
-              let drawable = layer.nextDrawable(),
               let commands = queue.makeCommandBuffer()
         else {
             freeSlots.signal()
+            return
+        }
+        var frame = textures[slot]
+        if let scaler = upscaler() {
+            scaler.colorTexture = frame
+            scaler.outputTexture = scaled
+            scaler.encode(commandBuffer: commands)
+            frame = scaled!
+        }
+        guard let drawable = layer.nextDrawable() else {
+            commands.addCompletedHandler { [freeSlots] _ in freeSlots.signal() }
+            commands.commit()
             return
         }
         let pass = MTLRenderPassDescriptor()
@@ -98,13 +118,61 @@ final class FrameRenderer {
         pass.colorAttachments[0].storeAction = .store
         if let encoder = commands.makeRenderCommandEncoder(descriptor: pass) {
             encoder.setRenderPipelineState(pipeline)
-            encoder.setFragmentTexture(textures[slot], index: 0)
+            encoder.setFragmentTexture(frame, index: 0)
             encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
             encoder.endEncoding()
         }
         commands.present(drawable)
         commands.addCompletedHandler { [freeSlots] _ in freeSlots.signal() }
         commands.commit()
+    }
+
+    /// Called on the main thread when the window's size or screen changes.
+    func setWindowPixels(_ size: CGSize) {
+        outputLock.lock()
+        windowPixels = size
+        outputLock.unlock()
+    }
+
+    /// The upscaler for the window's current size, made again when it changes. None when the
+    /// window shows the frame at its own size or smaller, where the layer's scaling is enough.
+    private func upscaler() -> MTLFXSpatialScaler? {
+        outputLock.lock()
+        let window = windowPixels
+        outputLock.unlock()
+        // The frame's shape, as large as fits the window.
+        let fit = min(window.width / CGFloat(width), window.height / CGFloat(height))
+        let output = CGSize(width: (CGFloat(width) * fit).rounded(), height: (CGFloat(height) * fit).rounded())
+        guard fit > 1.05, output.width <= 8192, output.height <= 8192 else {
+            if scaler != nil {
+                scaler = nil
+                scaled = nil
+                layer.drawableSize = CGSize(width: width, height: height)
+            }
+            return nil
+        }
+        if let scaler, scaler.outputWidth == Int(output.width), scaler.outputHeight == Int(output.height) { return scaler }
+        let descriptor = MTLFXSpatialScalerDescriptor()
+        descriptor.inputWidth = width
+        descriptor.inputHeight = height
+        descriptor.outputWidth = Int(output.width)
+        descriptor.outputHeight = Int(output.height)
+        descriptor.colorTextureFormat = .rgba8Unorm
+        descriptor.outputTextureFormat = .rgba8Unorm
+        // Android's pixels are sRGB-encoded, as a game's final image is.
+        descriptor.colorProcessingMode = .perceptual
+        guard let made = descriptor.makeSpatialScaler(device: device) else { return nil }
+        let texture = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .rgba8Unorm, width: made.outputWidth,
+                                                               height: made.outputHeight, mipmapped: false)
+        texture.usage = made.outputTextureUsage.union(.shaderRead)
+        texture.storageMode = .private
+        scaled = device.makeTexture(descriptor: texture)
+        guard scaled != nil else { return nil }
+        made.inputContentWidth = width
+        made.inputContentHeight = height
+        scaler = made
+        layer.drawableSize = output
+        return made
     }
 
     // MARK: - The VM's frame server

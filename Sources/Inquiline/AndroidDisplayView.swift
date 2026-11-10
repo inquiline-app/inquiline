@@ -20,6 +20,22 @@ final class AndroidDisplayView: NSView {
 
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
 
+    override func layout() {
+        super.layout()
+        updateWindowPixels()
+    }
+
+    override func viewDidChangeBackingProperties() {
+        super.viewDidChangeBackingProperties()
+        updateWindowPixels()
+    }
+
+    private func updateWindowPixels() {
+        let scale = window?.backingScaleFactor ?? 2
+        renderer?.layer.contentsScale = scale
+        renderer?.setWindowPixels(CGSize(width: bounds.width * scale, height: bounds.height * scale))
+    }
+
     override var acceptsFirstResponder: Bool { true }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
