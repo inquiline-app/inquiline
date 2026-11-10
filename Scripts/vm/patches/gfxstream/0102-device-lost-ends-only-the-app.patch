@@ -1,0 +1,36 @@
+diff -ru a/host/vulkan/vk_common_operations.cpp b/host/vulkan/vk_common_operations.cpp
+--- a/host/vulkan/vk_common_operations.cpp	2026-11-10 11:44:53
++++ b/host/vulkan/vk_common_operations.cpp	2026-11-10 11:44:53
+@@ -2056,7 +2056,10 @@
+     return mRepresentativeColorBufferMemoryTypeInfo;
+ }
+ 
+-void VkEmulation::onVkDeviceLost() { VkDecoderGlobalState::get()->on_DeviceLost(); }
++void VkEmulation::onVkDeviceLost() {
++    getDeviceLostHelper().onDeviceLost();
++    GFXSTREAM_FATAL("Encountered device lost.");
++}
+ 
+ std::unique_ptr<DisplaySurface> VkEmulation::createDisplaySurface(
+     FBNativeWindowType window, uint32_t width, uint32_t height) {
+diff -ru a/host/vulkan/vk_decoder_global_state.cpp b/host/vulkan/vk_decoder_global_state.cpp
+--- a/host/vulkan/vk_decoder_global_state.cpp	2026-11-10 11:44:53
++++ b/host/vulkan/vk_decoder_global_state.cpp	2026-11-10 11:44:53
+@@ -10068,9 +10068,15 @@
+         return VK_SUCCESS;
+     }
+ 
++    // An app's own VkDevice was lost, as when the Mac's GPU gave up on its work: the app
++    // gets VK_ERROR_DEVICE_LOST, as on a phone, and the other apps keep running. Only
++    // losing gfxstream's own device (VkEmulation::onVkDeviceLost) ends the engine.
+     void on_DeviceLost() {
+-        m_vkEmulation->getDeviceLostHelper().onDeviceLost();
+-        GFXSTREAM_FATAL("Encountered device lost.");
++        static std::atomic<int> reported{0};
++        if (reported++ < 10) {
++            m_vkEmulation->getDeviceLostHelper().onDeviceLost();
++            GFXSTREAM_ERROR("An app's VkDevice was lost; it gets VK_ERROR_DEVICE_LOST.");
++        }
+     }
+ 
+     VkResult waitForFences(VkDevice unboxed_device, VulkanDispatch* vk, uint32_t fenceCount,

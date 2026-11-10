@@ -317,13 +317,31 @@ final class AndroidRuntime {
         env["DYLD_FALLBACK_LIBRARY_PATH"] = contents.appendingPathComponent("Frameworks").path
         env["DYLD_INSERT_LIBRARIES"] = contents.appendingPathComponent("Frameworks/libmemory-release.dylib").path
         env["INQUILINE_FRAMES_SOCKET"] = framesSocket.path
+        // MoltenVK's errors only; its warnings would fill the log.
+        env["MVK_CONFIG_LOG_LEVEL"] = "1"
         process.environment = env
         process.standardOutput = FileHandle.nullDevice
-        process.standardError = FileHandle.nullDevice
+        process.standardError = Self.engineLog() ?? FileHandle.nullDevice
         try process.run()
         vm = process
         bootCount += 1
         packageWatch = -1 // ended with the previous VM
+    }
+
+    /// What the engine prints, mostly errors from the GPU's side, for finding why something
+    /// failed: ~/Library/Logs/Inquiline/engine.log, with the previous run's as engine.old.log.
+    private static func engineLog() -> FileHandle? {
+        let files = FileManager.default
+        let folder = testHome?.appendingPathComponent("Logs")
+            ?? files.homeDirectoryForCurrentUser.appendingPathComponent("Library/Logs/Inquiline")
+        let log = folder.appendingPathComponent("engine.log"), old = folder.appendingPathComponent("engine.old.log")
+        try? files.createDirectory(at: folder, withIntermediateDirectories: true)
+        try? files.removeItem(at: old)
+        try? files.moveItem(at: log, to: old)
+        guard files.createFile(atPath: log.path, contents: Data("\(Date())\n".utf8)) else { return nil }
+        let handle = try? FileHandle(forWritingTo: log)
+        _ = try? handle?.seekToEnd()
+        return handle
     }
 
     /// Android keeps the files apps have read in its cache, though the Mac already
