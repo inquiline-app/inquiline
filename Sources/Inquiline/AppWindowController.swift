@@ -33,7 +33,10 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate {
         self.orientation = orientation
         isLandscape = landscape
         longSide = ScrcpySession.longSide(package: package)
-        session = ScrcpySession(package: package, landscape: landscape, longSide: longSide)
+        // After a resolution change the app starts again on its new screen.
+        let restarting = UserDefaults.standard.bool(forKey: Self.restartKey(package))
+        UserDefaults.standard.removeObject(forKey: Self.restartKey(package))
+        session = ScrcpySession(package: package, landscape: landscape, longSide: longSide, restartsApp: restarting)
         let pixels = NSSize(width: longSide, height: longSide * 9 / 16)
         displaySize = landscape ? pixels : NSSize(width: pixels.height, height: pixels.width)
         let points = Self.openingSize(for: displaySize)
@@ -221,34 +224,46 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate {
 
     // MARK: - Resolution
 
-    /// View > Resolution: automatic, or a size kept for this app. Android sets an app's
-    /// screen size only as it starts, so the app starts again on its new screen.
-    static func addResolutionMenu(to menu: NSMenu, target: AppWindowController) {
-        let item = menu.addItem(withTitle: "Resolution", action: nil, keyEquivalent: "")
-        let sizes = NSMenu(title: "Resolution")
+    /// The toolbar's Resolution menu: automatic, or a size kept for this app.
+    private func resolutionMenu() -> NSMenu {
+        let menu = NSMenu(title: "Resolution")
         let automatic = ScrcpySession.automaticLongSide
-        sizes.addItem(withTitle: "Automatic (\(automatic) × \(automatic * 9 / 16))", action: #selector(chooseResolution(_:)), keyEquivalent: "")
-            .target = target
-        sizes.addItem(.separator())
+        menu.addItem(withTitle: "Automatic (\(automatic) × \(automatic * 9 / 16))", action: #selector(chooseResolution(_:)), keyEquivalent: "")
+            .target = self
+        menu.addItem(.separator())
         for side in ScrcpySession.resolutions {
-            let entry = sizes.addItem(withTitle: "\(side) × \(side * 9 / 16)", action: #selector(chooseResolution(_:)), keyEquivalent: "")
-            entry.target = target
+            let entry = menu.addItem(withTitle: "\(side) × \(side * 9 / 16)", action: #selector(chooseResolution(_:)), keyEquivalent: "")
+            entry.target = self
             entry.tag = side
         }
-        item.submenu = sizes
+        return menu
     }
 
+    private static func restartKey(_ package: String) -> String { "RestartForResolution.\(package)" }
+
+    /// Android sets an app's screen size only as the app starts, so a new resolution waits
+    /// for the next start, now if the user wants.
     @objc func chooseResolution(_ sender: NSMenuItem) {
         UserDefaults.standard.set(sender.tag, forKey: ScrcpySession.resolutionKey(package))
         let side = ScrcpySession.longSide(package: package)
         guard side != longSide else { return }
-        longSide = side
-        AppLog.write("Resolution: \(side) by \(side * 9 / 16)")
-        let pixels = NSSize(width: side, height: side * 9 / 16)
-        displaySize = isLandscape ? pixels : NSSize(width: pixels.height, height: pixels.width)
-        window.setFrameAutosaveName("Main-\(side)")
-        fitWindow(resized: true)
-        restartApp()
+        AppLog.write("Resolution chosen: \(side) by \(side * 9 / 16)")
+        let alert = NSAlert()
+        alert.messageText = "Restart \(window.title) at \(side) × \(side * 9 / 16)?"
+        alert.informativeText = "The new resolution takes effect when \(window.title) starts again."
+        alert.addButton(withTitle: "Restart Now")
+        alert.addButton(withTitle: "Later")
+        alert.beginSheetModal(for: window) { [self] response in
+            guard response == .alertFirstButtonReturn else { return }
+            UserDefaults.standard.set(true, forKey: Self.restartKey(package))
+            // Opens again once this process has ended, as only one copy of an app runs.
+            let relaunch = Process()
+            relaunch.executableURL = URL(fileURLWithPath: "/bin/sh")
+            relaunch.arguments = ["-c", "while kill -0 \"$1\" 2>/dev/null; do sleep 0.2; done; /usr/bin/open \"$0\"",
+                                  Bundle.main.bundlePath, String(getpid())]
+            try? relaunch.run()
+            NSApp.terminate(nil)
+        }
     }
 
     /// An app that turned itself may be stuck at its first screen's size, and is then
@@ -270,6 +285,7 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate {
     private static let fpsItem = NSToolbarItem.Identifier("fps")
     private static let muteItem = NSToolbarItem.Identifier("mute")
     private static let rotateItem = NSToolbarItem.Identifier("rotate")
+    private static let resolutionItem = NSToolbarItem.Identifier("resolution")
     private static let clearCacheItem = NSToolbarItem.Identifier("clearCache")
     private static let clearDataItem = NSToolbarItem.Identifier("clearData")
 
@@ -318,7 +334,7 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate {
                 self.showLoading(true)
             }
         }
-        let toolbar = NSToolbar(identifier: "AppWindowToolbar")
+        let toolbar = NSToolbar(identifier: "AppWindowToolbar2")
         toolbar.delegate = self
         toolbar.displayMode = .iconOnly
         toolbar.allowsUserCustomization = true
@@ -330,16 +346,25 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate {
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
         // The space keeps the buttons clear of the window's rounded corner.
-        [.flexibleSpace, Self.fpsItem, Self.muteItem, Self.rotateItem, .space]
+        [.flexibleSpace, Self.fpsItem, Self.resolutionItem, Self.muteItem, Self.rotateItem, .space]
     }
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
         // Clearing is in the app's menu; these are there for those who want them at hand.
-        [.flexibleSpace, .space, Self.fpsItem, Self.muteItem, Self.rotateItem, Self.clearCacheItem, Self.clearDataItem]
+        [.flexibleSpace, .space, Self.fpsItem, Self.resolutionItem, Self.muteItem, Self.rotateItem, Self.clearCacheItem, Self.clearDataItem]
     }
 
     func toolbar(_ toolbar: NSToolbar, itemForItemIdentifier identifier: NSToolbarItem.Identifier,
                  willBeInsertedIntoToolbar flag: Bool) -> NSToolbarItem? {
+        if identifier == Self.resolutionItem {
+            let item = NSMenuToolbarItem(itemIdentifier: identifier)
+            item.label = "Resolution"
+            item.toolTip = "Resolution"
+            item.image = NSImage(systemSymbolName: "aspectratio", accessibilityDescription: "Resolution")
+            item.showsIndicator = false
+            item.menu = resolutionMenu()
+            return item
+        }
         let item = NSToolbarItem(itemIdentifier: identifier)
         switch identifier {
         case Self.fpsItem:
