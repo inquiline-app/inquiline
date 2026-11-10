@@ -35,11 +35,22 @@ final class ScrcpySession {
         }
 
         func screen(landscape: Bool) -> Screen {
-            let short = longSide * 9 / 16, density = 320 * longSide / 1440
+            // Whole and even sides.
+            let short = Int(CGFloat(longSide) / ScrcpySession.screenShape / 2) * 2, density = 320 * longSide / 1440
             return landscape ? Screen(width: longSide, height: short, density: density)
                 : Screen(width: short, height: longSide, density: density)
         }
     }
+
+    /// The Mac screen's shape in full screen, long side over short: 16:10 on a MacBook, below
+    /// its camera's notch, and mostly 16:9 on a monitor. The app's screen has it, so full screen
+    /// leaves no bars.
+    static let screenShape: CGFloat = {
+        guard let screen = NSScreen.main else { return 16 / 9 }
+        let size = NSSize(width: screen.frame.width, height: screen.frame.height - screen.safeAreaInsets.top)
+        let shape = max(size.width, size.height) / min(size.width, size.height)
+        return min(max(shape, 4 / 3), 21 / 9)
+    }()
 
     static func resolution(package: String) -> Resolution {
         Resolution(rawValue: UserDefaults.standard.integer(forKey: resolutionKey(package))) ?? .medium

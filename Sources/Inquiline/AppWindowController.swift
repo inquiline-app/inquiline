@@ -203,7 +203,9 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate {
         window.contentMinSize = Self.smallest(landscape: landscape)
         let current = screen.frame.size
         guard !isFullScreen, abs(current.width / current.height - size.width / size.height) > 0.01 else { return }
-        var turned = NSSize(width: current.height, height: current.width)
+        // Turned, the window turns; otherwise it only takes the app's shape, as wide as it was.
+        var turned = (current.width > current.height) != landscape ? NSSize(width: current.height, height: current.width) : current
+        turned.height = (turned.width * size.height / size.width).rounded()
         if let visible = window.screen?.visibleFrame.size {
             let scale = min(1, visible.width / turned.width, (visible.height - 38) / turned.height)
             turned = NSSize(width: (turned.width * scale).rounded(), height: (turned.height * scale).rounded())
@@ -212,9 +214,10 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate {
         window.setContentSize(turned.width < smallest.width ? smallest : turned)
     }
 
-    /// A phone's size, the smallest a window gets.
+    /// A phone's size, in the screen's shape: the smallest a window gets.
     static func smallest(landscape: Bool) -> NSSize {
-        landscape ? NSSize(width: 720, height: 405) : NSSize(width: 405, height: 720)
+        let short = (720 / ScrcpySession.screenShape).rounded()
+        return landscape ? NSSize(width: 720, height: short) : NSSize(width: short, height: 720)
     }
 
     // MARK: - Full screen
