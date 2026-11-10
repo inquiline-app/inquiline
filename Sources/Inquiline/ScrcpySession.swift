@@ -14,20 +14,24 @@ final class ScrcpySession {
     /// The sizes View > Resolution offers.
     static let resolutions = [1440, 1920, 2560, 3840]
 
-    /// Automatic: as many pixels as the screen the window opens on has, up to 4K, and at most
-    /// 1920 by 1080 on Macs with less than 16 GB, where 4K frames cost too much memory.
-    /// Never fewer than 1440 by 810.
-    static var automaticLongSide: Int {
-        let screen = NSScreen.main.map { max($0.frame.width, $0.frame.height) * $0.backingScaleFactor } ?? 1440
+    /// Automatic: as many pixels as the screen the window opens on can show of the app, up to
+    /// 4K, and at most 1920 by 1080 on Macs with less than 16 GB, where 4K frames cost too much
+    /// memory. A portrait app is as tall as the screen, a landscape one as wide, so its window
+    /// can show every pixel. Never fewer than 1440 by 810.
+    static func automaticLongSide(portrait: Bool) -> Int {
+        let pixels = NSScreen.main.map { NSSize(width: $0.frame.width * $0.backingScaleFactor,
+                                                height: $0.frame.height * $0.backingScaleFactor) }
+            ?? NSSize(width: 1440, height: 810)
+        let fits = portrait ? min(pixels.height, pixels.width * 16 / 9) : min(pixels.width, pixels.height * 16 / 9)
         let limit = ProcessInfo.processInfo.physicalMemory >= 16 << 30 ? 3840 : 1920
         // A multiple of 32 keeps both sides whole and even.
-        return min(max(Int(screen), 1440), limit) / 32 * 32
+        return min(max(Int(fits), 1440), limit) / 32 * 32
     }
 
-    /// The size chosen for an app in View > Resolution, or the automatic one.
-    static func longSide(package: String) -> Int {
+    /// The size chosen for an app with the toolbar's Resolution, or the automatic one.
+    static func longSide(package: String, portrait: Bool) -> Int {
         let chosen = UserDefaults.standard.integer(forKey: resolutionKey(package))
-        return resolutions.contains(chosen) ? chosen : automaticLongSide
+        return resolutions.contains(chosen) ? chosen : automaticLongSide(portrait: portrait)
     }
 
     static func resolutionKey(_ package: String) -> String { "Resolution.\(package)" }

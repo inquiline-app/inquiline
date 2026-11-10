@@ -32,7 +32,7 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate {
         self.package = package
         self.orientation = orientation
         isLandscape = landscape
-        longSide = ScrcpySession.longSide(package: package)
+        longSide = ScrcpySession.longSide(package: package, portrait: !landscape)
         // After a resolution change the app starts again on its new screen.
         let restarting = UserDefaults.standard.bool(forKey: Self.restartKey(package))
         UserDefaults.standard.removeObject(forKey: Self.restartKey(package))
@@ -227,16 +227,21 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate {
     /// The toolbar's Resolution menu: automatic, or a size kept for this app.
     private func resolutionMenu() -> NSMenu {
         let menu = NSMenu(title: "Resolution")
-        let automatic = ScrcpySession.automaticLongSide
-        menu.addItem(withTitle: "Automatic (\(automatic) × \(automatic * 9 / 16))", action: #selector(chooseResolution(_:)), keyEquivalent: "")
+        let automatic = ScrcpySession.automaticLongSide(portrait: !isLandscape)
+        menu.addItem(withTitle: "Automatic (\(sizeName(automatic)))", action: #selector(chooseResolution(_:)), keyEquivalent: "")
             .target = self
         menu.addItem(.separator())
         for side in ScrcpySession.resolutions {
-            let entry = menu.addItem(withTitle: "\(side) × \(side * 9 / 16)", action: #selector(chooseResolution(_:)), keyEquivalent: "")
+            let entry = menu.addItem(withTitle: sizeName(side), action: #selector(chooseResolution(_:)), keyEquivalent: "")
             entry.target = self
             entry.tag = side
         }
         return menu
+    }
+
+    /// Width by height, as the app is turned.
+    private func sizeName(_ side: Int) -> String {
+        isLandscape ? "\(side) × \(side * 9 / 16)" : "\(side * 9 / 16) × \(side)"
     }
 
     private static func restartKey(_ package: String) -> String { "RestartForResolution.\(package)" }
@@ -245,11 +250,11 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate {
     /// for the next start, now if the user wants.
     @objc func chooseResolution(_ sender: NSMenuItem) {
         UserDefaults.standard.set(sender.tag, forKey: ScrcpySession.resolutionKey(package))
-        let side = ScrcpySession.longSide(package: package)
+        let side = ScrcpySession.longSide(package: package, portrait: !isLandscape)
         guard side != longSide else { return }
-        AppLog.write("Resolution chosen: \(side) by \(side * 9 / 16)")
+        AppLog.write("Resolution chosen: \(sizeName(side))")
         let alert = NSAlert()
-        alert.messageText = "Restart \(window.title) at \(side) × \(side * 9 / 16)?"
+        alert.messageText = "Restart \(window.title) at \(sizeName(side))?"
         alert.informativeText = "The new resolution takes effect when \(window.title) starts again."
         alert.addButton(withTitle: "Restart Now")
         alert.addButton(withTitle: "Later")
