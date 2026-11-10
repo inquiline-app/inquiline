@@ -277,6 +277,8 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate {
     /// Filled as it opens.
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
+        // A toolbar's pull-down menu takes its first item as its title, which it doesn't list.
+        menu.addItem(.sectionHeader(title: "Resolution"))
         for level in ScrcpySession.Resolution.allCases {
             let entry = menu.addItem(withTitle: level.name, action: #selector(chooseResolution(_:)), keyEquivalent: "")
             entry.target = self
