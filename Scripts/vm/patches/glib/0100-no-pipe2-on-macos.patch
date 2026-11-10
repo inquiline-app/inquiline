@@ -1,0 +1,23 @@
+--- a/meson.build
++++ b/meson.build
+@@ -748,7 +748,6 @@
+   'memmem',
+   'mmap',
+   'newlocale',
+-  'pipe2',
+   'poll',
+   'prlimit',
+   'readlink',
+@@ -831,6 +830,12 @@
+   functions += ['sysinfo']
+ endif
+ 
++# Inquiline: pipe2 is only in macOS 27 and later, and the check above finds it in the SDK
++# whatever the deployment target; GLib then uses pipe and fcntl, as it does without pipe2.
++if host_system != 'darwin'
++  functions += ['pipe2']
++endif
++
+ foreach f : functions
+   if cc.has_function(f)
+     define = 'HAVE_' + f.underscorify().to_upper()

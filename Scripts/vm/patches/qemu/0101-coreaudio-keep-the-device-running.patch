@@ -1,0 +1,28 @@
+diff --git a/audio/coreaudio.m b/audio/coreaudio.m
+index e4ec1df971..2015b43962 100644
+--- a/audio/coreaudio.m
++++ b/audio/coreaudio.m
+@@ -530,16 +530,14 @@ static void update_out_device_playback_state(CoreaudioVoiceOut *core)
+                 coreaudio_logerr(status, "Could not resume playback");
+             }
+         }
+-    } else {
+-        /* stop playback */
+-        if (isrunning) {
+-            status = AudioDeviceStop(core->device_id,
+-                                     core->ioprocid);
+-            if (status != kAudioHardwareBadDeviceError && status != kAudioHardwareNoError) {
+-                coreaudio_logerr(status, "Could not pause playback");
+-            }
+-        }
+     }
++    /*
++     * A disabled voice keeps the device running, playing silence: starting a
++     * Core Audio device can take hundreds of milliseconds, and this runs with the
++     * BQL held, so a guest that stops and starts its stream often (as Android
++     * does between sounds) would stall the whole machine and starve its own
++     * sound. The device stops when the voice goes away (fini_out_device).
++     */
+ }
+ 
+ /* called without BQL. */

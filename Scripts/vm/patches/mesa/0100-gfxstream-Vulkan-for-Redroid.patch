@@ -1,0 +1,76 @@
+--- a/src/gfxstream/guest/android/GfxStreamGralloc.cpp	2026-11-03 19:11:37
++++ b/src/gfxstream/guest/android/GfxStreamGralloc.cpp	2026-11-03 19:11:37
+@@ -10,19 +10,13 @@
+ 
+ #include <string>
+ 
+-#include "GrallocGoldfish.h"
+ #include "GrallocMinigbm.h"
+ #include "android-base/properties.h"
+ 
+ namespace gfxstream {
+ 
+ Gralloc* createPlatformGralloc(int32_t descriptor) {
+-    const std::string value = android::base::GetProperty("ro.hardware.gralloc", "");
+-    if (value == "minigbm") {
+-        auto gralloc = new MinigbmGralloc(descriptor);
+-        return gralloc;
+-    }
+-    return new GoldfishGralloc();
++    return new MinigbmGralloc(descriptor);
+ }
+ 
+ }  // namespace gfxstream
+--- a/src/gfxstream/guest/android/meson.build	2026-11-03 19:11:38
++++ b/src/gfxstream/guest/android/meson.build	2026-11-03 19:11:38
+@@ -9,9 +9,7 @@
+     dep_android_aemu_gralloc_headers = dependency('android-aemu-gralloc-headers')
+ 
+     files_gfxstream_android = files(
+-        'ANativeWindowAndroid.cpp',
+         'GfxStreamGralloc.cpp',
+-        'GrallocGoldfish.cpp',
+         'GrallocMinigbm.cpp',
+     )
+ 
+--- a/src/gfxstream/guest/connection-manager/meson.build	2026-11-03 19:11:38
++++ b/src/gfxstream/guest/connection-manager/meson.build	2026-11-03 19:11:38
+@@ -10,7 +10,7 @@
+ )
+ 
+ if with_platform_android
+-  files_libconnection_manager += files('QemuPipeStream.cpp')
++  files_libconnection_manager += files('QemuPipeStreamStub.cpp')
+ else
+   files_libconnection_manager += files('QemuPipeStreamStub.cpp')
+ endif
+--- a/src/gfxstream/guest/vulkan/meson.build	2026-11-03 19:11:38
++++ b/src/gfxstream/guest/vulkan/meson.build	2026-11-03 19:11:38
+@@ -1,11 +1,8 @@
+ # Copyright 2022 Android Open Source Project
+ # SPDX-License-Identifier: MIT
+ 
+-if with_platform_android
+-    dep_gfxstream_stubs = null_dep
+-else
+-    subdir('stubs')
+-endif
++# Inquiline: no goldfish GLES, so render control comes from the host's capabilities.
++subdir('stubs')
+ 
+ gfxstream_deps += dep_gfxstream_stubs
+ 
+--- a/src/android_stub/nativewindow_stub.cpp	2026-11-03 19:11:39
++++ b/src/android_stub/nativewindow_stub.cpp	2026-11-03 19:11:39
+@@ -109,3 +109,11 @@
+    return 0;
+ }
+ }
++
++// Inquiline: used by the gfxstream driver; the real ones come from Android's libnativewindow.
++extern "C" {
++int AHardwareBuffer_lock(AHardwareBuffer *, uint64_t, int32_t, const ARect *, void **) { return -1; }
++int AHardwareBuffer_unlock(AHardwareBuffer *, int32_t *) { return -1; }
++int AHardwareBuffer_getId(const AHardwareBuffer *, uint64_t *) { return -1; }
++ADataSpace AHardwareBuffer_getDataSpace(const AHardwareBuffer *) { return ADATASPACE_UNKNOWN; }
++}

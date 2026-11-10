@@ -1,0 +1,15 @@
+diff --git a/host/vulkan/vulkan_dispatch.cpp b/host/vulkan/vulkan_dispatch.cpp
+index 2485b7a3..0bc39044 100644
+--- a/host/vulkan/vulkan_dispatch.cpp
++++ b/host/vulkan/vulkan_dispatch.cpp
+@@ -121,6 +121,10 @@ static void initIcdPaths(bool forTesting) {
+         // Rely on user to set VK_DRIVER_FILES
+         return;
+     }
++    // Inquiline: an app bundle keeps its Vulkan driver in Frameworks and names it here.
++    if (!gfxstream::base::getEnvironmentVariable("VK_DRIVER_FILES").empty()) {
++        return;
++    }
+ 
+     // In high integrity mode (e.g. admin mode on windows), loader won't be able to read the
+     // environment variables. TODO(b/446119531) Load the driver dlls directly in this case.

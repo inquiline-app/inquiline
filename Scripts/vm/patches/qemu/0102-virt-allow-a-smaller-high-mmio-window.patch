@@ -1,0 +1,39 @@
+diff --git a/hw/arm/virt.c b/hw/arm/virt.c
+index 219597cabd..180a4423f4 100644
+--- a/hw/arm/virt.c
++++ b/hw/arm/virt.c
+@@ -2574,9 +2574,12 @@ static void virt_set_memmap(VirtMachineState *vms, int pa_bits)
+         error_report("maxmem/slots too huge");
+         exit(EXIT_FAILURE);
+     }
+-    if (base < vms->memmap[VIRT_MEM].base + LEGACY_RAMLIMIT_BYTES) {
+-        base = vms->memmap[VIRT_MEM].base + LEGACY_RAMLIMIT_BYTES;
+-    }
++    /*
++     * Inquiline: the high IO region follows the RAM, not the 256 GiB mark that keeps the
++     * legacy memory map: on Apple's M1 and M2, whose VMs have a 36-bit (64 GiB) address space,
++     * nothing above 256 GiB fits, and the high PCIe window and ECAM would be dropped. The same
++     * map on every Mac, so what runs on one is what runs on the others.
++     */
+ 
+     /* We know for sure that at least the memory fits in the PA space */
+     vms->highest_gpa = memtop - 1;
+@@ -3391,11 +3394,13 @@ static void virt_set_highmem_mmio_size(Object *obj, Visitor *v,
+         return;
+     }
+ 
+-    if (size < DEFAULT_HIGH_PCIE_MMIO_SIZE) {
+-        char *sz = size_to_str(DEFAULT_HIGH_PCIE_MMIO_SIZE);
+-        error_setg(errp, "highmem-mmio-size cannot be set to a lower value "
+-                         "than the default (%s)", sz);
+-        g_free(sz);
++    /*
++     * Inquiline: smaller is allowed too, down to 1 GiB. Apple's M1 and M2 give a VM a 36-bit
++     * (64 GiB) address space, where the default 512 GiB window doesn't fit and is dropped,
++     * leaving 64-bit PCI BARs, such as virtio-gpu's host memory, nowhere to go.
++     */
++    if (size < 1 * GiB) {
++        error_setg(errp, "highmem-mmio-size cannot be smaller than 1 GiB");
+         return;
+     }
+ 

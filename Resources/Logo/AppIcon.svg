@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+<!-- Inquiline. Apple's 1024 icon grid; unit u = 32. Bars and dot 2u wide, 1u apart.
+     The Mac bar is 12u, the Android bar 8u (3:2); the shape, 11u by 15u, is centered. -->
+<rect x="100" y="100" width="824" height="824" rx="185" fill="#2C2C2E"/>
+<line x1="368" y1="400" x2="368" y2="720" stroke="#F5F5F7" stroke-width="64" stroke-linecap="round"/>
+<line x1="464" y1="304" x2="656" y2="304" stroke="#3DDC84" stroke-width="64" stroke-linecap="round"/>
+<circle cx="368" cy="304" r="32" fill="#FF9F0A"/>
+</svg>

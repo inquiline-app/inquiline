@@ -1,0 +1,27 @@
+diff --git a/system/main.c b/system/main.c
+index b8f7157cc3..c1c6914615 100644
+--- a/system/main.c
++++ b/system/main.c
+@@ -39,6 +39,7 @@
+ 
+ #ifdef CONFIG_DARWIN
+ #include <CoreFoundation/CoreFoundation.h>
++#include <dispatch/dispatch.h>
+ #endif
+ 
+ static void *qemu_default_main(void *opaque)
+@@ -84,6 +85,14 @@ int main(int argc, char **argv)
+     bql_unlock();
+     replay_mutex_unlock();
+ 
++#ifdef CONFIG_DARWIN
++    /* Inquiline: nothing may keep running if the app goes away without stopping the VM. */
++    dispatch_source_t parent = dispatch_source_create(DISPATCH_SOURCE_TYPE_PROC, getppid(),
++                                                      DISPATCH_PROC_EXIT, dispatch_get_main_queue());
++    dispatch_source_set_event_handler(parent, ^{ exit(0); });
++    dispatch_resume(parent);
++#endif
++
+     if (qemu_main) {
+         QemuThread main_loop_thread;
+         qemu_thread_create(&main_loop_thread, "qemu_main",

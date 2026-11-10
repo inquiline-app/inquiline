@@ -1,0 +1,467 @@
+Changes to scrcpy 5.0.1's server. The server runs as Android's system user, and
+Android checks that the package name it presents belongs to that user. A display
+power message turns only the app's own virtual display off, so its app is stopped
+as on a phone whose screen turns off.
+
+--- a/server/src/main/java/com/genymobile/scrcpy/FakeContext.java
++++ b/server/src/main/java/com/genymobile/scrcpy/FakeContext.java
+@@ -16,7 +16,7 @@
+-    public static final String PACKAGE_NAME = "com.android.shell";
++    public static final String PACKAGE_NAME = "android";
+--- a/server/src/main/java/com/genymobile/scrcpy/control/Controller.java
++++ b/server/src/main/java/com/genymobile/scrcpy/control/Controller.java
+@@ -855,6 +855,11 @@
+     }
+ 
+     private void setDisplayPower(boolean on) {
++        if (surfaceCapture instanceof NewDisplayCapture) {
++            // Only this app's display, as a phone's screen turning off: its app is stopped.
++            ((NewDisplayCapture) surfaceCapture).setDisplayOn(on);
++            return;
++        }
+         // Change the power of the main display when mirroring a virtual display
+         int targetDisplayId = displayId != Device.DISPLAY_ID_NONE ? displayId : 0;
+         boolean setDisplayPowerOk = Device.setDisplayPower(targetDisplayId, on);
+--- a/server/src/main/java/com/genymobile/scrcpy/video/NewDisplayCapture.java
++++ b/server/src/main/java/com/genymobile/scrcpy/video/NewDisplayCapture.java
+@@ -73,6 +73,9 @@
+     private DisplayResizeDebouncer debouncer;
+ 
+     private int dpi;
++
++    private Surface surface;
++    private boolean displayOn = true;
+ 
+     public NewDisplayCapture(VirtualDisplayListener vdListener, Options options) {
+         this.vdListener = vdListener;
+@@ -272,10 +275,11 @@
+             surface = glRunner.start(physicalSize, videoSize, surface);
+         }
+ 
++        this.surface = surface;
+         if (virtualDisplay == null) {
+             startNew(surface);
+         } else {
+-            virtualDisplay.setSurface(surface);
++            setDisplayOn(displayOn);
+         }
+ 
+         if (vdListener != null) {
+@@ -339,6 +343,16 @@
+         }
+ 
+         debouncer.requestResize(newSize);
++    }
++
++    /**
++     * A virtual display without a surface is off, and Android stops the activities on it.
++     */
++    public synchronized void setDisplayOn(boolean on) {
++        displayOn = on;
++        if (virtualDisplay != null) {
++            virtualDisplay.setSurface(on ? surface : null);
++        }
+     }
+ 
+     private synchronized void setCurrentVirtualDisplay(VirtualDisplay virtualDisplay) {
+Frames: with frames=true, the server sends each frame of the app's display as the
+virtio-gpu resource Android drew it into (FrameStreamer, and Vendor/frames for the native
+part that finds the resource), and the Mac copies it on the GPU instead of decoding video.
+These changes come after the ones above.
+
+diff --git a/server/src/main/java/com/genymobile/scrcpy/Options.java b/server/src/main/java/com/genymobile/scrcpy/Options.java
+index 26a6ba9..fb81a71 100644
+--- a/server/src/main/java/com/genymobile/scrcpy/Options.java
++++ b/server/src/main/java/com/genymobile/scrcpy/Options.java
+@@ -27,6 +27,7 @@ public class Options {
+     private boolean video = true;
+     private boolean audio = true;
+     private int maxSize;
++    private boolean frames; // Inquiline: frames as GPU resources instead of video
+     private int minSizeAlignment = 1;
+     private VideoCodec videoCodec = VideoCodec.H264;
+     private AudioCodec audioCodec = AudioCodec.OPUS;
+@@ -103,6 +104,10 @@ public class Options {
+         return audio;
+     }
+ 
++    public boolean getFrames() {
++        return frames;
++    }
++
+     public int getMaxSize() {
+         return maxSize;
+     }
+@@ -392,6 +397,9 @@ public class Options {
+                 case "max_size":
+                     options.maxSize = Integer.parseInt(value);
+                     break;
++                case "frames":
++                    options.frames = Boolean.parseBoolean(value);
++                    break;
+                 case "min_size_alignment":
+                     int align = Integer.parseInt(value);
+                     if (align < 1 || align > 16 || (align & (align - 1)) != 0) {
+diff --git a/server/src/main/java/com/genymobile/scrcpy/Server.java b/server/src/main/java/com/genymobile/scrcpy/Server.java
+index d7d1a76..9b5e1ed 100644
+--- a/server/src/main/java/com/genymobile/scrcpy/Server.java
++++ b/server/src/main/java/com/genymobile/scrcpy/Server.java
+@@ -21,6 +21,7 @@ import com.genymobile.scrcpy.video.CameraCapture;
+ import com.genymobile.scrcpy.video.NewDisplayCapture;
+ import com.genymobile.scrcpy.video.ScreenCapture;
+ import com.genymobile.scrcpy.video.SurfaceCapture;
++import com.genymobile.scrcpy.video.FrameStreamer;
+ import com.genymobile.scrcpy.video.SurfaceEncoder;
+ import com.genymobile.scrcpy.video.VideoSource;
+ 
+@@ -151,8 +152,16 @@ public final class Server {
+                 } else {
+                     surfaceCapture = new CameraCapture(options);
+                 }
+-                SurfaceEncoder surfaceEncoder = new SurfaceEncoder(surfaceCapture, videoStreamer, options);
+-                asyncProcessors.add(surfaceEncoder);
++                if (options.getFrames()) {
++                    FrameStreamer frameStreamer = new FrameStreamer(surfaceCapture, connection.getVideoFd());
++                    asyncProcessors.add(frameStreamer);
++                    if (controller != null) {
++                        controller.setFrameStreamer(frameStreamer);
++                    }
++                } else {
++                    SurfaceEncoder surfaceEncoder = new SurfaceEncoder(surfaceCapture, videoStreamer, options);
++                    asyncProcessors.add(surfaceEncoder);
++                }
+ 
+                 if (controller != null) {
+                     controller.setSurfaceCapture(surfaceCapture);
+diff --git a/server/src/main/java/com/genymobile/scrcpy/control/ControlMessage.java b/server/src/main/java/com/genymobile/scrcpy/control/ControlMessage.java
+index 777873b..d17ac96 100644
+--- a/server/src/main/java/com/genymobile/scrcpy/control/ControlMessage.java
++++ b/server/src/main/java/com/genymobile/scrcpy/control/ControlMessage.java
+@@ -30,6 +30,7 @@ public final class ControlMessage {
+     public static final int TYPE_CAMERA_ZOOM_OUT = 20;
+     public static final int TYPE_RESIZE_DISPLAY = 21;
+     public static final int TYPE_SCAN_FILE = 22;
++    public static final int TYPE_RELEASE_FRAME = 100; // Inquiline, see FrameStreamer
+ 
+     public static final long SEQUENCE_INVALID = 0;
+ 
+@@ -61,6 +62,8 @@ public final class ControlMessage {
+     private int width;
+     private int height;
+ 
++    private int frameNumber;
++
+     private ControlMessage() {
+     }
+ 
+@@ -134,6 +137,13 @@ public final class ControlMessage {
+         return msg;
+     }
+ 
++    public static ControlMessage createReleaseFrame(int frameNumber) {
++        ControlMessage msg = new ControlMessage();
++        msg.type = TYPE_RELEASE_FRAME;
++        msg.frameNumber = frameNumber;
++        return msg;
++    }
++
+     public static ControlMessage createEmpty(int type) {
+         ControlMessage msg = new ControlMessage();
+         msg.type = type;
+@@ -195,6 +205,10 @@ public final class ControlMessage {
+         return msg;
+     }
+ 
++    public int getFrameNumber() {
++        return frameNumber;
++    }
++
+     public int getType() {
+         return type;
+     }
+diff --git a/server/src/main/java/com/genymobile/scrcpy/control/ControlMessageReader.java b/server/src/main/java/com/genymobile/scrcpy/control/ControlMessageReader.java
+index b2591d6..a9f5319 100644
+--- a/server/src/main/java/com/genymobile/scrcpy/control/ControlMessageReader.java
++++ b/server/src/main/java/com/genymobile/scrcpy/control/ControlMessageReader.java
+@@ -64,6 +64,8 @@ public class ControlMessageReader {
+                 return parseResizeDisplay();
+             case ControlMessage.TYPE_SCAN_FILE:
+                 return parseScanFile();
++            case ControlMessage.TYPE_RELEASE_FRAME:
++                return ControlMessage.createReleaseFrame(dis.readInt());
+             default:
+                 throw new ControlProtocolException("Unknown event type: " + type);
+         }
+diff --git a/server/src/main/java/com/genymobile/scrcpy/control/Controller.java b/server/src/main/java/com/genymobile/scrcpy/control/Controller.java
+index 189f4c7..7af8add 100644
+--- a/server/src/main/java/com/genymobile/scrcpy/control/Controller.java
++++ b/server/src/main/java/com/genymobile/scrcpy/control/Controller.java
+@@ -14,6 +14,7 @@ import com.genymobile.scrcpy.util.Ln;
+ import com.genymobile.scrcpy.util.LogUtils;
+ import com.genymobile.scrcpy.video.CameraCapture;
+ import com.genymobile.scrcpy.video.CaptureControl;
++import com.genymobile.scrcpy.video.FrameStreamer;
+ import com.genymobile.scrcpy.video.NewDisplayCapture;
+ import com.genymobile.scrcpy.video.SurfaceCapture;
+ import com.genymobile.scrcpy.video.VideoSource;
+@@ -111,6 +112,7 @@ public class Controller implements AsyncProcessor, VirtualDisplayListener {
+ 
+     // Used for resetting video encoding on RESET_VIDEO message or for sending camera controls
+     private SurfaceCapture surfaceCapture;
++    private FrameStreamer frameStreamer;
+ 
+     public Controller(ControlChannel controlChannel, CleanUp cleanUp, Options options) {
+         this.camera = options.getVideoSource() == VideoSource.CAMERA;
+@@ -175,6 +177,10 @@ public class Controller implements AsyncProcessor, VirtualDisplayListener {
+         }
+     }
+ 
++    public void setFrameStreamer(FrameStreamer frameStreamer) {
++        this.frameStreamer = frameStreamer;
++    }
++
+     public void setSurfaceCapture(SurfaceCapture surfaceCapture) {
+         this.surfaceCapture = surfaceCapture;
+     }
+@@ -337,6 +343,11 @@ public class Controller implements AsyncProcessor, VirtualDisplayListener {
+             case ControlMessage.TYPE_RESET_VIDEO:
+                 resetVideo();
+                 return true;
++            case ControlMessage.TYPE_RELEASE_FRAME:
++                if (frameStreamer != null) {
++                    frameStreamer.releaseFrame(msg.getFrameNumber());
++                }
++                return true;
+             default:
+                 // fall through
+         }
+diff --git a/server/src/main/java/com/genymobile/scrcpy/video/FrameStreamer.java b/server/src/main/java/com/genymobile/scrcpy/video/FrameStreamer.java
+new file mode 100644
+index 0000000..5a73e4c
+--- /dev/null
++++ b/server/src/main/java/com/genymobile/scrcpy/video/FrameStreamer.java
+@@ -0,0 +1,224 @@
++package com.genymobile.scrcpy.video;
++
++import com.genymobile.scrcpy.AsyncProcessor;
++import com.genymobile.scrcpy.model.ConfigurationException;
++import com.genymobile.scrcpy.model.Size;
++import com.genymobile.scrcpy.util.IO;
++import com.genymobile.scrcpy.util.Ln;
++
++import android.annotation.SuppressLint;
++import android.graphics.PixelFormat;
++import android.hardware.HardwareBuffer;
++import android.media.Image;
++import android.media.ImageReader;
++import android.os.Handler;
++import android.os.HandlerThread;
++import android.os.Looper;
++
++import java.io.FileDescriptor;
++import java.io.IOException;
++import java.nio.ByteBuffer;
++import java.time.Duration;
++import java.util.HashMap;
++import java.util.Map;
++import java.util.concurrent.LinkedBlockingQueue;
++import java.util.concurrent.TimeUnit;
++import java.util.concurrent.atomic.AtomicBoolean;
++
++/**
++ * Inquiline: sends the display's frames as the virtio-gpu resources Android drew them into,
++ * instead of encoding video. The Mac has gfxstream copy each resource into the window's
++ * memory, then returns the frame (control message TYPE_RELEASE_FRAME) for Android to reuse.
++ *
++ * The video socket carries the usual codec header, then for each size a session packet
++ * (int with its top bit set, width, height), and for each frame two ints: resource id and
++ * frame number.
++ */
++@SuppressLint("NewApi")
++public class FrameStreamer implements AsyncProcessor {
++
++    /** Written in place of a codec id, so a client expecting video stops at once. */
++    public static final int CODEC_ID_FRAMES = 0x6672_6d73; // "frms"
++
++    private static final int MAX_IMAGES = 4;
++    private static final long USAGE = HardwareBuffer.USAGE_GPU_SAMPLED_IMAGE | HardwareBuffer.USAGE_GPU_COLOR_OUTPUT;
++
++    static {
++        System.load("/data/local/tmp/libinquiline-frames.so");
++    }
++
++    private static native int resourceId(HardwareBuffer buffer);
++
++    private final SurfaceCapture capture;
++    private final CaptureControl captureControl = new CaptureControl();
++    private final FileDescriptor fd;
++    private final AtomicBoolean stopped = new AtomicBoolean();
++    private final LinkedBlockingQueue<Image> available = new LinkedBlockingQueue<>();
++    private final Map<Integer, Image> sent = new HashMap<>();
++    private Thread thread;
++    private int frameNumber;
++
++    public FrameStreamer(SurfaceCapture capture, FileDescriptor fd) {
++        this.capture = capture;
++        this.fd = fd;
++    }
++
++    /** The Mac is done with this frame. */
++    public void releaseFrame(int number) {
++        Image image;
++        synchronized (sent) {
++            image = sent.remove(number);
++        }
++        if (image != null) {
++            image.close();
++        }
++    }
++
++    private void stream() throws IOException, ConfigurationException {
++        capture.init(captureControl, new VideoConstraints(0, 4, null));
++        ByteBuffer header = ByteBuffer.allocate(12);
++        header.putInt(CODEC_ID_FRAMES).flip(); // where video sends its codec id
++        IO.writeFully(fd, header);
++
++        HandlerThread handlerThread = new HandlerThread("frames");
++        handlerThread.start();
++        Handler handler = new Handler(handlerThread.getLooper());
++        try {
++            while (!stopped.get()) {
++                int reasons = captureControl.consumeReset();
++                if ((reasons & CaptureControl.RESET_REASON_TERMINATED) != 0) {
++                    break;
++                }
++                capture.prepare();
++                Size size = capture.getSize();
++                ImageReader reader = ImageReader.newInstance(size.getWidth(), size.getHeight(), PixelFormat.RGBA_8888, MAX_IMAGES, USAGE);
++                reader.setOnImageAvailableListener(r -> {
++                    // Only the newest picture waits; older ones go back to Android at once. When
++                    // the Mac falls behind, as while another app loads, every buffer may be held:
++                    // this picture is then skipped rather than failing.
++                    Image old;
++                    while ((old = available.poll()) != null) {
++                        old.close();
++                    }
++                    try {
++                        Image image = r.acquireLatestImage();
++                        if (image != null) {
++                            available.add(image);
++                        }
++                    } catch (IllegalStateException e) {
++                        // All buffers are held
++                    }
++                }, handler);
++                capture.start(reader.getSurface());
++                try {
++                    header.clear();
++                    header.putInt(0x8000_0000).putInt(size.getWidth()).putInt(size.getHeight()).flip();
++                    IO.writeFully(fd, header);
++                    sendFrames();
++                } finally {
++                    capture.stop();
++                    reader.setOnImageAvailableListener(null, null);
++                    drop();
++                    reader.close();
++                }
++            }
++        } finally {
++            handlerThread.quitSafely();
++            capture.release();
++        }
++    }
++
++    private void sendFrames() throws IOException {
++        ByteBuffer frame = ByteBuffer.allocate(8);
++        while (!stopped.get() && !captureControl.isResetRequested() && !capture.isClosed()) {
++            Image image;
++            try {
++                image = available.poll(100, TimeUnit.MILLISECONDS);
++            } catch (InterruptedException e) {
++                return;
++            }
++            if (image == null) {
++                continue;
++            }
++            // Only the newest picture matters; older ones go back to Android at once.
++            Image newer;
++            while ((newer = available.poll()) != null) {
++                image.close();
++                image = newer;
++            }
++            // The Mac copies the resource as soon as it hears of it, so the drawing must be done.
++            image.getFence().await(Duration.ofSeconds(1));
++            HardwareBuffer buffer = image.getHardwareBuffer();
++            int resource = buffer != null ? resourceId(buffer) : 0;
++            if (buffer != null) {
++                buffer.close();
++            }
++            if (resource == 0) {
++                Ln.w("A frame has no virtio-gpu resource");
++                image.close();
++                continue;
++            }
++            int number = ++frameNumber & 0x7FFF_FFFF;
++            synchronized (sent) {
++                // A Mac that stopped returning frames must not leave Android without buffers.
++                if (sent.size() >= MAX_IMAGES - 2) {
++                    Integer oldest = sent.keySet().stream().min(Integer::compare).orElse(null);
++                    if (oldest != null) {
++                        sent.remove(oldest).close();
++                    }
++                }
++                sent.put(number, image);
++            }
++            frame.clear();
++            frame.putInt(resource).putInt(number).flip();
++            IO.writeFully(fd, frame);
++        }
++    }
++
++    private void drop() {
++        Image image;
++        while ((image = available.poll()) != null) {
++            image.close();
++        }
++        synchronized (sent) {
++            for (Image sentImage : sent.values()) {
++                sentImage.close();
++            }
++            sent.clear();
++        }
++    }
++
++    @Override
++    public void start(TerminationListener listener) {
++        thread = new Thread(() -> {
++            Looper.prepare();
++            try {
++                stream();
++            } catch (ConfigurationException e) {
++                // logged already
++            } catch (IOException e) {
++                if (!IO.isBrokenPipe(e)) {
++                    Ln.e("Frame streaming error", e);
++                }
++            } finally {
++                listener.onTerminated(true);
++            }
++        }, "video");
++        thread.start();
++    }
++
++    @Override
++    public void stop() {
++        if (thread != null) {
++            stopped.set(true);
++            captureControl.reset(CaptureControl.RESET_REASON_TERMINATED);
++        }
++    }
++
++    @Override
++    public void join() throws InterruptedException {
++        if (thread != null) {
++            thread.join();
++        }
++    }
++}

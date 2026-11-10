@@ -1,0 +1,290 @@
+diff --git a/host/inquiline_frame_server.cpp b/host/inquiline_frame_server.cpp
+new file mode 100644
+index 00000000..20f45d61
+--- /dev/null
++++ b/host/inquiline_frame_server.cpp
+@@ -0,0 +1,122 @@
++// Inquiline: hands Android's frames to the Mac app windows without video encoding.
++//
++// Each window process connects to the Unix socket named by INQUILINE_FRAMES_SOCKET and
++// gets a POSIX shared memory object from it ('M'), which it maps and unlinks. For each frame
++// the guest reports, the window asks for a virtio-gpu resource to be copied there ('C'): the
++// GPU copies the ColorBuffer into the shared memory, and the window draws it with Metal.
++// Every request gets a one-byte answer, 0 on success. Little-endian throughout.
++//
++//   'M' u64 size                       answer, then u16 name length and name
++//   'C' u32 resource id, u64 offset    copy the resource's pixels (RGBA8) at offset
++
++#include <fcntl.h>
++#include <stdint.h>
++#include <stdlib.h>
++#include <string.h>
++#include <sys/mman.h>
++#include <sys/socket.h>
++#include <sys/un.h>
++#include <unistd.h>
++
++#include <atomic>
++#include <string>
++#include <thread>
++
++#include "frame_buffer.h"
++#include "gfxstream/common/logging.h"
++#include "gfxstream/virtio-gpu-gfxstream-renderer-unstable.h"
++
++namespace gfxstream {
++namespace {
++
++bool readAll(int fd, void* data, size_t size) {
++    auto* bytes = static_cast<uint8_t*>(data);
++    while (size > 0) {
++        ssize_t got = read(fd, bytes, size);
++        if (got <= 0) return false;
++        bytes += got;
++        size -= got;
++    }
++    return true;
++}
++
++void unmap(void* base, uint64_t size) {
++    if (auto* fb = host::FrameBuffer::getFB()) fb->forgetHostMemory(base);
++    munmap(base, size);
++}
++
++void serve(int client) {
++    void* base = nullptr;
++    uint64_t size = 0;
++    uint8_t request;
++    while (readAll(client, &request, 1)) {
++        uint8_t status = 1;
++        std::string name;
++        if (request == 'M') {
++            uint64_t newSize;
++            if (!readAll(client, &newSize, 8)) break;
++            if (base) {
++                unmap(base, size);
++                base = nullptr;
++            }
++            static std::atomic<uint32_t> count;
++            name = "/apkp." + std::to_string(getpid()) + "." + std::to_string(count++);
++            shm_unlink(name.c_str());
++            int memory = shm_open(name.c_str(), O_RDWR | O_CREAT | O_EXCL, 0600);
++            if (memory >= 0) {
++                void* mapped = ftruncate(memory, newSize) == 0
++                    ? mmap(nullptr, newSize, PROT_READ | PROT_WRITE, MAP_SHARED, memory, 0)
++                    : MAP_FAILED;
++                close(memory);
++                if (mapped != MAP_FAILED) {
++                    base = mapped;
++                    size = newSize;
++                    status = 0;
++                } else {
++                    shm_unlink(name.c_str());
++                }
++            }
++        } else if (request == 'C') {
++            uint32_t resource;
++            uint64_t offset;
++            if (!readAll(client, &resource, 4) || !readAll(client, &offset, 8)) break;
++            if (base) status = stream_renderer_mini_scanout(resource, base, size, offset) == 0 ? 0 : 1;
++        } else {
++            break;
++        }
++        if (write(client, &status, 1) != 1) break;
++        if (request == 'M' && status == 0) {
++            uint16_t nameLength = name.size();
++            if (write(client, &nameLength, 2) != 2 || write(client, name.data(), nameLength) != nameLength) break;
++        }
++    }
++    if (base) unmap(base, size);
++    close(client);
++}
++
++void startFrameServer() {
++    const char* path = getenv("INQUILINE_FRAMES_SOCKET");
++    if (!path || !*path) return;
++    int listener = socket(AF_UNIX, SOCK_STREAM, 0);
++    sockaddr_un address = {.sun_family = AF_UNIX};
++    if (listener < 0 || strlen(path) >= sizeof(address.sun_path)) return;
++    strcpy(address.sun_path, path);
++    unlink(path);
++    if (bind(listener, reinterpret_cast<sockaddr*>(&address), sizeof(address)) != 0 ||
++        listen(listener, 8) != 0) {
++        GFXSTREAM_ERROR("Inquiline frame server could not listen on %s", path);
++        close(listener);
++        return;
++    }
++    std::thread([listener] {
++        while (true) {
++            int client = accept(listener, nullptr, nullptr);
++            if (client >= 0) std::thread(serve, client).detach();
++        }
++    }).detach();
++}
++
++}  // namespace
++}  // namespace gfxstream
++
++extern "C" void startInquilineFrameServer() { gfxstream::startFrameServer(); }
+diff --git a/host/frame_buffer.cpp b/host/frame_buffer.cpp
+index 56ddf496..95fcffab 100644
+--- a/host/frame_buffer.cpp
++++ b/host/frame_buffer.cpp
+@@ -4576,6 +4576,10 @@ void FrameBuffer::readColorBuffer(HandleType p_colorbuffer, int x, int y, int wi
+     mImpl->readColorBuffer(p_colorbuffer, x, y, width, height, pixelsFormat, pixels, outPixelsSize);
+ }
+ 
++void FrameBuffer::forgetHostMemory(void* base) {
++    if (mImpl->hasEmulationVk()) mImpl->getEmulationVk().forgetHostMemory(base);
++}
++
+ bool FrameBuffer::readColorBufferToHostMemory(HandleType p_colorbuffer, void* base, uint64_t size,
+                                               uint64_t offset) {
+     return mImpl->hasEmulationVk() &&
+diff --git a/host/frame_buffer.h b/host/frame_buffer.h
+index 019164f4..a710839b 100644
+--- a/host/frame_buffer.h
++++ b/host/frame_buffer.h
+@@ -218,6 +218,8 @@ class FrameBuffer : public gfxstream::base::EventNotificationSupport<FrameBuffer
+     void readColorBuffer(HandleType p_colorbuffer, int x, int y, int width, int height,
+                          GfxstreamFormat pixelsFormat, void* pixels, uint64_t outPixelsSize);
+     // Mini: see VkEmulation::readColorBufferToHostMemory(). False without Vulkan.
++    // Inquiline: see VkEmulation::forgetHostMemory().
++    void forgetHostMemory(void* base);
+     bool readColorBufferToHostMemory(HandleType p_colorbuffer, void* base, uint64_t size,
+                                      uint64_t offset);
+     void readColorBufferDeprecated(HandleType p_colorbuffer, int x, int y, int width, int height,
+diff --git a/host/meson.build b/host/meson.build
+index 1e8875a3..87a5a8df 100644
+--- a/host/meson.build
++++ b/host/meson.build
+@@ -73,6 +73,7 @@ files_lib_gfxstream_backend = files(
+   'virtio_gpu_context.cpp',
+   'virtio_gpu_frontend.cpp',
+   'virtio_gpu_gfxstream_renderer.cpp',
++  'inquiline_frame_server.cpp',
+   'virtio_gpu_pipe.cpp',
+   'virtio_gpu_resource.cpp',
+   'virtio_gpu_ring_blob.cpp',
+diff --git a/host/virtio_gpu_gfxstream_renderer.cpp b/host/virtio_gpu_gfxstream_renderer.cpp
+index 295f9bf6..5b429953 100644
+--- a/host/virtio_gpu_gfxstream_renderer.cpp
++++ b/host/virtio_gpu_gfxstream_renderer.cpp
+@@ -595,6 +595,9 @@ VG_EXPORT int stream_renderer_resume() {
+     return 0;
+ }
+ 
++// inquiline_frame_server.cpp; this part of the file has C linkage.
++void startInquilineFrameServer();
++
+ VG_EXPORT int stream_renderer_init(struct stream_renderer_param* stream_renderer_params,
+                                    uint64_t num_params) {
+     // Required parameters.
+@@ -864,6 +867,7 @@ VG_EXPORT int stream_renderer_init(struct stream_renderer_param* stream_renderer
+     }
+ 
+     sFrontend()->init(renderer, renderer_cookie, features, fence_callback);
++    startInquilineFrameServer();
+ 
+     GFXSTREAM_INFO("Gfxstream initialized successfully!");
+     return 0;
+diff --git a/host/vulkan/vk_common_operations.cpp b/host/vulkan/vk_common_operations.cpp
+index ccaf1850..2561d71b 100644
+--- a/host/vulkan/vk_common_operations.cpp
++++ b/host/vulkan/vk_common_operations.cpp
+@@ -1797,7 +1797,10 @@ VkEmulation::~VkEmulation() {
+         }
+ 
+         mStaging.destroy(mDvk, mDevice);
+-        destroyHostImportLocked();
++        for (auto& [base, hostImport] : mHostImports) {
++            destroyHostImportLocked(hostImport);
++        }
++        mHostImports.clear();
+ 
+         mDvk->vkDestroyFence(mDevice, mCommandBufferFence, nullptr);
+         mDvk->vkFreeCommandBuffers(mDevice, mCommandPool, 1, &mCommandBuffer);
+@@ -3500,10 +3503,19 @@ bool VkEmulation::readColorBufferToBytes(uint32_t colorBufferHandle, uint32_t x,
+     return readColorBufferToBytesLocked(colorBufferHandle, x, y, w, h, outPixels, outPixelsSize);
+ }
+ 
+-void VkEmulation::destroyHostImportLocked() {
+-    mDvk->vkDestroyBuffer(mDevice, mHostImport.mBuffer, nullptr);
+-    mDvk->vkFreeMemory(mDevice, mHostImport.mMemory, nullptr);
+-    mHostImport = {};
++void VkEmulation::destroyHostImportLocked(HostImport& hostImport) {
++    mDvk->vkDestroyBuffer(mDevice, hostImport.mBuffer, nullptr);
++    mDvk->vkFreeMemory(mDevice, hostImport.mMemory, nullptr);
++    hostImport = {};
++}
++
++void VkEmulation::forgetHostMemory(void* base) {
++    std::lock_guard<std::mutex> lock(mMutex);
++    auto it = mHostImports.find(base);
++    if (it != mHostImports.end()) {
++        destroyHostImportLocked(it->second);
++        mHostImports.erase(it);
++    }
+ }
+ 
+ bool VkEmulation::readColorBufferToHostMemory(uint32_t colorBufferHandle, void* base,
+@@ -3527,8 +3539,9 @@ bool VkEmulation::readColorBufferToHostMemory(uint32_t colorBufferHandle, void*
+         return false;
+     }
+ 
+-    if (mHostImport.mBase != base || mHostImport.mSize != size) {
+-        destroyHostImportLocked();
++    HostImport& mHostImport = mHostImports[base];
++    if (mHostImport.mSize != size) {
++        destroyHostImportLocked(mHostImport);
+         VkMemoryHostPointerPropertiesEXT hostProps = {
+             .sType = VK_STRUCTURE_TYPE_MEMORY_HOST_POINTER_PROPERTIES_EXT,
+         };
+@@ -3569,11 +3582,11 @@ bool VkEmulation::readColorBufferToHostMemory(uint32_t colorBufferHandle, void*
+             vk->vkAllocateMemory(mDevice, &allocInfo, nullptr, &mHostImport.mMemory) != VK_SUCCESS ||
+             vk->vkBindBufferMemory(mDevice, mHostImport.mBuffer, mHostImport.mMemory, 0) !=
+                 VK_SUCCESS) {
+-            GFXSTREAM_ERROR("Mini: could not import frame memory, falling back to readback.");
+-            destroyHostImportLocked();
++            GFXSTREAM_ERROR("Could not import frame memory.");
++            destroyHostImportLocked(mHostImport);
++            mHostImports.erase(base);
+             return false;
+         }
+-        mHostImport.mBase = base;
+         mHostImport.mSize = size;
+     }
+ 
+diff --git a/host/vulkan/vk_common_operations.h b/host/vulkan/vk_common_operations.h
+index dc8fd1b0..78125322 100644
+--- a/host/vulkan/vk_common_operations.h
++++ b/host/vulkan/vk_common_operations.h
+@@ -441,6 +441,8 @@ class VkEmulation {
+     // the device can't import host memory or the format isn't RGBA8; the caller falls back.
+     bool readColorBufferToHostMemory(uint32_t colorBufferHandle, void* base, uint64_t size,
+                                      uint64_t offset);
++    // Inquiline: drops the import of |base|, before its memory is unmapped.
++    void forgetHostMemory(void* base);
+     bool readColorBufferPixelsScaled(uint32_t colorBufferHandle, int pixelsWidth, int pixelsHeight,
+                                      GFXSTREAM_ROTATION pixelsRotation, const Rect& rect,
+                                      GfxstreamFormat pixelsFormat, void* outPixels,
+@@ -749,14 +751,15 @@ class VkEmulation {
+     // Staging buffer to perform reads and updates on color buffers.
+     StagingBuffer mStaging GUARDED_BY(mMutex);
+ 
+-    // Mini's frame memory, imported by readColorBufferToHostMemory().
++    // Frame memory imported by readColorBufferToHostMemory(), by address: Inquiline has one
++    // per window.
+     struct HostImport {
+-        void* mBase = nullptr;
+         VkDeviceSize mSize = 0;
+         VkBuffer mBuffer = VK_NULL_HANDLE;
+         VkDeviceMemory mMemory = VK_NULL_HANDLE;
+-    } mHostImport GUARDED_BY(mMutex);
+-    void destroyHostImportLocked() REQUIRES(mMutex);
++    };
++    std::unordered_map<void*, HostImport> mHostImports GUARDED_BY(mMutex);
++    void destroyHostImportLocked(HostImport& hostImport) REQUIRES(mMutex);
+ 
+     // ColorBuffers are intended to back the guest's shareable images.
+     // For example:

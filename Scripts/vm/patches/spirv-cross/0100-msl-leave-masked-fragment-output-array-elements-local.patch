@@ -1,0 +1,22 @@
+diff --git a/spirv_msl.cpp b/spirv_msl.cpp
+index c5a9d433..2e85c91f 100644
+--- a/spirv_msl.cpp
++++ b/spirv_msl.cpp
+@@ -3080,6 +3080,17 @@ void CompilerMSL::add_composite_variable_to_interface_block(StorageClass storage
+ 
+ 	for (uint32_t i = 0; i < elem_cnt; i++)
+ 	{
++		// An element of a fragment output array whose color attachment is masked out stays in
++		// the local array only, as a whole masked output variable does. As an interface member
++		// it would get no [[color]] attribute, which Metal rejects.
++		if (storage == StorageClassOutput && get_entry_point().model == ExecutionModelFragment &&
++		    get_decoration_bitset(var.self).get(DecorationLocation))
++		{
++			uint32_t locn = get_decoration(var.self, DecorationLocation) + i;
++			if (locn < 32 && !(msl_options.enable_frag_output_mask & (1u << locn)))
++				continue;
++		}
++
+ 		// Add a reference to the variable type to the interface struct.
+ 		uint32_t ib_mbr_idx = uint32_t(ib_type.member_types.size());
+ 
