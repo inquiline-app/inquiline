@@ -13,7 +13,10 @@ let package = Package(
             name: "Inquiline",
             dependencies: [.product(name: "Sparkle", package: "Sparkle")],
             path: "Sources/Inquiline",
-            linkerSettings: [.unsafeFlags(["-Xlinker", "-rpath", "-Xlinker", "@executable_path/../Frameworks"])]
+            // Weak: the apps' own bundles run this same program without Sparkle inside, and
+            // only Inquiline itself uses it.
+            linkerSettings: [.unsafeFlags(["-Xlinker", "-rpath", "-Xlinker", "@executable_path/../Frameworks",
+                                           "-Xlinker", "-weak_framework", "-Xlinker", "Sparkle"])]
         )
     ]
 )
