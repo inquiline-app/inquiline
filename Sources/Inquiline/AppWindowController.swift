@@ -294,12 +294,8 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate {
         alert.beginSheetModal(for: window) { [self] response in
             guard response == .alertFirstButtonReturn else { return }
             UserDefaults.standard.set(true, forKey: Self.restartKey(package))
-            // Opens again once this process has ended, as only one copy of an app runs.
-            let relaunch = Process()
-            relaunch.executableURL = URL(fileURLWithPath: "/bin/sh")
-            relaunch.arguments = ["-c", "while kill -0 \"$1\" 2>/dev/null; do sleep 0.2; done; /usr/bin/open \"$0\"",
-                                  Bundle.main.bundlePath, String(getpid())]
-            try? relaunch.run()
+            // Inquiline opens it again once this process has ended, as only one copy of an app runs.
+            if let url = URL(string: "inquiline://restart?package=\(package)") { NSWorkspace.shared.open(url) }
             NSApp.terminate(nil)
         }
     }
