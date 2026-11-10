@@ -52,6 +52,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, SPUSta
             exit(0)
         }
         if offerToMoveToApplications() { return }
+        watchForRemoval()
         AppLog.write("Started \(ProblemReport.version) on \(ProblemReport.mac), \(ProblemReport.macOS)")
         // A test copy (INQUILINE_HOME) never replaces itself.
         if AndroidRuntime.testHome == nil {
@@ -532,18 +533,92 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, SPUSta
 
     /// Moving an app to the Trash removes it as on a Mac. Its data stays inside Android,
     /// so adding it again brings back its saves.
+    /// Moving an app to the Trash removes it with everything it kept, inside Android and on the
+    /// Mac, as deleting an app on a phone does.
     private func removedFromApplications(_ package: String) {
         guard let app = library.app(package: package) else { return }
+        AppShortcuts.forget(package: package)
         guard package != AndroidRuntime.playStorePackage else {
-            confirmRemoveGooglePlay()
-            updateShortcuts()
+            changeGooglePlay(message: "Removing Google Play…",
+                             detail: "Android starts again without Google's apps. This takes a minute or two.") { status in
+                try AndroidRuntime.shared.removeGooglePlay(status: status)
+            }
             return
         }
         run("Removing \(app.label)…", { [self] in
             try AndroidRuntime.shared.ensureReady { self.setStatus($0) }
-            try AndroidRuntime.shared.uninstall(package: package, keepData: true)
+            try AndroidRuntime.shared.uninstall(package: package)
             DispatchQueue.main.sync { library.remove(package: package) }
         }, failure: "Couldn't remove \(app.label)")
+    }
+
+    // MARK: - Removing Inquiline
+
+    private var selfWatch: DispatchSourceFileSystemObject?
+    private var selfBookmark: Data?
+
+    /// Moving Inquiline to the Trash removes all it made, as uninstalling does on a phone: the
+    /// apps added with it and their shortcuts, Android and everything in it, its settings,
+    /// caches and logs. Inquiline sees it while it runs, which it does in the menu bar.
+    private func watchForRemoval() {
+        selfBookmark = try? Bundle.main.bundleURL.bookmarkData()
+        let folder = Bundle.main.bundleURL.deletingLastPathComponent()
+        let descriptor = open(folder.path, O_EVTONLY)
+        guard descriptor >= 0 else { return }
+        let source = DispatchSource.makeFileSystemObjectSource(fileDescriptor: descriptor, eventMask: [.write, .rename, .delete], queue: .main)
+        source.setEventHandler { [weak self] in
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1) { self?.checkRemoved() }
+        }
+        source.setCancelHandler { close(descriptor) }
+        source.resume()
+        selfWatch = source
+    }
+
+    private func checkRemoved() {
+        guard let selfBookmark else { return }
+        var stale = false
+        let now = try? URL(resolvingBookmarkData: selfBookmark, options: [.withoutUI, .withoutMounting], bookmarkDataIsStale: &stale)
+        guard now == nil || now!.path.contains("/.Trash/") else { return }
+        // Another copy of Inquiline, as when a downloaded one was moved to Applications, keeps
+        // everything.
+        let others = NSWorkspace.shared.urlsForApplications(withBundleIdentifier: Bundle.main.bundleIdentifier ?? "")
+            .filter { !$0.path.contains("/.Trash/") && $0.standardizedFileURL != Bundle.main.bundleURL.standardizedFileURL }
+        // A test copy only removes its own folder, so other copies don't matter to it.
+        guard others.isEmpty || AndroidRuntime.testHome != nil else { return }
+        removeEverything()
+    }
+
+    private func removeEverything() {
+        selfWatch?.cancel()
+        AppLog.write("Inquiline was moved to the Trash: removing everything it made")
+        runningApps.forEach { $0.forceTerminate() }
+        AndroidRuntime.shared.shutdown()
+        AndroidFiles.eject(gone: true)
+        AppShortcuts.removeAll()
+        let files = FileManager.default
+        if let test = AndroidRuntime.testHome {
+            // A test copy only ever touches its own folder.
+            try? files.removeItem(at: test)
+        } else {
+            try? SMAppService.mainApp.unregister()
+            let home = files.homeDirectoryForCurrentUser
+            let library = home.appendingPathComponent("Library")
+            var gone = [AndroidRuntime.shared.home, library.appendingPathComponent("Logs/Inquiline")]
+            let prefix = "io.github.inquiline-app."
+            let cache = URL(fileURLWithPath: NSTemporaryDirectory()).deletingLastPathComponent().appendingPathComponent("C")
+            for folder in ["Caches", "HTTPStorages", "Saved Application State", "Preferences", "WebKit"].map({ library.appendingPathComponent($0) }) + [cache] {
+                for name in (try? files.contentsOfDirectory(atPath: folder.path)) ?? [] where name.hasPrefix(prefix) {
+                    gone.append(folder.appendingPathComponent(name))
+                }
+            }
+            gone.forEach { try? files.removeItem(at: $0) }
+            // macOS keeps preferences in memory too.
+            for name in (try? files.contentsOfDirectory(atPath: library.appendingPathComponent("Preferences").path)) ?? [] where name.hasPrefix(prefix) {
+                CFPreferencesSynchronize(name.replacingOccurrences(of: ".plist", with: "") as CFString, kCFPreferencesCurrentUser, kCFPreferencesAnyHost)
+            }
+            UserDefaults.standard.removePersistentDomain(forName: Bundle.main.bundleIdentifier ?? "")
+        }
+        exit(0)
     }
 
     // MARK: - Google Play

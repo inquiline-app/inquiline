@@ -119,6 +119,31 @@ enum AppShortcuts {
         }
     }
 
+    /// Its settings on the Mac, kept by the app's own copy of the program: window, sound,
+    /// resolution. Gone with the app.
+    static func forget(package: String) {
+        // A test copy's apps share these names with the real ones.
+        guard AndroidRuntime.testHome == nil else { return }
+        let domain = "io.github.inquiline-app.app.\(package)"
+        UserDefaults.standard.removePersistentDomain(forName: domain)
+        let library = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library")
+        for path in ["Preferences/\(domain).plist", "Saved Application State/\(domain).savedState", "Caches/\(domain)"] {
+            try? FileManager.default.removeItem(at: library.appendingPathComponent(path))
+        }
+    }
+
+    /// Every app Inquiline made, wherever the user put it, and its own folder: as Inquiline goes.
+    static func removeAll() {
+        queue.sync {
+            watches.forEach { $0.cancel() }
+            watches = []
+            for bundle in locate().values { try? FileManager.default.removeItem(at: bundle) }
+            try? FileManager.default.removeItem(at: ownFolder)
+            if folder != ownFolder { try? FileManager.default.removeItem(at: folder) }
+            places = [:]
+        }
+    }
+
     /// The package of an app Inquiline made, or nil for any other.
     private static func package(of bundle: URL) -> String? {
         NSDictionary(contentsOf: bundle.appendingPathComponent("Contents/Info.plist"))?[packageKey] as? String
