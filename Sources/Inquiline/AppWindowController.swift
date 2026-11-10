@@ -280,11 +280,21 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate {
         // A toolbar's pull-down menu takes its first item as its title, which it doesn't list.
         menu.addItem(.sectionHeader(title: "Resolution"))
         for level in ScrcpySession.Resolution.allCases {
-            let entry = menu.addItem(withTitle: level.name, action: #selector(chooseResolution(_:)), keyEquivalent: "")
+            let pixels = Self.layout(level, landscape: isLandscape).screen
+            let entry = menu.addItem(withTitle: "\(level.name) — \(Self.qualityName(pixels))", action: #selector(chooseResolution(_:)),
+                                     keyEquivalent: "")
             entry.target = self
             entry.tag = level.rawValue
             entry.state = level == ScrcpySession.resolution(package: package) ? .on : .off
         }
+    }
+
+    /// The common name nearest to the pixels a level draws on this Mac, which depend on its
+    /// screen and memory: HD, Full HD, 2K or 4K.
+    private static func qualityName(_ screen: ScrcpySession.Screen) -> String {
+        let pixels = Double(screen.width * screen.height)
+        let names: [(String, Double)] = [("HD", 1280 * 720), ("Full HD", 1920 * 1080), ("2K", 2560 * 1440), ("4K", 3840 * 2160)]
+        return names.min { abs(log(pixels / $0.1)) < abs(log(pixels / $1.1)) }!.0
     }
 
     private static func restartKey(_ package: String) -> String { "RestartForResolution.\(package)" }
