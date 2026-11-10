@@ -223,7 +223,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, SPUSta
         menu.addItem(withTitle: hasGooglePlay ? "Remove Google Play…" : "Install Google Play…",
                      action: #selector(changeGooglePlay(_:)), keyEquivalent: "").target = self
         menu.addItem(.separator())
-        menu.addItem(withTitle: "Show Apps in Finder", action: #selector(showApps(_:)), keyEquivalent: "").target = self
         menu.addItem(withTitle: "Show Files in Finder", action: #selector(showFiles(_:)), keyEquivalent: "").target = self
         menu.addItem(.separator())
         let login = menu.addItem(withTitle: "Open at Login", action: #selector(toggleOpenAtLogin(_:)), keyEquivalent: "")
@@ -279,10 +278,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, SPUSta
         if panel.runModal() == .OK {
             panel.urls.forEach { install(apk: $0) }
         }
-    }
-
-    @objc private func showApps(_ sender: Any?) {
-        NSWorkspace.shared.open(AppShortcuts.folder)
     }
 
     @objc private func showFiles(_ sender: Any?) {
