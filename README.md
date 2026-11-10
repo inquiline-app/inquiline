@@ -26,7 +26,7 @@ Each Android app gets its own window, Dock icon and menu, and shows up in Launch
 - **Google Play** if you add it yourself, or any APK
 - **Free and open source**, with no accounts and no tracking
 
-Inquiline is free and open source. It's an early preview: expect rough edges, and please [report problems](https://github.com/inquiline-app/inquiline/issues).
+Inquiline is free and open source. It's an early preview: expect rough edges, and please report problems: choose **Report a Problem…** from Inquiline in the menu bar, which gathers its logs for you, or [open an issue](https://github.com/inquiline-app/inquiline/issues).
 
 ## Not an emulator
 

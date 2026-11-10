@@ -224,10 +224,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, SPUSta
         let login = menu.addItem(withTitle: "Open at Login", action: #selector(toggleOpenAtLogin(_:)), keyEquivalent: "")
         login.target = self
         login.state = SMAppService.mainApp.status == .enabled ? .on : .off
+        menu.addItem(withTitle: "Report a Problem…", action: #selector(reportProblem(_:)), keyEquivalent: "").target = self
         if updater != nil {
             menu.addItem(withTitle: "Check for Updates…", action: #selector(checkForUpdates(_:)), keyEquivalent: "").target = self
         }
         menu.addItem(withTitle: "Quit Inquiline", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "")
+    }
+
+    @objc private func reportProblem(_ sender: Any?) {
+        NSApp.activate(ignoringOtherApps: true)
+        let zip: URL
+        do { zip = try ProblemReport.make() } catch {
+            showError("Couldn't make the report", error)
+            return
+        }
+        NSWorkspace.shared.activateFileViewerSelecting([zip])
+        let alert = NSAlert()
+        alert.messageText = "Your report is ready"
+        alert.informativeText = "Finder shows it: a zip with Inquiline's logs, its crash reports and your Mac's model, "
+            + "without your name. In the form that opens, say what happened, then drag the zip into it.\n\n"
+            + "The form is on GitHub, so it needs a GitHub account."
+        alert.addButton(withTitle: "Open Form")
+        alert.addButton(withTitle: "Cancel")
+        if alert.runModal() == .alertFirstButtonReturn { NSWorkspace.shared.open(ProblemReport.formURL()) }
     }
 
     @objc private func checkForUpdates(_ sender: Any?) {
