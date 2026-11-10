@@ -21,7 +21,7 @@ Each Android app gets its own window, Dock icon and menu, and shows up in Launch
 
 - **Real Android 15**, running on your Mac's own CPU, without translation
 - **Fast graphics**: Vulkan 1.3 and OpenGL ES 3.2 on your Mac's GPU through Metal, up to 60 FPS in 3D games
-- **Mac-native windows**: resize, full screen, a customizable toolbar with frame rate, resolution, mute and rotate
+- **Mac-native windows**: resize, full screen, Game Mode for games, a customizable toolbar with frame rate, mute and rotate
 - **Game controllers**, sound, copy and paste, and Android's files in Finder
 - **Google Play** if you add it yourself, or any APK
 - **Free and open source**, with no accounts and no tracking
@@ -63,12 +63,13 @@ Each app you add appears in your Applications folder and in Launchpad; you can m
 ## Using apps
 
 - **Mouse and trackpad** work as touch: click to tap, drag to swipe, scroll to scroll.
-- **The toolbar** shows the frame rate and has buttons to set the app's resolution (Low, Medium or High: higher is sharper in large windows and full screen, lower is lighter for your Mac), to mute it, and to turn it between portrait and landscape. **View > Customize Toolbar** changes it.
+- **The toolbar** shows the frame rate and has buttons to mute the app and to turn it between portrait and landscape. **View > Customize Toolbar** changes it.
+- **Resolution** is the highest on Macs with 16 GB of memory or more, and lighter on others. Games get macOS's Game Mode.
 - **Resize** the window freely; the app keeps its shape, which is your screen's (16:10 on a MacBook). An app first opens at a phone's size, then where and as large as you left it. **Ctrl+Cmd+F** goes full screen, and an app closed in full screen opens in full screen.
 - **Game controllers** connected to the Mac (Xbox, PlayStation, MFi) work in games that support them, as a controller plugged into a phone does. They drive the app in front.
 - **Apps keep running** when their window is in the back or minimized, as Mac apps do.
 - **Files:** choose **Show Files in Finder** from the menu bar. Android's storage and each app's own folders appear as the **Android** disk.
-- Android stops by itself 5 minutes after you quit the last app, unless something is still downloading.
+- **Android sleeps** a few seconds after you quit the last app, unless something is still downloading or playing: it uses no CPU, and the next app opens in about a second. It shuts down after an hour asleep, or sooner if your Mac needs the memory.
 
 | Mac | Android |
 |---|---|
