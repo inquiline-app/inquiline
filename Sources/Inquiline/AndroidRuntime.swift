@@ -322,6 +322,9 @@ final class AndroidRuntime {
         process.environment = env
         process.standardOutput = FileHandle.nullDevice
         process.standardError = Self.engineLog() ?? FileHandle.nullDevice
+        // If the engine ends on its own, as when it crashes, Android's disk goes with it at once,
+        // not when Finder finds its server gone.
+        process.terminationHandler = { _ in AndroidFiles.eject(gone: true) }
         try process.run()
         vm = process
         bootCount += 1

@@ -62,6 +62,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, SPUSta
         signal(SIGTERM, SIG_IGN)
         terminationSource.setEventHandler { NSApp.terminate(nil) }
         terminationSource.resume()
+        // A disk left by a run that crashed points at an Android that isn't there.
+        DispatchQueue.global().async { AndroidFiles.eject(gone: true) }
 
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         statusItem.menu = NSMenu()

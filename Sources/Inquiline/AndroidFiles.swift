@@ -85,12 +85,34 @@ enum AndroidFiles {
         }
     }
 
-    /// Ejects the disk before Android stops, as a drive is before it's pulled out.
-    static func eject() {
+    /// Ejects the disk before Android stops, as a drive is before it's pulled out: the one
+    /// this run mounted, and any left from a run that ended without ejecting it.
+    /// `gone`: Android has already stopped, as when the engine crashed. Asking Finder to
+    /// eject would wait on a server that's no longer there while Finder reports it lost, so
+    /// the disk goes at once, as a pulled drive does.
+    static func eject(gone: Bool = false) {
         lock.lock()
         defer { lock.unlock() }
-        guard let mountPoint else { return }
-        self.mountPoint = nil
+        mountPoint = nil
+        for point in mounted() {
+            if gone { _ = Darwin.unmount(point.path, MNT_FORCE) } else { eject(at: point) }
+        }
+    }
+
+    /// Where Android's disk is mounted now, found from the system, not remembered.
+    private static func mounted() -> [URL] {
+        var list: UnsafeMutablePointer<statfs>?
+        let count = getmntinfo(&list, MNT_NOWAIT)
+        guard count > 0, let list else { return [] }
+        return (0..<Int(count)).compactMap { i in
+            var entry = list[i]
+            let from = withUnsafeBytes(of: &entry.f_mntfromname) { String(cString: $0.bindMemory(to: CChar.self).baseAddress!) }
+            let on = withUnsafeBytes(of: &entry.f_mntonname) { String(cString: $0.bindMemory(to: CChar.self).baseAddress!) }
+            return from.lowercased().contains("@android.local") ? URL(fileURLWithPath: on) : nil
+        }
+    }
+
+    private static func eject(at mountPoint: URL) {
         let done = DispatchSemaphore(value: 0)
         var ejected = false
         FileManager.default.unmountVolume(at: mountPoint, options: [.withoutUI]) { error in
