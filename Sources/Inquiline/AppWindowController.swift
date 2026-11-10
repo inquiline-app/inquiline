@@ -229,8 +229,25 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate {
         fpsLabel.translatesAutoresizingMaskIntoConstraints = false
         fpsLabel.widthAnchor.constraint(equalToConstant: 44).isActive = true
         let counter = frameCount
+        let engine = EngineLoad()
+        var still = 0, seconds = 0, moving = 0
         fpsTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
-            self?.fpsLabel.stringValue = "\(counter.take())"
+            guard let self else { return }
+            let fps = counter.take()
+            self.fpsLabel.stringValue = "\(fps)"
+            // A game's first launch can sit on one picture for minutes, while its graphics are
+            // prepared for the Mac's GPU, which keeps the engine busy, or while it loads, still
+            // on its splash screen. An app just showing a still screen has moved for longer
+            // before, and leaves the engine idle.
+            seconds += 1
+            if fps > 0 { moving += 1 }
+            still = fps > 0 ? 0 : still + 1
+            let busy = engine.cores() >= 3
+            // A splash screen animates for a few seconds at most.
+            let splash = seconds < 5 * 60 && moving < 10
+            if fps > 0 || (self.loading && !busy && !splash) { self.showLoading(false) }
+            // Before the app's first picture, the launch screen already says it's starting.
+            else if still >= 4 && (busy || splash) && self.launchScreen.superview == nil { self.showLoading(true) }
         }
         let toolbar = NSToolbar(identifier: "AppWindowToolbar")
         toolbar.delegate = self
@@ -343,6 +360,16 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate {
         }
     }
 
+    private var loading = false
+    private static let loadingNote = "Loading… The first launch of a game can take a few minutes."
+
+    private func showLoading(_ on: Bool) {
+        guard on != loading else { return }
+        loading = on
+        if on { window.subtitle = Self.loadingNote }
+        else if window.subtitle == Self.loadingNote { window.subtitle = "" }
+    }
+
     /// A short note under the window's title, as Finder shows one while it works.
     private func note(_ text: String) {
         window.subtitle = text
@@ -417,5 +444,37 @@ private final class FrameCounter: @unchecked Sendable {
     func take() -> Int {
         lock.lock(); defer { count = 0; lock.unlock() }
         return count
+    }
+}
+
+/// How many CPU cores the VM's engine used since the last call: Android's apps, and the
+/// Mac-side work of preparing their graphics.
+private final class EngineLoad {
+    private var pid: pid_t = 0
+    private var last: (cpu: UInt64, at: UInt64) = (0, 0)
+    private static let timebase: mach_timebase_info_data_t = { var t = mach_timebase_info_data_t(); mach_timebase_info(&t); return t }()
+
+    func cores() -> Double {
+        if pid == 0 || kill(pid, 0) != 0 { pid = Self.findEngine(); last = (0, 0) }
+        guard pid > 0 else { return 0 }
+        var info = proc_taskinfo()
+        guard proc_pidinfo(pid, PROC_PIDTASKINFO, 0, &info, Int32(MemoryLayout<proc_taskinfo>.size)) > 0 else { return 0 }
+        let cpu = (info.pti_total_user + info.pti_total_system) * UInt64(Self.timebase.numer) / UInt64(Self.timebase.denom)
+        let now = clock_gettime_nsec_np(CLOCK_UPTIME_RAW)
+        defer { last = (cpu, now) }
+        guard last.at > 0, now > last.at else { return 0 }
+        return Double(cpu - min(cpu, last.cpu)) / Double(now - last.at)
+    }
+
+    private static func findEngine() -> pid_t {
+        var pids = [pid_t](repeating: 0, count: 4096)
+        let count = Int(proc_listallpids(&pids, Int32(pids.count * MemoryLayout<pid_t>.size)))
+        var path = [CChar](repeating: 0, count: 4096)
+        for pid in pids.prefix(max(count, 0)) where pid > 0 {
+            if proc_pidpath(pid, &path, UInt32(path.count)) > 0, String(cString: path).hasSuffix("/" + AndroidRuntime.engineName) {
+                return pid
+            }
+        }
+        return 0
     }
 }
