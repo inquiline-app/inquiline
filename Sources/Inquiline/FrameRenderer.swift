@@ -32,6 +32,7 @@ final class FrameRenderer {
     /// for Mac games, which keeps edges and text sharp; scaling by the layer alone blurs them.
     private let outputLock = NSLock()
     private var windowPixels = CGSize.zero
+    private var windowChanged = Date.distantPast
     private var scaler: MTLFXSpatialScaler?
     private var scaled: MTLTexture?
 
@@ -130,7 +131,10 @@ final class FrameRenderer {
     /// Called on the main thread when the window's size or screen changes.
     func setWindowPixels(_ size: CGSize) {
         outputLock.lock()
-        windowPixels = size
+        if size != windowPixels {
+            windowPixels = size
+            windowChanged = Date()
+        }
         outputLock.unlock()
     }
 
@@ -138,8 +142,12 @@ final class FrameRenderer {
     /// window shows the frame at its own size or smaller, where the layer's scaling is enough.
     private func upscaler() -> MTLFXSpatialScaler? {
         outputLock.lock()
-        let window = windowPixels
+        let window = windowPixels, changed = windowChanged
         outputLock.unlock()
+        // While the window is resized or goes in or out of full screen, its size changes each
+        // frame; making a scaler for each flickered. The current one stays, and the layer
+        // scales its picture, until the size has held for a moment.
+        if scaler != nil, Date().timeIntervalSince(changed) < 0.3 { return scaler }
         // The frame's shape, as large as fits the window.
         let fit = min(window.width / CGFloat(width), window.height / CGFloat(height))
         let output = CGSize(width: (CGFloat(width) * fit).rounded(), height: (CGFloat(height) * fit).rounded())
