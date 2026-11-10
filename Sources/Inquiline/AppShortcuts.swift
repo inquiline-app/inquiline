@@ -9,6 +9,7 @@ enum AppShortcuts {
         let package: String
         let label: String
         let orientation: AppOrientation
+        let isGame: Bool
         let icon: NSImage
     }
 
@@ -253,6 +254,11 @@ enum AppShortcuts {
             programKey: fingerprint,
         ]
         if let home = AndroidRuntime.testHome { info.setValue(home.path, forKey: homeKey) }
+        // A game is one to macOS too: in full screen it gets Game Mode, as Mac games do.
+        if app.isGame {
+            info.setValue("public.app-category.games", forKey: "LSApplicationCategoryType")
+            info.setValue(true, forKey: "LSSupportsGameMode")
+        }
         // An update of Inquiline brings a new program, which its apps take on too, but not
         // while one is open: replacing its bundle would end it. It's updated once it quits.
         let identifier = info["CFBundleIdentifier"] as? String ?? ""

@@ -18,6 +18,7 @@ struct LibraryApp: Codable {
     let package: String
     var label: String
     var orientation: AppOrientation?
+    var isGame: Bool?
 }
 
 /// The apps installed in the VM, kept on the Mac so the list and its icons are
@@ -43,8 +44,9 @@ final class Library {
         if let index = apps.firstIndex(where: { $0.package == info.package }) {
             apps[index].label = info.label
             apps[index].orientation = info.orientation ?? apps[index].orientation
+            apps[index].isGame = info.isGame ?? apps[index].isGame
         } else {
-            apps.append(LibraryApp(package: info.package, label: info.label, orientation: info.orientation))
+            apps.append(LibraryApp(package: info.package, label: info.label, orientation: info.orientation, isGame: info.isGame))
             apps.sort { $0.label.localizedCaseInsensitiveCompare($1.label) == .orderedAscending }
         }
         changed()

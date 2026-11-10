@@ -375,7 +375,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, SPUSta
                 icon = runtime.iconPNG(package: package)
                 label = runtime.label(package: package)
             }
-            let info = ApkInfo(package: package, label: label ?? package, orientation: manifest.orientation)
+            let info = ApkInfo(package: package, label: label ?? package, orientation: manifest.orientation,
+                               isGame: runtime.isGame(package: package, manifest: manifest))
             DispatchQueue.main.sync {
                 library.add(info)
                 if let icon { library.setIcon(icon, package: package) }
@@ -397,8 +398,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, SPUSta
         // Apps installed inside Android, from the Play Store for instance, start the way
         // their manifest says, as on a phone.
         // A name still missing means the launcher hadn't read the app yet when it was last looked at.
-        let added = installed.filter { package in !known.contains { $0.package == package && $0.orientation != nil && $0.label != package } }
-            .map { ApkInfo(package: $0, label: runtime.label(package: $0) ?? $0, orientation: runtime.manifest(package: $0)?.orientation) }
+        let added = installed.filter { package in
+            !known.contains { $0.package == package && $0.orientation != nil && $0.label != package && $0.isGame != nil }
+        }.map { package in
+            let manifest = runtime.manifest(package: package)
+            return ApkInfo(package: package, label: runtime.label(package: package) ?? package, orientation: manifest?.orientation,
+                           isGame: runtime.isGame(package: package, manifest: manifest))
+        }
         let icons = missingIcons.compactMap { package in runtime.iconPNG(package: package).map { (package, $0) } }
 
         DispatchQueue.main.sync {
@@ -457,7 +463,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, SPUSta
         // An app is only given a shortcut once its name is known.
         let apps = library.apps.filter { $0.label != $0.package }.map {
             AppShortcuts.App(package: $0.package, label: $0.label, orientation: $0.orientation ?? .both,
-                             icon: library.icon(package: $0.package))
+                             isGame: $0.isGame ?? false, icon: library.icon(package: $0.package))
         }
         AppShortcuts.sync(apps, done: done)
     }

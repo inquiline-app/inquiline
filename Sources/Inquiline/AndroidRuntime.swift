@@ -10,6 +10,7 @@ struct ApkInfo {
     let package: String
     let label: String
     var orientation: AppOrientation?
+    var isGame: Bool?
 }
 
 /// Owns the single Linux VM, and the Android inside it, that every app window is
@@ -493,6 +494,18 @@ final class AndroidRuntime {
     }
 
     /// Reads an installed app's manifest, as for apps installed from inside Android.
+    /// A game, as macOS's Game Mode and the App Store's categories see it: one that says so in
+    /// its manifest, or one built on a game engine, as many don't say.
+    func isGame(package: String, manifest: ApkManifest?) -> Bool {
+        if manifest?.isGame == true { return true }
+        guard let path = try? shell("pm path \(package)").split(whereSeparator: \.isNewline).first?.dropFirst("package:".count)
+        else { return false }
+        let folder = (String(path) as NSString).deletingLastPathComponent
+        let engines = (try? shell("ls \(folder)/lib/*/ 2>/dev/null")) ?? ""
+        return ["libunity.so", "libUE4.so", "libUnreal.so", "libil2cpp.so", "libcocos2dcpp.so", "libgodot_android.so"]
+            .contains { engines.contains($0) }
+    }
+
     func manifest(package: String) -> ApkManifest? {
         guard let path = try? shell("pm path \(package)")
             .split(whereSeparator: \.isNewline)
