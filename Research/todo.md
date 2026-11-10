@@ -8,7 +8,8 @@
 - [ ] Memory: 8 GB on Macs with 16 GB or more, 4 GB below (being tried). With 12 GB and four games open, Android used 5.5 GB while the engine held 12 GB and the Mac swapped. Freed memory does go back (closing the apps took it down to 3.5 GB in seconds); the rest is likely the games' GPU memory on the Mac, which no limit on Android covers. Measure how it splits. Oniro once drew its whole scene red; it didn't happen again at 12 GB in the same place, so memory wasn't the cause. Watch for it, and note what was going on when it does (how long the game ran, whether its window had been in the back).
 - [x] README for users: install and first open, using apps, what to expect, how it works, licenses and trademarks.
 - [x] Third-party licenses: THIRD-PARTY-NOTICES.md lists every part in the app and on Android's disk with its version, license and source, with an offer of the GPL and LGPL source; the texts are in Resources/Licenses and the app. Update it when a part changes.
-- [ ] GitHub repository and a pre-release with the zip.
+- [x] GitHub repository and release 0.1.0 (DMG, Sparkle updates).
+- [ ] A screenshot or GIF at the top of the README.
 
 ## Compatibility
 
