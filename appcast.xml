@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
+    <channel>
+        <title>Inquiline</title>
+        <item>
+            <title>Inquiline 0.1.0</title>
+            <pubDate>Tue, 10 Nov 2026 07:53:48 +0000</pubDate>
+            <sparkle:version>1</sparkle:version>
+            <sparkle:shortVersionString>0.1.0</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <sparkle:releaseNotesLink>https://github.com/inquiline-app/inquiline/releases/tag/v0.1.0</sparkle:releaseNotesLink>
+            <enclosure url="https://github.com/inquiline-app/inquiline/releases/download/v0.1.0/Inquiline-0.1.0-arm64.dmg" sparkle:edSignature="VJSZitp7x9lTxb2kO5jGrQtblKMm2sb6Opxaki4yvb2+9aiDFQNH3kJqKe0OUV72CYCiR/ez+zVxgg94ztCJBQ==" length="506461189" type="application/octet-stream"/>
+        </item>
+    </channel>
+</rss>
