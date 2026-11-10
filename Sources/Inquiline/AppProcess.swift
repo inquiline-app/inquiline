@@ -31,6 +31,7 @@ final class AppProcess: NSObject, NSApplicationDelegate {
         buildMenu(label: label, controller: controller)
         controller.window.subtitle = "Starting Android…"
         controller.window.makeKeyAndOrderFront(nil)
+        controller.restoreFullScreen()
         NSApp.activate(ignoringOtherApps: true)
 
         DispatchQueue.global().async { [package] in
@@ -58,7 +59,13 @@ final class AppProcess: NSObject, NSApplicationDelegate {
         true
     }
 
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        controller?.prepareToClose()
+        return .terminateNow
+    }
+
     func applicationWillTerminate(_ notification: Notification) {
+        controller?.prepareToClose()
         controller?.window.close()
     }
 

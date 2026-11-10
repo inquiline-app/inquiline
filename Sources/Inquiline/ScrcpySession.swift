@@ -13,21 +13,36 @@ final class ScrcpySession {
     }
     let screen: Screen
 
-    /// The toolbar's Resolution, kept for each app.
+    /// The toolbar's Resolution, kept for each app: how many pixels Android draws, 16:9. Apps
+    /// lay out the same at each, as on 1440 by 810 at 320 dpi; only sharpness changes.
     enum Resolution: Int, CaseIterable {
-        case small = 1, medium, large
+        case low = 1, medium, high
 
         var name: String {
             switch self {
-            case .small: return "Small"
+            case .low: return "Low"
             case .medium: return "Medium"
-            case .large: return "Large"
+            case .high: return "High"
             }
+        }
+
+        var longSide: Int {
+            switch self {
+            case .low: return 1440
+            case .medium: return 2560
+            case .high: return 3840
+            }
+        }
+
+        func screen(landscape: Bool) -> Screen {
+            let short = longSide * 9 / 16, density = 320 * longSide / 1440
+            return landscape ? Screen(width: longSide, height: short, density: density)
+                : Screen(width: short, height: longSide, density: density)
         }
     }
 
     static func resolution(package: String) -> Resolution {
-        Resolution(rawValue: UserDefaults.standard.integer(forKey: resolutionKey(package))) ?? .large
+        Resolution(rawValue: UserDefaults.standard.integer(forKey: resolutionKey(package))) ?? .medium
     }
 
     static func resolutionKey(_ package: String) -> String { "Resolution.\(package)" }
