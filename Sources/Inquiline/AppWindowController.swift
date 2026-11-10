@@ -39,7 +39,7 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate {
         session = ScrcpySession(package: package, landscape: landscape, longSide: longSide, restartsApp: restarting)
         let pixels = NSSize(width: longSide, height: longSide * 9 / 16)
         displaySize = landscape ? pixels : NSSize(width: pixels.height, height: pixels.width)
-        let points = Self.openingSize(for: displaySize)
+        let points = NSSize(width: displaySize.width / Self.pixelsPerPoint, height: displaySize.height / Self.pixelsPerPoint)
         displayView = AndroidDisplayView(frame: NSRect(origin: .zero, size: points))
         window = NSWindow(
             contentRect: NSRect(origin: .zero, size: points),
@@ -62,14 +62,17 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate {
         window.contentView = screen
         window.delegate = self
         // Resizing keeps the app's screen in its shape.
-        window.contentAspectRatio = points
+        window.contentAspectRatio = displaySize
         window.contentMinSize = Self.smallestSize(for: displaySize)
-        window.setContentSize(points)
+        // Each start opens at its resolution's size, not as macOS last left the window.
+        window.isRestorable = false
+        // Sized once the toolbar is in, as it takes room from the screen too.
+        addToolbar()
+        window.setContentSize(openingSize(for: displaySize))
         window.center()
         // Back where it was last time, as Mac windows are; each resolution opens at its own size.
-        window.setFrameAutosaveName("Main-\(longSide)")
+        window.setFrameAutosaveName("Window-\(longSide)")
         AppLog.write("Screen of \(Int(displaySize.width)) by \(Int(displaySize.height)) pixels")
-        addToolbar()
         connect(session)
     }
 
@@ -205,16 +208,19 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate {
         let current = screen.frame.size
         guard !isFullScreen, resized || abs(current.width / current.height - size.width / size.height) > 0.01
         else { return }
-        window.setContentSize(Self.openingSize(for: size))
+        window.setContentSize(openingSize(for: size))
     }
 
-    /// Half the app's pixels, as large as fits the screen.
-    private static func openingSize(for pixels: NSSize) -> NSSize {
-        let full = NSSize(width: pixels.width / pixelsPerPoint, height: pixels.height / pixelsPerPoint)
-        guard let visible = NSScreen.main?.visibleFrame.size else { return full }
-        // Room for the title bar and toolbar.
-        let fit = min(1, visible.width / full.width, (visible.height - 60) / full.height)
-        return NSSize(width: (full.width * fit).rounded(), height: (full.height * fit).rounded())
+    /// Half the app's pixels, as large as the screen has room for beside the title bar and
+    /// toolbar, in the app's own shape.
+    private func openingSize(for pixels: NSSize) -> NSSize {
+        let full = NSSize(width: pixels.width / Self.pixelsPerPoint, height: pixels.height / Self.pixelsPerPoint)
+        guard let visible = (window.screen ?? NSScreen.main)?.visibleFrame.size else { return full }
+        let chrome = window.frameRect(forContentRect: NSRect(x: 0, y: 0, width: 100, height: 100)).size
+        let room = NSSize(width: visible.width - (chrome.width - 100), height: visible.height - (chrome.height - 100))
+        let fit = min(1, room.width / full.width, room.height / full.height)
+        let height = (full.height * fit).rounded(.down)
+        return NSSize(width: (height * pixels.width / pixels.height).rounded(.down), height: height)
     }
 
     private static func smallestSize(for pixels: NSSize) -> NSSize {
