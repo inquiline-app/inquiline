@@ -50,11 +50,16 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate {
         displayView.frame = screen.bounds
         displayView.autoresizingMask = [.width, .height]
         screen.addSubview(displayView)
+        overlay.frame = screen.bounds
+        overlay.autoresizingMask = [.width, .height]
+        screen.addSubview(overlay)
         launchScreen.frame = screen.bounds
         launchScreen.autoresizingMask = [.width, .height]
         screen.addSubview(launchScreen)
         window.contentView = screen
         window.delegate = self
+        window.acceptsMouseMovedEvents = true
+        setUpControls()
         // Resizing keeps the app's screen in its shape. It opens at its smallest, a phone's
         // size, the first time, then where and as large as it was last.
         window.contentAspectRatio = displaySize
@@ -69,6 +74,69 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate {
 
     /// Holds the app's screen and, until its first picture, the launch screen.
     private let screen = NSView()
+    private let overlay = ControlsOverlay()
+
+    // MARK: - Keyboard controls
+
+    private var controlsLabelsKey: String { "ShowControls.\(package)" }
+
+    private func setUpControls() {
+        let set = KeyControlSet.load(package: package)
+        displayView.controls.set = set
+        overlay.set = set
+        overlay.showsLabels = UserDefaults.standard.bool(forKey: controlsLabelsKey)
+        overlay.screenRect = { [unowned self] in displayView.screenRect }
+        overlay.onDone = { [unowned self] set in
+            displayView.controls.set = set
+            set.save(package: package)
+            AppLog.write("Keyboard controls: \(set.controls.count)")
+            window.makeFirstResponder(displayView)
+        }
+        displayView.onCaught = { [unowned self] caught in
+            note(caught ? "Press Esc to use the pointer again" : "")
+        }
+    }
+
+    @objc func editControls() {
+        displayView.controls.releaseAll()
+        if !UserDefaults.standard.bool(forKey: "ControlsWarningShown") {
+            UserDefaults.standard.set(true, forKey: "ControlsWarningShown")
+            let alert = NSAlert()
+            alert.messageText = "Keyboard controls"
+            alert.informativeText = "Click a button in the game, then press the key that should press it. "
+                + "Add a stick for W, A, S and D, and Mouse Aim to look around with the mouse; click the game to aim, Esc to stop.\n\n"
+                + "Online games such as shooters may not allow playing with a keyboard and mouse against touch players, "
+                + "and can ban accounts that do. Use controls in those at your own risk."
+            alert.addButton(withTitle: "Continue")
+            alert.addButton(withTitle: "Cancel")
+            guard alert.runModal() == .alertFirstButtonReturn else { return }
+        }
+        overlay.set = displayView.controls.set
+        overlay.beginEditing()
+    }
+
+    @objc func toggleControls() {
+        displayView.controls.releaseAll()
+        displayView.controls.set.isOn.toggle()
+        overlay.set = displayView.controls.set
+        displayView.controls.set.save(package: package)
+    }
+
+    @objc func toggleControlLabels() {
+        overlay.showsLabels.toggle()
+        UserDefaults.standard.set(overlay.showsLabels, forKey: controlsLabelsKey)
+    }
+
+    /// The controls' commands, in the View menu and the toolbar's Controls button.
+    static func addControlsItems(to menu: NSMenu, target: AppWindowController) {
+        menu.addItem(withTitle: "Edit Keyboard Controls…", action: #selector(editControls), keyEquivalent: "k").target = target
+        menu.addItem(withTitle: "Use Keyboard Controls", action: #selector(toggleControls), keyEquivalent: "").target = target
+        menu.addItem(withTitle: "Show Keyboard Controls", action: #selector(toggleControlLabels), keyEquivalent: "").target = target
+    }
+
+    func windowDidResignKey(_ notification: Notification) {
+        displayView.controls.releaseAll()
+    }
     /// Pictures Android drew in the last second: Android sends one only when the app's screen
     /// changes, so this is the app's own frame rate.
     private let fpsLabel = NSTextField(labelWithString: "")
@@ -270,6 +338,7 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate {
     private static let fpsItem = NSToolbarItem.Identifier("fps")
     private static let muteItem = NSToolbarItem.Identifier("mute")
     private static let rotateItem = NSToolbarItem.Identifier("rotate")
+    private static let controlsItem = NSToolbarItem.Identifier("controls")
     private static let clearCacheItem = NSToolbarItem.Identifier("clearCache")
     private static let clearDataItem = NSToolbarItem.Identifier("clearData")
 
@@ -318,7 +387,7 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate {
                 self.showLoading(true)
             }
         }
-        let toolbar = NSToolbar(identifier: "AppWindowToolbar2")
+        let toolbar = NSToolbar(identifier: "AppWindowToolbar3")
         toolbar.delegate = self
         toolbar.displayMode = .iconOnly
         toolbar.allowsUserCustomization = true
@@ -330,16 +399,27 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate {
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
         // The space keeps the buttons clear of the window's rounded corner.
-        [.flexibleSpace, Self.fpsItem, Self.muteItem, Self.rotateItem, .space]
+        [.flexibleSpace, Self.fpsItem, Self.controlsItem, Self.muteItem, Self.rotateItem, .space]
     }
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
         // Clearing is in the app's menu; these are there for those who want them at hand.
-        [.flexibleSpace, .space, Self.fpsItem, Self.muteItem, Self.rotateItem, Self.clearCacheItem, Self.clearDataItem]
+        [.flexibleSpace, .space, Self.fpsItem, Self.controlsItem, Self.muteItem, Self.rotateItem, Self.clearCacheItem, Self.clearDataItem]
     }
 
     func toolbar(_ toolbar: NSToolbar, itemForItemIdentifier identifier: NSToolbarItem.Identifier,
                  willBeInsertedIntoToolbar flag: Bool) -> NSToolbarItem? {
+        if identifier == Self.controlsItem {
+            let item = NSMenuToolbarItem(itemIdentifier: identifier)
+            item.label = "Keyboard Controls"
+            item.toolTip = "Keyboard Controls"
+            item.image = NSImage(systemSymbolName: "keyboard", accessibilityDescription: "Keyboard Controls")
+            item.showsIndicator = false
+            let menu = NSMenu()
+            Self.addControlsItems(to: menu, target: self)
+            item.menu = menu
+            return item
+        }
         let item = NSToolbarItem(itemIdentifier: identifier)
         switch identifier {
         case Self.fpsItem:
@@ -455,6 +535,7 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate {
     }
 
     func windowWillClose(_ notification: Notification) {
+        displayView.controls.releaseAll()
         watch?.invalidate()
         fpsTimer?.invalidate()
         gamepads?.stop()
@@ -560,3 +641,17 @@ private final class EngineLoad {
     }
 }
 
+extension AppWindowController: NSMenuItemValidation {
+    func validateMenuItem(_ item: NSMenuItem) -> Bool {
+        switch item.action {
+        case #selector(toggleControls):
+            item.state = displayView.controls.set.isOn ? .on : .off
+            return !displayView.controls.set.controls.isEmpty
+        case #selector(toggleControlLabels):
+            item.state = overlay.showsLabels ? .on : .off
+            return !displayView.controls.set.controls.isEmpty
+        default:
+            return true
+        }
+    }
+}

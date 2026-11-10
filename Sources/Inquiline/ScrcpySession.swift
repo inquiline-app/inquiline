@@ -241,9 +241,13 @@ final class ScrcpySession {
     enum TouchAction: UInt8 { case down = 0, up = 1, move = 2 }
     enum KeyAction: UInt8 { case down = 0, up = 1 }
 
-    func sendTouch(_ action: TouchAction, x: Int, y: Int, width: Int, height: Int) {
+    /// The mouse's finger. Others, from 0, are separate fingers down at the same time, as for
+    /// a pinch or for keyboard controls; Android takes up to ten at once.
+    static let mouseFinger: Int64 = -2
+
+    func sendTouch(_ action: TouchAction, x: Int, y: Int, width: Int, height: Int, finger: Int64 = mouseFinger) {
         var message = Data([2, action.rawValue])
-        message.appendBigEndian(UInt64(bitPattern: -2)) // generic finger
+        message.appendBigEndian(UInt64(bitPattern: finger))
         message.appendPosition(x: x, y: y, width: width, height: height)
         message.appendBigEndian(action == .up ? UInt16(0) : UInt16.max) // pressure
         message.appendBigEndian(UInt32(0)) // action button

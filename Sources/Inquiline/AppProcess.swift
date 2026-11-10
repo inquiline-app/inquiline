@@ -94,6 +94,8 @@ final class AppProcess: NSObject, NSApplicationDelegate {
             .keyEquivalentModifierMask = [.command, .option]
         viewMenu.addItem(withTitle: "Customize Toolbar…", action: #selector(NSWindow.runToolbarCustomizationPalette(_:)), keyEquivalent: "")
         viewMenu.addItem(.separator())
+        AppWindowController.addControlsItems(to: viewMenu, target: controller)
+        viewMenu.addItem(.separator())
         let fullScreen = viewMenu.addItem(withTitle: "Enter Full Screen", action: #selector(NSWindow.toggleFullScreen(_:)), keyEquivalent: "f")
         fullScreen.keyEquivalentModifierMask = [.command, .control]
         viewItem.submenu = viewMenu
