@@ -92,7 +92,15 @@ final class AndroidRuntime {
         AppLog.write("Android is ready after \(Int(Date().timeIntervalSince(start))) s")
         setFullVolume()
         keepLogs()
+        turnOffBluetooth()
         watchPackages()
+    }
+
+    /// The VM has no Bluetooth, and Android's Bluetooth crashes over and over at each start
+    /// while it's on, so it's turned off as on a phone: Android remembers it. Controllers
+    /// reach Android through the Mac, as USB devices.
+    private func turnOffBluetooth() {
+        _ = try? shell("[ \"$(settings get global bluetooth_on)\" = 0 ] || cmd bluetooth_manager disable")
     }
 
     /// Android keeps its log on its disk, as phones do for their bug reports, so a problem's
