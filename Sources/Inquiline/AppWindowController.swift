@@ -223,8 +223,8 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate {
     /// The window's size for a level, and the Android screen behind it, which has the window's
     /// pixels and lays out one dp a point, as apps on a Chromebook do:
     /// - Small opens as a phone, 16:9.
-    /// - Medium opens as a tablet, 16:10: half the screen's width in landscape, its full height
-    ///   in portrait, as a window zoomed from its title bar.
+    /// - Medium opens as a tablet, 16:10: 1280 points wide in landscape (2560 pixels), its full
+    ///   height in portrait, as a window zoomed from its title bar.
     /// - Large opens as the monitor, in its shape: filling the screen in landscape, its full
     ///   height in portrait.
     /// Macs with less than 16 GB get at most 1920 pixels on the long side, scaled up to the
@@ -247,8 +247,7 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate {
         case .small:
             points = phone
         case .medium:
-            points = landscape ? fit(NSSize(width: (visible.width / 2).rounded(.down), height: (visible.width / 2 * 10 / 16).rounded(.down)))
-                : fit(shaped(10 / 16, height: room.height))
+            points = landscape ? fit(NSSize(width: 1280, height: 800)) : fit(shaped(10 / 16, height: room.height))
         case .large:
             let frame = display?.frame.size ?? NSSize(width: 16, height: 9)
             let monitor = max(frame.width, frame.height) / min(frame.width, frame.height)
