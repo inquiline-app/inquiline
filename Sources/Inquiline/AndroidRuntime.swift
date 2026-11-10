@@ -62,6 +62,7 @@ final class AndroidRuntime {
     /// Boots the VM if needed and returns once it can install and start apps.
     /// `status` reports what is happening.
     func ensureReady(status: @escaping (String) -> Void) throws {
+        Self.wake()
         lock.lock()
         defer { lock.unlock() }
 
@@ -151,6 +152,8 @@ final class AndroidRuntime {
             return
         }
         defer { lock.unlock() }
+        // Frozen, it couldn't shut down cleanly.
+        Self.wake()
         guard vm != nil || isDeviceAttached() else { return }
         AppLog.write("Stopping Android")
         AndroidFiles.eject()
@@ -184,6 +187,48 @@ final class AndroidRuntime {
         vm?.isRunning == true
     }
 
+    // MARK: - Resting
+
+    /// A few minutes after the last app closes, Android rests as a phone does with its screen
+    /// off: frozen, it takes no CPU, and an app opens again in about a second instead of
+    /// waiting for Android to start. It keeps its memory meanwhile, so Inquiline stops it after
+    /// an hour of rest, or when the Mac runs short of memory.
+    func freeze() {
+        guard let pid = vm?.processIdentifier, isRunning, !Self.isFrozen() else { return }
+        // Finder would wait on a disk whose server can't answer.
+        AndroidFiles.eject()
+        kill(pid, SIGSTOP)
+        AppLog.write("Android is resting")
+    }
+
+    /// Wakes a resting Android; Inquiline's app windows can do it too, as each runs on its own.
+    static func wake() {
+        let pid = enginePID()
+        guard pid > 0, isFrozen(pid) else { return }
+        kill(pid, SIGCONT)
+        AppLog.write("Android woke up")
+    }
+
+    static func isFrozen(_ pid: pid_t = enginePID()) -> Bool {
+        guard pid > 0 else { return false }
+        var info = proc_bsdinfo()
+        guard proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &info, Int32(MemoryLayout<proc_bsdinfo>.size)) > 0 else { return false }
+        return info.pbi_status == SSTOP
+    }
+
+    /// The engine of this user's Inquiline, whichever process asks.
+    static func enginePID() -> pid_t {
+        var pids = [pid_t](repeating: 0, count: 4096)
+        let count = Int(proc_listallpids(&pids, Int32(pids.count * MemoryLayout<pid_t>.size)))
+        var path = [CChar](repeating: 0, count: 4096)
+        for pid in pids.prefix(max(count, 0)) where pid > 0 {
+            if proc_pidpath(pid, &path, UInt32(path.count)) > 0, String(cString: path).hasSuffix("/" + engineName) {
+                return pid
+            }
+        }
+        return 0
+    }
+
     private func isReady() -> Bool {
         Self.isReady()
     }
@@ -204,6 +249,7 @@ final class AndroidRuntime {
     /// For an app's own process: asks Inquiline, in the menu bar, to start Android
     /// (which opens Inquiline if it isn't), then waits until Android is ready.
     static func waitUntilReady() -> Bool {
+        wake()
         if isReady() { return true }
         let configuration = NSWorkspace.OpenConfiguration()
         configuration.activates = false
@@ -410,12 +456,14 @@ final class AndroidRuntime {
     /// caches the disk they come from: the copy inside the VM only costs the Mac memory.
     /// Files an app still has mapped stay; the rest goes once it passes 256 MB.
     func trimFileCache() {
+        guard !Self.isFrozen() else { return }
         _ = try? shell("su 0 sh -c 'set -- $(grep -E \"^(Cached|Mapped|Shmem):\" /proc/meminfo | tr -s \" \" | cut -d\" \" -f2); [ $(($1 - $2 - $3)) -gt 262144 ] && echo 1 > /proc/sys/vm/drop_caches'")
     }
 
     /// Android keeps what an app used as file cache and idle processes. Freeing those
     /// lets the memory go back to the Mac, at the cost of a slower next app start.
     func releaseMemory() {
+        guard !Self.isFrozen() else { return }
         _ = try? shell("am kill-all")
         compactMemory()
     }

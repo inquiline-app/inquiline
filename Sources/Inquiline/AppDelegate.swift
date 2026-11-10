@@ -76,6 +76,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, SPUSta
         let center = NSWorkspace.shared.notificationCenter
         center.addObserver(self, selector: #selector(appTerminated(_:)), name: NSWorkspace.didTerminateApplicationNotification, object: nil)
         Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in self?.stopAndroidIfIdle() }
+        memoryPressure.resume()
         // A game loading for the first time reads gigabytes within a minute, so the cache is
         // looked at often; it costs a few milliseconds when there's nothing to drop.
         Timer.scheduledTimer(withTimeInterval: 10, repeats: true) { _ in
@@ -216,7 +217,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, SPUSta
 
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
-        let state = status ?? (AndroidRuntime.shared.isRunning ? "Android is running" : "Android is stopped")
+        let state = status ?? (!AndroidRuntime.shared.isRunning ? "Android is stopped"
+            : AndroidRuntime.isFrozen() ? "Android is resting" : "Android is running")
         menu.addItem(withTitle: state, action: nil, keyEquivalent: "").isEnabled = false
         menu.addItem(.separator())
         menu.addItem(withTitle: "Add APK…", action: #selector(addAPK(_:)), keyEquivalent: "").target = self
@@ -511,11 +513,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, SPUSta
         }
     }
 
-    /// As on a Mac, nothing runs once its apps are closed: Android stops a few minutes
-    /// after the last one, unless an app is still at work, as a download or music.
+    /// As on a phone, nothing runs once its apps are closed: Android rests a few minutes
+    /// after the last one, unless an app is still at work, as a download or music, and stops
+    /// after an hour of rest, giving its memory back.
     private func stopAndroidIfIdle() {
-        guard AndroidRuntime.shared.isRunning, runningApps.isEmpty, busy == 0 else {
+        let runtime = AndroidRuntime.shared
+        guard runtime.isRunning, runningApps.isEmpty, busy == 0 else {
             idleSince = nil
+            restingSince = nil
+            return
+        }
+        if AndroidRuntime.isFrozen() {
+            let since = restingSince ?? Date()
+            restingSince = since
+            guard Date().timeIntervalSince(since) > Self.restLimit else { return }
+            stopResting("an hour of rest")
             return
         }
         let since = idleSince ?? Date()
@@ -523,12 +535,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, SPUSta
         guard Date().timeIntervalSince(since) > Self.idleLimit else { return }
         idleSince = nil
         launchQueue.async {
-            let runtime = AndroidRuntime.shared
             guard !runtime.isInstalling(), !runtime.hasForegroundWork() else { return }
-            AppLog.write("Stopping Android: no app open for \(Int(Self.idleLimit / 60)) minutes")
-            runtime.shutdown()
+            runtime.freeze()
         }
     }
+
+    private static let restLimit: TimeInterval = 60 * 60
+    private var restingSince: Date?
+
+    private func stopResting(_ reason: String) {
+        restingSince = nil
+        launchQueue.async {
+            AppLog.write("Stopping Android: \(reason)")
+            AndroidRuntime.shared.shutdown()
+        }
+    }
+
+    /// The Mac is short of memory: a resting Android gives its own back.
+    private lazy var memoryPressure: DispatchSourceMemoryPressure = {
+        let source = DispatchSource.makeMemoryPressureSource(eventMask: [.warning, .critical], queue: .main)
+        source.setEventHandler { [weak self] in
+            guard let self, AndroidRuntime.isFrozen() else { return }
+            stopResting("the Mac is short of memory")
+        }
+        return source
+    }()
 
     // MARK: - Removing apps
 
