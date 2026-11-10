@@ -8,7 +8,9 @@ import UniformTypeIdentifiers
 /// app opens and stops a while after the last one quits, so it holds no memory unused.
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, SPUStandardUserDriverDelegate {
     private static let appPrefix = "io.github.inquiline-app.app."
-    private static let idleLimit: TimeInterval = 5 * 60
+    /// How long Android stays awake after its last app closes: long enough for the app to
+    /// save its state, as resting makes the next start take a second.
+    private static let idleLimit: TimeInterval = 10
 
     private var statusItem: NSStatusItem!
     /// Sparkle: checks GitHub for a new version once a day, and on "Check for Updates…".
@@ -18,7 +20,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, SPUSta
     private let launchQueue = DispatchQueue(label: "inquiline.launch")
     private let terminationSource = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .main)
     private var busy = 0
-    private var idleSince: Date?
     private var status: String? {
         didSet {
             updateStatusIcon()
@@ -511,6 +512,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, SPUSta
             guard runningApps.isEmpty, busy == 0, AndroidRuntime.shared.isRunning else { return }
             launchQueue.async { AndroidRuntime.shared.releaseMemory() }
         }
+        // Once the closed app has saved its state and its memory is given back, Android rests.
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.idleLimit) { [self] in stopAndroidIfIdle() }
     }
 
     /// As on a phone, nothing runs once its apps are closed: Android rests a few minutes
@@ -519,7 +522,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, SPUSta
     private func stopAndroidIfIdle() {
         let runtime = AndroidRuntime.shared
         guard runtime.isRunning, runningApps.isEmpty, busy == 0 else {
-            idleSince = nil
             restingSince = nil
             return
         }
@@ -530,11 +532,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, SPUSta
             stopResting("an hour of rest")
             return
         }
-        let since = idleSince ?? Date()
-        idleSince = since
-        guard Date().timeIntervalSince(since) > Self.idleLimit else { return }
-        idleSince = nil
         launchQueue.async {
+            // Android stays awake while an app still works, as a download or music, and is
+            // looked at again on the next round.
             guard !runtime.isInstalling(), !runtime.hasForegroundWork() else { return }
             runtime.freeze()
         }
