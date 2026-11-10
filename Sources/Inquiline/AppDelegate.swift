@@ -52,6 +52,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, SPUSta
             exit(0)
         }
         if offerToMoveToApplications() { return }
+        AppLog.write("Started \(ProblemReport.version) on \(ProblemReport.mac), \(ProblemReport.macOS)")
         // A test copy (INQUILINE_HOME) never replaces itself.
         if AndroidRuntime.testHome == nil {
             updater = SPUStandardUpdaterController(startingUpdater: true, updaterDelegate: nil, userDriverDelegate: self)
@@ -155,6 +156,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, SPUSta
 
     func applicationWillTerminate(_ notification: Notification) {
         guard running == nil else { return }
+        AppLog.write("Quitting")
         runningApps.forEach { $0.terminate() }
         AndroidRuntime.shared.shutdown()
     }
@@ -234,17 +236,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, SPUSta
     }
 
     @objc private func reportProblem(_ sender: Any?) {
-        NSApp.activate(ignoringOtherApps: true)
-        let zip: URL
-        do { zip = try ProblemReport.make() } catch {
-            showError("Couldn't make the report", error)
-            return
+        var zip: URL?
+        run("Gathering logs…", { zip = try ProblemReport.make() }, failure: "Couldn't make the report") { [self] in
+            if let zip { reportReady(zip) }
         }
+    }
+
+    private func reportReady(_ zip: URL) {
+        NSApp.activate(ignoringOtherApps: true)
         NSWorkspace.shared.activateFileViewerSelecting([zip])
         let alert = NSAlert()
         alert.messageText = "Your report is ready"
-        alert.informativeText = "Finder shows it: a zip with Inquiline's logs, its crash reports and your Mac's model, "
-            + "without your name. In the form that opens, say what happened, then drag the zip into it.\n\n"
+        alert.informativeText = "Finder shows it: a zip with the logs of Inquiline and Android, crash reports and your Mac's model. "
+            + "Your name, e-mail addresses, web addresses and numbers that could identify you are left out. "
+            + "In the form that opens, say what happened, then drag the zip into it.\n\n"
             + "The form is on GitHub, so it needs a GitHub account."
         alert.addButton(withTitle: "Open Form")
         alert.addButton(withTitle: "Cancel")
@@ -305,8 +310,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, SPUSta
 
     /// Runs Android work in order, showing `message` in the menu bar meanwhile, and for work
     /// that takes minutes, in a progress window with `detail`. `done` follows success.
-    private func run(_ message: String, _ work: @escaping () throws -> Void, failure title: String? = nil,
+    /// The log leaves out `hiding`, such as the name of the user's file.
+    private func run(_ message: String, hiding: [String] = [], _ work: @escaping () throws -> Void, failure title: String? = nil,
                      progress detail: String? = nil, done: (() -> Void)? = nil) {
+        func logged(_ text: String) -> String { hiding.reduce(text) { $0.replacingOccurrences(of: $1, with: "<file>") } }
+        AppLog.write(logged(message))
+        let start = Date()
         busy += 1
         if let detail {
             progress?.close()
@@ -316,6 +325,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, SPUSta
         launchQueue.async { [self] in
             var failed: Error?
             do { try work() } catch { failed = error }
+            let seconds = Int(Date().timeIntervalSince(start))
+            if let failed {
+                AppLog.write(logged("Failed after \(seconds) s: \(message) \(failed.localizedDescription)"))
+            } else {
+                AppLog.write(logged("Done in \(seconds) s: \(message)"))
+            }
             DispatchQueue.main.async { [self] in
                 busy -= 1
                 if busy == 0 { status = nil }
@@ -344,12 +359,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, SPUSta
 
     private func install(apk: URL) {
         let name = apk.lastPathComponent
-        run("Installing \(name)…", { [self] in
+        run("Installing \(name)…", hiding: [name], { [self] in
             let runtime = AndroidRuntime.shared
             try prepareAndroid()
             setStatus("Installing \(name)…")
             let manifest = try runtime.install(apk: apk)
             let package = manifest.package
+            AppLog.write("Installed \(package)")
             // The launcher caches a new app's icon and name shortly after installation.
             var icon = runtime.iconPNG(package: package)
             var label = runtime.label(package: package)
@@ -507,6 +523,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, SPUSta
         launchQueue.async {
             let runtime = AndroidRuntime.shared
             guard !runtime.isInstalling(), !runtime.hasForegroundWork() else { return }
+            AppLog.write("Stopping Android: no app open for \(Int(Self.idleLimit / 60)) minutes")
             runtime.shutdown()
         }
     }

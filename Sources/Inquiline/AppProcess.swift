@@ -13,6 +13,7 @@ final class AppProcess: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Android's connections can drop at any time, which must not end the app.
         signal(SIGPIPE, SIG_IGN)
+        AppLog.source = package
         // An app left on an older program asks Inquiline to update it and open it again.
         if AppShortcuts.isOutdated(), let url = URL(string: "inquiline://open?package=\(package)") {
             NSWorkspace.shared.open(url)
@@ -37,6 +38,7 @@ final class AppProcess: NSObject, NSApplicationDelegate {
             let installed = ready && ((try? AdbClient.shell("cmd package path \(package)"))?.contains("package:") ?? false)
             DispatchQueue.main.async {
                 controller.window.subtitle = ""
+                AppLog.write(installed ? "Opening" : ready ? "Not installed in Android" : "Android didn't start")
                 guard installed else {
                     let alert = NSAlert()
                     alert.alertStyle = .warning

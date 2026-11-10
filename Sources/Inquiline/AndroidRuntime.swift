@@ -72,13 +72,14 @@ final class AndroidRuntime {
         } else {
             try FileManager.default.createDirectory(at: vmHome, withIntermediateDirectories: true)
             let firstLaunch = !FileManager.default.fileExists(atPath: disk.path)
+            AppLog.write(firstLaunch ? "Setting up Android for the first time" : "Starting Android")
             status(firstLaunch ? "Setting up Android, the first launch takes longer…" : "Starting Android…")
             try VMInstaller.installIfNeeded(at: disk)
             try updateDiskIfNeeded(firstLaunch: firstLaunch, status: status)
             try launchVM()
         }
 
-        let deadline = Date().addingTimeInterval(180)
+        let start = Date(), deadline = start.addingTimeInterval(180)
         while !isReady() {
             if let vm, !vm.isRunning {
                 throw RuntimeError("The Android VM exited during startup.")
@@ -88,8 +89,19 @@ final class AndroidRuntime {
             }
             Thread.sleep(forTimeInterval: 0.25)
         }
+        AppLog.write("Android is ready after \(Int(Date().timeIntervalSince(start))) s")
         setFullVolume()
+        keepLogs()
         watchPackages()
+    }
+
+    /// Android keeps its log on its disk, as phones do for their bug reports, so a problem's
+    /// lines are still there after Android restarts: 16 files of 2 MB at most, the oldest
+    /// going first. Report a Problem reads them. Android's own setting, so it stays set.
+    private func keepLogs() {
+        _ = try? shell("su 0 sh -c '[ \"$(getprop persist.logd.logpersistd)\" = logcatd ] || { "
+            + "setprop persist.logd.logpersistd.size 16; setprop persist.logd.logpersistd.rotate_kbytes 2048; "
+            + "setprop persist.logd.logpersistd.buffer main,system,crash,events; setprop persist.logd.logpersistd logcatd; }'")
     }
 
     /// The Mac's volume is the one that counts, as for iPhone apps on a Mac, so Android's own
@@ -131,6 +143,7 @@ final class AndroidRuntime {
         }
         defer { lock.unlock() }
         guard vm != nil || isDeviceAttached() else { return }
+        AppLog.write("Stopping Android")
         AndroidFiles.eject()
         // As a phone does before turning off: data still in memory is written to disk first,
         // so that cutting the VM after the deadline below can't leave files half written.
@@ -142,7 +155,10 @@ final class AndroidRuntime {
         while vm?.isRunning == true && Date() < deadline {
             Thread.sleep(forTimeInterval: 0.2)
         }
-        if vm?.isRunning == true { vm?.terminate() }
+        if vm?.isRunning == true {
+            AppLog.write("Android didn't stop within 20 s, so it was ended")
+            vm?.terminate()
+        }
         vm = nil
     }
 
@@ -245,6 +261,7 @@ final class AndroidRuntime {
             else {
                 throw RuntimeError("Android is missing from the app bundle.")
             }
+            AppLog.write("Updating Android's disk from revision \(revision) to \(Self.diskRevision)")
             status("Updating Android…")
             let done = "INQUILINE-UPDATED"
             let process = Process()
@@ -324,7 +341,12 @@ final class AndroidRuntime {
         process.standardError = Self.engineLog() ?? FileHandle.nullDevice
         // If the engine ends on its own, as when it crashes, Android's disk goes with it at once,
         // not when Finder finds its server gone.
-        process.terminationHandler = { _ in AndroidFiles.eject(gone: true) }
+        process.terminationHandler = { engine in
+            AndroidFiles.eject(gone: true)
+            let how = engine.terminationReason == .uncaughtSignal ? "signal" : "status"
+            AppLog.write("The engine ended with \(how) \(engine.terminationStatus)")
+        }
+        AppLog.write("Starting the engine: \(cores) cores, \(memory) MB of memory")
         try process.run()
         vm = process
         bootCount += 1
@@ -335,16 +357,41 @@ final class AndroidRuntime {
     /// failed: ~/Library/Logs/Inquiline/engine.log, with the previous run's as engine.old.log.
     private static func engineLog() -> FileHandle? {
         let files = FileManager.default
-        let folder = testHome?.appendingPathComponent("Logs")
-            ?? files.homeDirectoryForCurrentUser.appendingPathComponent("Library/Logs/Inquiline")
+        let folder = AppLog.folder
         let log = folder.appendingPathComponent("engine.log"), old = folder.appendingPathComponent("engine.old.log")
         try? files.createDirectory(at: folder, withIntermediateDirectories: true)
         try? files.removeItem(at: old)
         try? files.moveItem(at: log, to: old)
         guard files.createFile(atPath: log.path, contents: Data("\(Date())\n".utf8)) else { return nil }
-        let handle = try? FileHandle(forWritingTo: log)
-        _ = try? handle?.seekToEnd()
-        return handle
+        // Appended to, so the log can be cut short under the engine.
+        let fd = open(log.path, O_WRONLY | O_APPEND)
+        guard fd >= 0 else { return nil }
+        // Its own copy of the file's descriptor, which the engine's handle closing can't reuse.
+        let own = dup(fd)
+        engineLogTrim.setEventHandler { trimEngineLog(fd: own, log: log, old: old) }
+        if engineLogFD >= 0 { close(engineLogFD) }
+        engineLogFD = own
+        return FileHandle(fileDescriptor: fd, closeOnDealloc: true)
+    }
+
+    private static var engineLogFD: Int32 = -1
+
+    /// A long run that keeps failing could fill the engine's log without end, so past 4 MB
+    /// it moves to engine.old.log and starts again.
+    private static let engineLogTrim: DispatchSourceTimer = {
+        let timer = DispatchSource.makeTimerSource(queue: .global(qos: .utility))
+        timer.schedule(deadline: .now() + 60, repeating: 60)
+        timer.setEventHandler {}
+        timer.resume()
+        return timer
+    }()
+
+    private static func trimEngineLog(fd: Int32, log: URL, old: URL) {
+        var info = stat()
+        guard fstat(fd, &info) == 0, info.st_size > 4 << 20 else { return }
+        try? FileManager.default.removeItem(at: old)
+        try? FileManager.default.copyItem(at: log, to: old)
+        ftruncate(fd, 0)
     }
 
     /// Android keeps the files apps have read in its cache, though the Mac already

@@ -2,14 +2,16 @@ import AppKit
 
 /// "Report a Problem…": gathers what helps find a problem into one zip the user can look at,
 /// then opens the GitHub form with their Mac filled in, to drag the zip into. Nothing is sent
-/// by Inquiline itself.
+/// by Inquiline itself. Every log in it goes through `Private.redact`, so it holds what
+/// happened, not who the user is.
 enum ProblemReport {
     static let form = "https://github.com/inquiline-app/inquiline/issues/new"
 
+    /// Blocks while it reads Android's log, so call it off the main thread.
     static func make() throws -> URL {
         let files = FileManager.default
         let home = files.homeDirectoryForCurrentUser
-        let logs = home.appendingPathComponent("Library/Logs/Inquiline")
+        let logs = AppLog.folder
         let name = "Inquiline Report " + ISO8601DateFormatter.string(
             from: Date(), timeZone: .current, formatOptions: [.withFullDate, .withTime]).replacingOccurrences(of: ":", with: "")
         let work = files.temporaryDirectory.appendingPathComponent(UUID().uuidString).appendingPathComponent(name)
@@ -17,11 +19,12 @@ enum ProblemReport {
         defer { try? files.removeItem(at: work.deletingLastPathComponent()) }
 
         try anonymized(info()).write(to: work.appendingPathComponent("mac.txt"), atomically: true, encoding: .utf8)
-        for log in ["engine.log", "engine.old.log"] {
+        for log in ["inquiline.old.log", "inquiline.log", "engine.old.log", "engine.log"] {
             if let text = try? String(contentsOf: logs.appendingPathComponent(log), encoding: .utf8) {
-                try anonymized(String(text.suffix(2_000_000))).write(to: work.appendingPathComponent(log), atomically: true, encoding: .utf8)
+                try Private.redact(text).write(to: work.appendingPathComponent(log), atomically: true, encoding: .utf8)
             }
         }
+        androidLog(to: work.appendingPathComponent("android.log"))
         // macOS's crash reports of the last week, for Inquiline, its engine and its apps.
         let reports = home.appendingPathComponent("Library/Logs/DiagnosticReports")
         let weekAgo = Date().addingTimeInterval(-7 * 24 * 3600)
@@ -57,6 +60,18 @@ enum ProblemReport {
         ditto.waitUntilExit()
         guard ditto.terminationStatus == 0 else { throw RuntimeError("Couldn't make the report's zip.") }
         return zip
+    }
+
+    /// Android's log as it keeps it on its disk (AndroidRuntime.keepLogs), oldest first; if it
+    /// hasn't kept one yet, what's still in its memory. Android needn't be running for the rest.
+    private static func androidLog(to file: URL) {
+        guard AndroidRuntime.shared.isRunning else { return }
+        let raw = file.appendingPathExtension("raw")
+        defer { try? FileManager.default.removeItem(at: raw) }
+        try? AdbClient.download("su 0 sh -c 'cd /data/misc/logd 2>/dev/null && cat $(ls -r logcat.[0-9]* 2>/dev/null) logcat 2>/dev/null "
+            + "|| logcat -d -b main,system,crash,events'", to: raw)
+        guard let data = try? Data(contentsOf: raw), !data.isEmpty else { return }
+        try? Private.redact(String(decoding: data, as: UTF8.self)).write(to: file, atomically: true, encoding: .utf8)
     }
 
     /// The Mac, as the form asks for it.

@@ -111,11 +111,13 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate {
         let renderer = displayView.renderer
         let frames = frameCount
         var shown = false
+        let opened = Date()
         session.onFrame = { [weak self] resource in
             renderer?.draw(resource: resource)
             frames.add()
             guard !shown else { return }
             shown = true
+            AppLog.write("First frame after \(Int(Date().timeIntervalSince(opened))) s")
             DispatchQueue.main.async {
                 guard let self else { return }
                 self.launchScreen.removeFromSuperview()
@@ -126,7 +128,7 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate {
             DispatchQueue.main.async {
                 guard let self else { return }
                 self.window.close()
-                if let error { NSLog("Inquiline session ended: \(error.localizedDescription)") }
+                AppLog.write(error.map { "The connection to the app ended: \($0.localizedDescription)" } ?? "Closed")
             }
         }
     }
@@ -366,6 +368,7 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate {
     private func showLoading(_ on: Bool) {
         guard on != loading else { return }
         loading = on
+        AppLog.write(on ? "Showing the loading note" : "Hiding the loading note")
         if on { window.subtitle = Self.loadingNote }
         else if window.subtitle == Self.loadingNote { window.subtitle = "" }
     }

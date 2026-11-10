@@ -87,6 +87,7 @@ Each app you add appears in your Applications folder and in Launchpad; you can m
 - **Missing hardware:** no camera, microphone, location or vibration yet, and the trackpad doesn't do multi-touch gestures.
 - **Memory:** Android can use up to 8 GB on Macs with 16 GB or more, 4 GB on others, and gives back what it frees.
 - **Privacy:** everything stays on your Mac. Inquiline itself only asks GitHub once a day whether there's a new version; apps reach the internet as on a phone.
+- **Logs:** Inquiline, its engine and Android keep logs on your Mac, about 50 MB at most, for finding what went wrong. They stay there: only **Report a Problem…** gathers them, into a zip you can look at and send yourself, with your name, e-mail addresses, web addresses and numbers that could identify you taken out.
 
 App data lives in `~/Library/Application Support/Inquiline`. Deleting that folder resets Android, and deletes every app and its data.
 
