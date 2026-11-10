@@ -21,7 +21,7 @@ Each Android app gets its own window, Dock icon and menu, and shows up in Launch
 
 - **Real Android 15**, running on your Mac's own CPU, without translation
 - **Fast graphics**: Vulkan 1.3 and OpenGL ES 3.2 on your Mac's GPU through Metal, up to 60 FPS in 3D games
-- **Mac-native windows**: resize, full screen, a customizable toolbar with frame rate, mute and rotate
+- **Mac-native windows**: resize, full screen, a customizable toolbar with frame rate, resolution, mute and rotate
 - **Game controllers**, sound, copy and paste, and Android's files in Finder
 - **Google Play** if you add it yourself, or any APK
 - **Free and open source**, with no accounts and no tracking
@@ -58,13 +58,13 @@ Inquiline lives in the menu bar. The first time, it unpacks Android, which takes
 - **From an APK:** choose **Add APK…** from Inquiline in the menu bar, or double-click an `.apk` file.
 - **From Google Play:** Google's apps can't be included, but you can add them yourself: download [MindTheGapps for Android 15 arm64](https://github.com/MindTheGapps/15.0.0-arm64/releases/latest), choose **Install Google Play…** from the menu bar, then **Choose Zip…**, and pick the zip without opening it (macOS can't open this signed zip, but Inquiline doesn't need it to). If Safari unpacked it, it moved the zip to the Trash: put it back from there, then choose it. More in [docs/google-play.md](docs/google-play.md).
 
-Each app you add appears in your Applications folder and in Launchpad; you can move it into a folder of your own there. To remove one, move it to the Trash; its data stays, so adding it again brings back your saves.
+Each app you add appears in your Applications folder and in Launchpad; you can move it into a folder of your own there. To remove one, move it to the Trash: it's removed from Android with its data, as deleting an app on a phone is.
 
 ## Using apps
 
 - **Mouse and trackpad** work as touch: click to tap, drag to swipe, scroll to scroll.
-- **The toolbar** shows the frame rate and has buttons to mute the app and to turn it between portrait and landscape. **View > Customize Toolbar** changes it.
-- **Resize** the window freely; the app keeps its shape. **Ctrl+Cmd+F** goes full screen.
+- **The toolbar** shows the frame rate and has buttons to set the app's resolution (Low, Medium or High: higher is sharper in large windows and full screen, lower is lighter for your Mac), to mute it, and to turn it between portrait and landscape. **View > Customize Toolbar** changes it.
+- **Resize** the window freely; the app keeps its shape, which is your screen's (16:10 on a MacBook). An app first opens at a phone's size, then where and as large as you left it. **Ctrl+Cmd+F** goes full screen, and an app closed in full screen opens in full screen.
 - **Game controllers** connected to the Mac (Xbox, PlayStation, MFi) work in games that support them, as a controller plugged into a phone does. They drive the app in front.
 - **Apps keep running** when their window is in the back or minimized, as Mac apps do.
 - **Files:** choose **Show Files in Finder** from the menu bar. Android's storage and each app's own folders appear as the **Android** disk.
@@ -90,6 +90,8 @@ Each app you add appears in your Applications folder and in Launchpad; you can m
 - **Logs:** Inquiline, its engine and Android keep logs on your Mac, about 50 MB at most, for finding what went wrong. They stay there: only **Report a Problem…** gathers them, into a zip you can look at and send yourself, with your name, e-mail addresses, web addresses and numbers that could identify you taken out.
 
 App data lives in `~/Library/Application Support/Inquiline`. Deleting that folder resets Android, and deletes every app and its data.
+
+**To uninstall,** move Inquiline to the Trash while it's running in the menu bar: it removes the apps you added, Android with everything in it, and its own settings, caches and logs, leaving nothing behind.
 
 ## How it works
 
