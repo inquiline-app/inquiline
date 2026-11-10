@@ -59,13 +59,7 @@ final class AppProcess: NSObject, NSApplicationDelegate {
         true
     }
 
-    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        controller?.prepareToClose()
-        return .terminateNow
-    }
-
     func applicationWillTerminate(_ notification: Notification) {
-        controller?.prepareToClose()
         controller?.window.close()
     }
 

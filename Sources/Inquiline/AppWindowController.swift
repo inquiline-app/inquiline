@@ -132,7 +132,7 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate {
         session.onEnd = { [weak self] error in
             DispatchQueue.main.async {
                 guard let self else { return }
-                self.closing = true; self.window.close()
+                self.window.close()
                 AppLog.write(error.map { "The connection to the app ended: \($0.localizedDescription)" } ?? "Closed")
             }
         }
@@ -185,7 +185,7 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate {
                     guard let display = self.watchedDisplay else { return }
                     // A restart for a new screen shape leaves it empty for a moment.
                     missing = screens.contains { $0.display == display } ? 0 : missing + 1
-                    if missing >= 2 { self.closing = true; self.window.close() }
+                    if missing >= 2 { self.window.close() }
                 }
             }
         }
@@ -231,21 +231,7 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate {
     }
 
     func windowDidExitFullScreen(_ notification: Notification) {
-        // macOS leaves full screen as the window closes too; that isn't the user's choice.
-        guard !closing else { return }
         UserDefaults.standard.set(false, forKey: fullScreenKey)
-    }
-
-    /// Set as the app quits or its window closes.
-    private(set) var closing = false
-
-    func prepareToClose() {
-        closing = true
-    }
-
-    func windowShouldClose(_ sender: NSWindow) -> Bool {
-        closing = true
-        return true
     }
 
     // MARK: - Resolution
