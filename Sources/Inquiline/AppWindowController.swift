@@ -225,9 +225,26 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate {
     private var fullScreenKey: String { "FullScreen.\(package)" }
 
     /// An app closed in full screen opens in full screen, as Mac apps do.
+    /// Only once the app is in front: macOS gives a game Game Mode as it goes full screen there.
     func restoreFullScreen() {
-        if UserDefaults.standard.bool(forKey: fullScreenKey), !isFullScreen { window.toggleFullScreen(nil) }
+        guard UserDefaults.standard.bool(forKey: fullScreenKey) else { return }
+        guard NSApp.isActive else {
+            fullScreenWaiter = NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification,
+                                                                      object: nil, queue: .main) { [weak self] _ in
+                guard let self, let waiter = fullScreenWaiter else { return }
+                NotificationCenter.default.removeObserver(waiter)
+                fullScreenWaiter = nil
+                restoreFullScreen()
+            }
+            return
+        }
+        // After the window settles in front, as going full screen while it's being shown is ignored.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [self] in
+            if !isFullScreen { window.toggleFullScreen(nil) }
+        }
     }
+
+    private var fullScreenWaiter: NSObjectProtocol?
 
     func windowDidEnterFullScreen(_ notification: Notification) {
         UserDefaults.standard.set(true, forKey: fullScreenKey)

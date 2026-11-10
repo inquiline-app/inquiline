@@ -31,8 +31,8 @@ final class AppProcess: NSObject, NSApplicationDelegate {
         buildMenu(label: label, controller: controller)
         controller.window.subtitle = "Starting Android…"
         controller.window.makeKeyAndOrderFront(nil)
-        controller.restoreFullScreen()
         NSApp.activate(ignoringOtherApps: true)
+        controller.restoreFullScreen()
 
         DispatchQueue.global().async { [package] in
             let ready = AndroidRuntime.waitUntilReady()
