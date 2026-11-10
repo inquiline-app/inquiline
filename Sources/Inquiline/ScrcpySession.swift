@@ -11,27 +11,43 @@ final class ScrcpySession {
     var shortSide: Int { longSide * 9 / 16 }
     var density: Int { 320 * longSide / 1440 }
 
-    /// The sizes View > Resolution offers.
-    static let resolutions = [1440, 1920, 2560, 3840]
+    /// The toolbar's Resolution: how large the app's screen is, as large as the Mac's screen
+    /// shows it. Large fills the room a window has on the screen pixel for pixel, Small is 1440
+    /// by 810, Medium between them. Large is at most 1920 by 1080 on Macs with less than 16 GB,
+    /// where larger frames cost too much memory.
+    enum Resolution: Int, CaseIterable {
+        case small = 1, medium, large
 
-    /// Automatic: as many pixels as the screen the window opens on can show of the app, up to
-    /// 4K, and at most 1920 by 1080 on Macs with less than 16 GB, where 4K frames cost too much
-    /// memory. A portrait app is as tall as the screen, a landscape one as wide, so its window
-    /// can show every pixel. Never fewer than 1440 by 810.
-    static func automaticLongSide(portrait: Bool) -> Int {
-        let pixels = NSScreen.main.map { NSSize(width: $0.frame.width * $0.backingScaleFactor,
-                                                height: $0.frame.height * $0.backingScaleFactor) }
-            ?? NSSize(width: 1440, height: 810)
-        let fits = portrait ? min(pixels.height, pixels.width * 16 / 9) : min(pixels.width, pixels.height * 16 / 9)
-        let limit = ProcessInfo.processInfo.physicalMemory >= 16 << 30 ? 3840 : 1920
-        // A multiple of 32 keeps both sides whole and even.
-        return min(max(Int(fits), 1440), limit) / 32 * 32
+        var name: String {
+            switch self {
+            case .small: return "Small"
+            case .medium: return "Medium"
+            case .large: return "Large"
+            }
+        }
     }
 
-    /// The size chosen for an app with the toolbar's Resolution, or the automatic one.
-    static func longSide(package: String, portrait: Bool) -> Int {
-        let chosen = UserDefaults.standard.integer(forKey: resolutionKey(package))
-        return resolutions.contains(chosen) ? chosen : automaticLongSide(portrait: portrait)
+    static func longSide(for resolution: Resolution, portrait: Bool) -> Int {
+        let small = 1440
+        // The window's room on the screen in pixels, below the menu bar and its own title bar.
+        let room = NSScreen.main.map { screen -> NSSize in
+            let visible = screen.visibleFrame.size
+            return NSSize(width: visible.width * screen.backingScaleFactor,
+                          height: (visible.height - 38) * screen.backingScaleFactor)
+        } ?? NSSize(width: 1440, height: 810)
+        let fits = portrait ? min(room.height, room.width * 16 / 9) : min(room.width, room.height * 16 / 9)
+        let limit = ProcessInfo.processInfo.physicalMemory >= 16 << 30 ? 3840 : 1920
+        // Multiples of 32 keep both sides whole and even.
+        let large = max(min(Int(fits), limit) / 32 * 32, small)
+        switch resolution {
+        case .small: return small
+        case .medium: return max((small + large) / 2 / 32 * 32, small)
+        case .large: return large
+        }
+    }
+
+    static func resolution(package: String) -> Resolution {
+        Resolution(rawValue: UserDefaults.standard.integer(forKey: resolutionKey(package))) ?? .large
     }
 
     static func resolutionKey(_ package: String) -> String { "Resolution.\(package)" }

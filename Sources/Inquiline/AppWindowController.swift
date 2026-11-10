@@ -32,7 +32,7 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate {
         self.package = package
         self.orientation = orientation
         isLandscape = landscape
-        longSide = ScrcpySession.longSide(package: package, portrait: !landscape)
+        longSide = ScrcpySession.longSide(for: ScrcpySession.resolution(package: package), portrait: !landscape)
         // After a resolution change the app starts again on its new screen.
         let restarting = UserDefaults.standard.bool(forKey: Self.restartKey(package))
         UserDefaults.standard.removeObject(forKey: Self.restartKey(package))
@@ -229,19 +229,28 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate {
 
     // MARK: - Resolution
 
-    /// The toolbar's Resolution menu: automatic, or a size kept for this app.
+    /// The toolbar's Resolution menu: Small, Medium or Large, each with its size on this screen,
+    /// kept for this app.
     private func resolutionMenu() -> NSMenu {
         let menu = NSMenu(title: "Resolution")
-        let automatic = ScrcpySession.automaticLongSide(portrait: !isLandscape)
-        menu.addItem(withTitle: "Automatic (\(sizeName(automatic)))", action: #selector(chooseResolution(_:)), keyEquivalent: "")
-            .target = self
-        menu.addItem(.separator())
-        for side in ScrcpySession.resolutions {
-            let entry = menu.addItem(withTitle: sizeName(side), action: #selector(chooseResolution(_:)), keyEquivalent: "")
-            entry.target = self
-            entry.tag = side
-        }
+        menu.delegate = self
         return menu
+    }
+
+    /// Filled as it opens: the sizes depend on the screen and on how the app is turned.
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        menu.removeAllItems()
+        let current = ScrcpySession.resolution(package: package)
+        var shown = Set<Int>()
+        for level in ScrcpySession.Resolution.allCases.reversed() {
+            let side = ScrcpySession.longSide(for: level, portrait: !isLandscape)
+            // On a small screen two levels can be the same size; the larger name stays.
+            guard shown.insert(side).inserted else { continue }
+            let entry = menu.addItem(withTitle: "\(level.name) (\(sizeName(side)))", action: #selector(chooseResolution(_:)), keyEquivalent: "")
+            entry.target = self
+            entry.tag = level.rawValue
+            entry.state = level == current ? .on : .off
+        }
     }
 
     /// Width by height, as the app is turned.
@@ -254,12 +263,13 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate {
     /// Android sets an app's screen size only as the app starts, so a new resolution waits
     /// for the next start, now if the user wants.
     @objc func chooseResolution(_ sender: NSMenuItem) {
-        UserDefaults.standard.set(sender.tag, forKey: ScrcpySession.resolutionKey(package))
-        let side = ScrcpySession.longSide(package: package, portrait: !isLandscape)
+        guard let level = ScrcpySession.Resolution(rawValue: sender.tag) else { return }
+        UserDefaults.standard.set(level.rawValue, forKey: ScrcpySession.resolutionKey(package))
+        let side = ScrcpySession.longSide(for: level, portrait: !isLandscape)
         guard side != longSide else { return }
-        AppLog.write("Resolution chosen: \(sizeName(side))")
+        AppLog.write("Resolution chosen: \(level.name), \(sizeName(side))")
         let alert = NSAlert()
-        alert.messageText = "Restart \(window.title) at \(sizeName(side))?"
+        alert.messageText = "Restart \(window.title) at \(level.name) resolution (\(sizeName(side)))?"
         alert.informativeText = "The new resolution takes effect when \(window.title) starts again."
         alert.addButton(withTitle: "Restart Now")
         alert.addButton(withTitle: "Later")
@@ -595,12 +605,4 @@ private final class EngineLoad {
     }
 }
 
-extension AppWindowController: NSMenuItemValidation {
-    func validateMenuItem(_ item: NSMenuItem) -> Bool {
-        if item.action == #selector(chooseResolution(_:)) {
-            let chosen = UserDefaults.standard.integer(forKey: ScrcpySession.resolutionKey(package))
-            item.state = item.tag == (ScrcpySession.resolutions.contains(chosen) ? chosen : 0) ? .on : .off
-        }
-        return true
-    }
-}
+extension AppWindowController: NSMenuDelegate {}
