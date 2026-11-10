@@ -2,8 +2,11 @@ import AppKit
 
 /// The window of one running Android app.
 final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate {
-    /// A new window shows Android at half its pixels.
+    /// A Retina Mac shows two pixels a point, so a window opens at half the app's pixels,
+    /// pixel for pixel, as large as fits its screen. It can be made as small as a 1440 by 810
+    /// screen would open.
     private static let pixelsPerPoint: CGFloat = 2
+    private static let smallestLongSide: CGFloat = 720
 
     let package: String
     let window: NSWindow
@@ -15,7 +18,9 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate {
     private var isLandscape: Bool
     private var userTurned = false
     private var restarted = false
+    /// The app's screen in pixels.
     private var displaySize: NSSize
+    private var longSide: Int
     private var watch: Timer?
     private let launchScreen = LaunchScreen()
     /// The Android screen this window shows, once the app has appeared on it.
@@ -27,11 +32,11 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate {
         self.package = package
         self.orientation = orientation
         isLandscape = landscape
-        session = ScrcpySession(package: package, landscape: landscape)
-        let shortSide = CGFloat(ScrcpySession.shortSide) / Self.pixelsPerPoint
-        let longSide = CGFloat(ScrcpySession.longSide) / Self.pixelsPerPoint
-        let points = landscape ? NSSize(width: longSide, height: shortSide) : NSSize(width: shortSide, height: longSide)
-        displaySize = points
+        longSide = ScrcpySession.longSide(package: package)
+        session = ScrcpySession(package: package, landscape: landscape, longSide: longSide)
+        let pixels = NSSize(width: longSide, height: longSide * 9 / 16)
+        displaySize = landscape ? pixels : NSSize(width: pixels.height, height: pixels.width)
+        let points = Self.openingSize(for: displaySize)
         displayView = AndroidDisplayView(frame: NSRect(origin: .zero, size: points))
         window = NSWindow(
             contentRect: NSRect(origin: .zero, size: points),
@@ -55,11 +60,12 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate {
         window.delegate = self
         // Resizing keeps the app's screen in its shape.
         window.contentAspectRatio = points
-        window.contentMinSize = points
+        window.contentMinSize = Self.smallestSize(for: displaySize)
         window.setContentSize(points)
         window.center()
-        // Back where it was last time, as Mac windows are.
-        window.setFrameAutosaveName("Main")
+        // Back where it was last time, as Mac windows are; each resolution opens at its own size.
+        window.setFrameAutosaveName("Main-\(longSide)")
+        AppLog.write("Screen of \(Int(displaySize.width)) by \(Int(displaySize.height)) pixels")
         addToolbar()
         connect(session)
     }
@@ -98,7 +104,7 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate {
             DispatchQueue.main.async {
                 guard let self else { return }
                 self.followAndroid(landscape: width > height)
-                self.displaySize = NSSize(width: CGFloat(width) / Self.pixelsPerPoint, height: CGFloat(height) / Self.pixelsPerPoint)
+                self.displaySize = NSSize(width: width, height: height)
                 self.fitWindow()
             }
         }
@@ -138,7 +144,7 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate {
         gamepads?.stop()
         gamepads = nil
         session.stop()
-        session = ScrcpySession(package: package, landscape: isLandscape, restartsApp: true)
+        session = ScrcpySession(package: package, landscape: isLandscape, longSide: longSide, restartsApp: true)
         watchedDisplay = nil // the new session brings a new Android screen
         connect(session)
         frameCount.markStart()
@@ -189,15 +195,60 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate {
     /// out again properly when it changes under them. So the window only follows Android,
     /// when an app rotates.
     /// A window already of this shape keeps the size it was given.
-    private func fitWindow() {
+    private func fitWindow(resized: Bool = false) {
         let size = displaySize
         window.contentAspectRatio = size
-        window.contentMinSize = size
+        window.contentMinSize = Self.smallestSize(for: size)
         let current = screen.frame.size
-        guard !isFullScreen,
-              abs(current.width / current.height - size.width / size.height) > 0.01 || current.width < size.width - 0.5
+        guard !isFullScreen, resized || abs(current.width / current.height - size.width / size.height) > 0.01
         else { return }
-        window.setContentSize(size)
+        window.setContentSize(Self.openingSize(for: size))
+    }
+
+    /// Half the app's pixels, as large as fits the screen.
+    private static func openingSize(for pixels: NSSize) -> NSSize {
+        let full = NSSize(width: pixels.width / pixelsPerPoint, height: pixels.height / pixelsPerPoint)
+        guard let visible = NSScreen.main?.visibleFrame.size else { return full }
+        // Room for the title bar and toolbar.
+        let fit = min(1, visible.width / full.width, (visible.height - 60) / full.height)
+        return NSSize(width: (full.width * fit).rounded(), height: (full.height * fit).rounded())
+    }
+
+    private static func smallestSize(for pixels: NSSize) -> NSSize {
+        let scale = smallestLongSide / max(pixels.width, pixels.height)
+        return NSSize(width: (pixels.width * scale).rounded(), height: (pixels.height * scale).rounded())
+    }
+
+    // MARK: - Resolution
+
+    /// View > Resolution: automatic, or a size kept for this app. Android sets an app's
+    /// screen size only as it starts, so the app starts again on its new screen.
+    static func addResolutionMenu(to menu: NSMenu, target: AppWindowController) {
+        let item = menu.addItem(withTitle: "Resolution", action: nil, keyEquivalent: "")
+        let sizes = NSMenu(title: "Resolution")
+        let automatic = ScrcpySession.automaticLongSide
+        sizes.addItem(withTitle: "Automatic (\(automatic) × \(automatic * 9 / 16))", action: #selector(chooseResolution(_:)), keyEquivalent: "")
+            .target = target
+        sizes.addItem(.separator())
+        for side in ScrcpySession.resolutions {
+            let entry = sizes.addItem(withTitle: "\(side) × \(side * 9 / 16)", action: #selector(chooseResolution(_:)), keyEquivalent: "")
+            entry.target = target
+            entry.tag = side
+        }
+        item.submenu = sizes
+    }
+
+    @objc func chooseResolution(_ sender: NSMenuItem) {
+        UserDefaults.standard.set(sender.tag, forKey: ScrcpySession.resolutionKey(package))
+        let side = ScrcpySession.longSide(package: package)
+        guard side != longSide else { return }
+        longSide = side
+        AppLog.write("Resolution: \(side) by \(side * 9 / 16)")
+        let pixels = NSSize(width: side, height: side * 9 / 16)
+        displaySize = isLandscape ? pixels : NSSize(width: pixels.height, height: pixels.width)
+        window.setFrameAutosaveName("Main-\(side)")
+        fitWindow(resized: true)
+        restartApp()
     }
 
     /// An app that turned itself may be stuck at its first screen's size, and is then
@@ -506,5 +557,15 @@ private final class EngineLoad {
             }
         }
         return 0
+    }
+}
+
+extension AppWindowController: NSMenuItemValidation {
+    func validateMenuItem(_ item: NSMenuItem) -> Bool {
+        if item.action == #selector(chooseResolution(_:)) {
+            let chosen = UserDefaults.standard.integer(forKey: ScrcpySession.resolutionKey(package))
+            item.state = item.tag == (ScrcpySession.resolutions.contains(chosen) ? chosen : 0) ? .on : .off
+        }
+        return true
     }
 }

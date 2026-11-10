@@ -1,13 +1,37 @@
+import AppKit
 import Darwin
-import Foundation
 
 /// Client for the scrcpy server protocol: runs one app on its own Android virtual
 /// display, receives its frames and sends input back. Our server build sends each frame
 /// as the GPU resource Android drew it into (see FrameRenderer), not as video.
 final class ScrcpySession {
-    /// A 9:16 phone screen: the common ratio, at a resolution that stays light to draw.
-    static let shortSide = 810
-    static let longSide = 1440
+    /// The app's screen, 16:9, by its long side in pixels. Apps lay out on it as on 1440 by 810
+    /// at 320 dpi whatever its size, so a larger one only makes them sharper.
+    let longSide: Int
+    var shortSide: Int { longSide * 9 / 16 }
+    var density: Int { 320 * longSide / 1440 }
+
+    /// The sizes View > Resolution offers.
+    static let resolutions = [1440, 1920, 2560, 3840]
+
+    /// Automatic: as many pixels as the screen the window opens on has, up to 4K, and at most
+    /// 1920 by 1080 on Macs with less than 16 GB, where 4K frames cost too much memory.
+    /// Never fewer than 1440 by 810.
+    static var automaticLongSide: Int {
+        let screen = NSScreen.main.map { max($0.frame.width, $0.frame.height) * $0.backingScaleFactor } ?? 1440
+        let limit = ProcessInfo.processInfo.physicalMemory >= 16 << 30 ? 3840 : 1920
+        // A multiple of 32 keeps both sides whole and even.
+        return min(max(Int(screen), 1440), limit) / 32 * 32
+    }
+
+    /// The size chosen for an app in View > Resolution, or the automatic one.
+    static func longSide(package: String) -> Int {
+        let chosen = UserDefaults.standard.integer(forKey: resolutionKey(package))
+        return resolutions.contains(chosen) ? chosen : automaticLongSide
+    }
+
+    static func resolutionKey(_ package: String) -> String { "Resolution.\(package)" }
+
     /// What our server build sends where scrcpy sends a codec id.
     private static let framesCodec: UInt32 = 0x6672_6D73 // "frms"
     private static let maxClipboardBytes = (1 << 18) - 14
@@ -39,8 +63,9 @@ final class ScrcpySession {
     var onClipboard: ((String) -> Void)?
 
     /// `restartsApp` stops the app first, so it starts again on this session's screen.
-    init(package: String, landscape: Bool, restartsApp: Bool = false) {
+    init(package: String, landscape: Bool, longSide: Int, restartsApp: Bool = false) {
         self.package = package
+        self.longSide = longSide
         self.landscape = landscape
         self.restartsApp = restartsApp
     }
@@ -97,7 +122,7 @@ final class ScrcpySession {
             "audio=false", // Android's sound card plays the sound of all apps
             "tunnel_forward=true",
             "frames=true",
-            "new_display=\(landscape ? "\(Self.longSide)x\(Self.shortSide)" : "\(Self.shortSide)x\(Self.longSide)")/320",
+            "new_display=\(landscape ? "\(longSide)x\(shortSide)" : "\(shortSide)x\(longSide)")/\(density)",
             "vd_system_decorations=false",
             "display_ime_policy=hide",
             "power_on=false",
