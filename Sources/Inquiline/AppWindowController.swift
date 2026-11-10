@@ -69,9 +69,8 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate {
         // Sized once the toolbar is in, as it takes room from the screen too.
         addToolbar()
         window.setContentSize(openingSize(for: displaySize))
+        // Always at its resolution's own size, in the middle of the screen.
         window.center()
-        // Back where it was last time, as Mac windows are; each resolution opens at its own size.
-        window.setFrameAutosaveName("Window-\(longSide)")
         AppLog.write("Screen of \(Int(displaySize.width)) by \(Int(displaySize.height)) pixels")
         connect(session)
     }
