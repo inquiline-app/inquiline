@@ -36,7 +36,7 @@ final class ScrcpySession {
 
         func screen(landscape: Bool) -> Screen {
             // Whole and even sides.
-            let short = Int(CGFloat(longSide) / ScrcpySession.screenShape / 2) * 2, density = 320 * longSide / 1440
+            let short = Int((CGFloat(longSide) / ScrcpySession.screenShape / 2).rounded()) * 2, density = 320 * longSide / 1440
             return landscape ? Screen(width: longSide, height: short, density: density)
                 : Screen(width: short, height: longSide, density: density)
         }

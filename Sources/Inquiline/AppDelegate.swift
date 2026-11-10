@@ -147,12 +147,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, SPUSta
             if url.scheme == "inquiline", url.host == "open",
                let package = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first(where: { $0.name == "package" })?.value {
                 reopenUpdated(package: package)
-            } else if url.scheme == "inquiline", url.host == "restart",
-                      let package = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first(where: { $0.name == "package" })?.value {
-                // An app starting again for a new resolution, opened as from the Dock: macOS gives
-                // Game Mode only to games opened that way, not to ones a quitting app's child opens.
-                reopened[package] = nil
-                reopenUpdated(package: package)
             } else if url.scheme == "inquiline" {
                 run("Starting Android…") { try self.prepareAndroid() }
             } else {

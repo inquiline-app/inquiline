@@ -17,7 +17,7 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate {
     private var restarted = false
     /// The app's screen in pixels.
     private var displaySize: NSSize
-    private let resolution: ScrcpySession.Resolution
+    private var resolution: ScrcpySession.Resolution
     private var watch: Timer?
     private let launchScreen = LaunchScreen()
     /// The Android screen this window shows, once the app has appeared on it.
@@ -32,10 +32,7 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate {
         resolution = ScrcpySession.resolution(package: package)
         let androidScreen = resolution.screen(landscape: landscape)
         let points = Self.smallest(landscape: landscape)
-        // After a resolution change the app starts again on its new screen.
-        let restarting = UserDefaults.standard.bool(forKey: Self.restartKey(package))
-        UserDefaults.standard.removeObject(forKey: Self.restartKey(package))
-        session = ScrcpySession(package: package, screen: androidScreen, restartsApp: restarting)
+        session = ScrcpySession(package: package, screen: androidScreen)
         displaySize = NSSize(width: androidScreen.width, height: androidScreen.height)
         displayView = AndroidDisplayView(frame: NSRect(origin: .zero, size: points))
         window = NSWindow(
@@ -277,8 +274,6 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate {
         }
     }
 
-    private static func restartKey(_ package: String) -> String { "RestartForResolution.\(package)" }
-
     /// Android sets an app's screen size only as the app starts, so a new resolution waits
     /// for the next start, now if the user wants.
     @objc func chooseResolution(_ sender: NSMenuItem) {
@@ -288,15 +283,16 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate {
         AppLog.write("Resolution chosen: \(level.name)")
         let alert = NSAlert()
         alert.messageText = "Restart \(window.title) at \(level.name) resolution?"
-        alert.informativeText = "The new resolution takes effect when \(window.title) starts again."
+        alert.informativeText = "\(window.title) starts again to use the new resolution."
         alert.addButton(withTitle: "Restart Now")
         alert.addButton(withTitle: "Later")
         alert.beginSheetModal(for: window) { [self] response in
             guard response == .alertFirstButtonReturn else { return }
-            UserDefaults.standard.set(true, forKey: Self.restartKey(package))
-            // Inquiline opens it again once this process has ended, as only one copy of an app runs.
-            if let url = URL(string: "inquiline://restart?package=\(package)") { NSWorkspace.shared.open(url) }
-            NSApp.terminate(nil)
+            // The app starts again on a new Android screen in this same window and process, as
+            // when it turns: macOS keeps a game's Game Mode, which it gives only to games the user
+            // opened, not to ones opened again by a program.
+            resolution = level
+            restartApp()
         }
     }
 
