@@ -111,13 +111,12 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate {
         let renderer = displayView.renderer
         let frames = frameCount
         var shown = false
-        let opened = Date()
         session.onFrame = { [weak self] resource in
             renderer?.draw(resource: resource)
             frames.add()
             guard !shown else { return }
             shown = true
-            AppLog.write("First frame after \(Int(Date().timeIntervalSince(opened))) s")
+            AppLog.write(String(format: "First frame %.1f s after the app was started", frames.sinceStart()))
             DispatchQueue.main.async {
                 guard let self else { return }
                 self.launchScreen.removeFromSuperview()
@@ -142,11 +141,13 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate {
         session = ScrcpySession(package: package, landscape: isLandscape, restartsApp: true)
         watchedDisplay = nil // the new session brings a new Android screen
         connect(session)
+        frameCount.markStart()
         session.start()
     }
 
     /// Call once the window is on screen.
     func start() {
+        frameCount.markStart()
         session.start()
         window.makeFirstResponder(displayView)
         watchApp()
@@ -233,10 +234,23 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate {
         let counter = frameCount
         let engine = EngineLoad()
         var still = 0, moving = 0, busyFor = 0, idleFor = 0
+        var minute: [Int] = []
         fpsTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
             guard let self else { return }
             let fps = counter.take()
             self.fpsLabel.stringValue = "\(fps)"
+            // Once a minute, how smooth the app was, for finding where a game stuttered. A
+            // minute with no frames is a still screen, which says nothing.
+            minute.append(fps)
+            if minute.count == 60 {
+                let shown = minute.filter { $0 > 0 }
+                if !shown.isEmpty {
+                    let below30 = minute.filter { $0 > 0 && $0 < 30 }.count
+                    AppLog.write("Last minute: \(shown.reduce(0, +) / shown.count) fps on average, "
+                        + "\(shown.min()!) at least, \(below30) s under 30 fps, \(60 - shown.count) s still")
+                }
+                minute.removeAll()
+            }
             // A game's first launch can sit on one picture for minutes while its graphics are
             // prepared for the Mac's GPU, which keeps the engine busy all along. A still screen
             // that leaves the engine at rest, as a sign-in or a store page, is just still. Both
@@ -440,6 +454,17 @@ private final class LaunchScreen: NSView {
 private final class FrameCounter: @unchecked Sendable {
     private let lock = NSLock()
     private var count = 0
+    private var started = Date()
+
+    /// When Android was asked to start the app, for how long its first frame took.
+    func markStart() {
+        lock.lock(); started = Date(); lock.unlock()
+    }
+
+    func sinceStart() -> Double {
+        lock.lock(); defer { lock.unlock() }
+        return Date().timeIntervalSince(started)
+    }
 
     func add() {
         lock.lock(); count += 1; lock.unlock()
