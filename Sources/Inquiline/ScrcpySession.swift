@@ -5,16 +5,15 @@ import Darwin
 /// display, receives its frames and sends input back. Our server build sends each frame
 /// as the GPU resource Android drew it into (see FrameRenderer), not as video.
 final class ScrcpySession {
-    /// The app's screen, 16:9, by its long side in pixels. Apps lay out on it as on 1440 by 810
-    /// at 320 dpi whatever its size, so a larger one only makes them sharper.
-    let longSide: Int
-    var shortSide: Int { longSide * 9 / 16 }
-    var density: Int { 320 * longSide / 1440 }
+    /// The app's Android screen: its size in pixels and its density.
+    struct Screen: Equatable {
+        let width: Int
+        let height: Int
+        let density: Int
+    }
+    let screen: Screen
 
-    /// The toolbar's Resolution: how large the app's screen is, as large as the Mac's screen
-    /// shows it. Large fills the room a window has on the screen pixel for pixel, Small is 1440
-    /// by 810, Medium between them. Large is at most 1920 by 1080 on Macs with less than 16 GB,
-    /// where larger frames cost too much memory.
+    /// The toolbar's Resolution, kept for each app.
     enum Resolution: Int, CaseIterable {
         case small = 1, medium, large
 
@@ -24,25 +23,6 @@ final class ScrcpySession {
             case .medium: return "Medium"
             case .large: return "Large"
             }
-        }
-    }
-
-    static func longSide(for resolution: Resolution, portrait: Bool) -> Int {
-        let small = 1440
-        // The window's room on the screen in pixels, below the menu bar and its own title bar.
-        let room = NSScreen.main.map { screen -> NSSize in
-            let visible = screen.visibleFrame.size
-            return NSSize(width: visible.width * screen.backingScaleFactor,
-                          height: (visible.height - 38) * screen.backingScaleFactor)
-        } ?? NSSize(width: 1440, height: 810)
-        let fits = portrait ? min(room.height, room.width * 16 / 9) : min(room.width, room.height * 16 / 9)
-        let limit = ProcessInfo.processInfo.physicalMemory >= 16 << 30 ? 3840 : 1920
-        // Multiples of 32 keep both sides whole and even.
-        let large = max(min(Int(fits), limit) / 32 * 32, small)
-        switch resolution {
-        case .small: return small
-        case .medium: return max((small + large) / 2 / 32 * 32, small)
-        case .large: return large
         }
     }
 
@@ -59,7 +39,6 @@ final class ScrcpySession {
     private static let sessionFlag: UInt32 = 0x8000_0000
 
     private let package: String
-    private let landscape: Bool
     private let restartsApp: Bool
     private let scid = String(format: "%08x", UInt32.random(in: 1...0x7FFF_FFFF))
 
@@ -83,10 +62,9 @@ final class ScrcpySession {
     var onClipboard: ((String) -> Void)?
 
     /// `restartsApp` stops the app first, so it starts again on this session's screen.
-    init(package: String, landscape: Bool, longSide: Int, restartsApp: Bool = false) {
+    init(package: String, screen: Screen, restartsApp: Bool = false) {
         self.package = package
-        self.longSide = longSide
-        self.landscape = landscape
+        self.screen = screen
         self.restartsApp = restartsApp
     }
 
@@ -142,7 +120,7 @@ final class ScrcpySession {
             "audio=false", // Android's sound card plays the sound of all apps
             "tunnel_forward=true",
             "frames=true",
-            "new_display=\(landscape ? "\(longSide)x\(shortSide)" : "\(shortSide)x\(longSide)")/\(density)",
+            "new_display=\(screen.width)x\(screen.height)/\(screen.density)",
             "vd_system_decorations=false",
             "display_ime_policy=hide",
             "power_on=false",
