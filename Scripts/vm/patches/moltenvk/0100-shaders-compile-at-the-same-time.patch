@@ -1,0 +1,168 @@
+diff --git a/MoltenVK/MoltenVK/GPUObjects/MVKPipeline.mm b/MoltenVK/MoltenVK/GPUObjects/MVKPipeline.mm
+index 7eae64c..864ab0d 100644
+--- a/MoltenVK/MoltenVK/GPUObjects/MVKPipeline.mm
++++ b/MoltenVK/MoltenVK/GPUObjects/MVKPipeline.mm
+@@ -2574,10 +2574,37 @@ static void setEmulatedReversedDepthViewportConfig(SPIRVToMSLConversionConfigura
+ 													 uint64_t startTime) {
+ 	if (_isExternallySynchronized) {
+ 		return getShaderLibraryImpl(pContext, shaderModule, pipeline, pShaderFeedback, startTime);
+-	} else {
++	}
++
++	// Inquiline: the lock is held to look a library up and to add one, not while it compiles,
++	// so the threads of a game building pipelines compile at the same time, as Metal can.
++	{
+ 		lock_guard<mutex> lock(_shaderCacheLock);
+-		return getShaderLibraryImpl(pContext, shaderModule, pipeline, pShaderFeedback, startTime);
++		MVKShaderLibrary* shLib = getShaderLibraryCache(shaderModule->getKey())->findShaderLibrary(pContext, pShaderFeedback, startTime);
++		if (shLib) {
++			if (pShaderFeedback) { mvkEnableFlags(pShaderFeedback->flags, VK_PIPELINE_CREATION_FEEDBACK_APPLICATION_PIPELINE_CACHE_HIT_BIT); }
++			return shLib;
++		}
+ 	}
++	if (pipeline->shouldFailOnPipelineCompileRequired()) { return nullptr; }
++
++	SPIRVToMSLConversionConfiguration config = *pContext;
++	SPIRVToMSLConversionResult conversionResult;
++	if ( !shaderModule->convert(&config, conversionResult) ) { return nullptr; }
++	MVKShaderLibrary* compiled = new MVKShaderLibrary(this, conversionResult);
++	if (pShaderFeedback) { pShaderFeedback->duration += mvkGetElapsedNanoseconds(startTime); }
++
++	lock_guard<mutex> lock(_shaderCacheLock);
++	MVKShaderLibraryCache* slCache = getShaderLibraryCache(shaderModule->getKey());
++	// Another thread may have made the same library meanwhile; the first one stays.
++	if (MVKShaderLibrary* shLib = slCache->findShaderLibrary(pContext)) {
++		compiled->destroy();
++		return shLib;
++	}
++	*pContext = config;
++	slCache->addShaderLibrary(pContext, compiled);
++	markDirty();
++	return compiled;
+ }
+ 
+ MVKShaderLibrary* MVKPipelineCache::getShaderLibraryImpl(SPIRVToMSLConversionConfiguration* pContext,
+@@ -2767,30 +2794,30 @@ static void setEmulatedReversedDepthViewportConfig(SPIRVToMSLConversionConfigura
+ 		reader(pcUUID);			// Pipeline cache UUID
+ 		if ( !mvkAreEqual(pcUUID, dvcProps.pipelineCacheUUID, VK_UUID_SIZE) ) { return; }
+ 
++		// Inquiline: the entries are read first and their shaders compiled all at once, as
++		// Metal compiles several at a time; one by one, a game's saved cache of a few thousand
++		// shaders held its logo for minutes on an empty Metal cache.
++		struct Entry {
++			MVKShaderModuleKey smKey;
++			SPIRVToMSLConversionConfiguration config;
++			SPIRVToMSLConversionResultInfo resultInfo;
++			MVKCompressor<std::string> compressedMSL;
++			MVKShaderLibrary* library = nullptr;
++		};
++		std::vector<Entry> entries;
+ 		bool done = false;
+ 		while ( !done ) {
+ 			reader(cacheEntryType);
+ 			switch (cacheEntryType) {
+ 				case MVKPipelineCacheEntryTypeShaderLibrary: {
+ 					uint64_t startTime = getPerformanceTimestamp();
+-
+-					MVKShaderModuleKey smKey;
+-					reader(smKey);
+-
+-					SPIRVToMSLConversionConfiguration shaderConversionConfig;
+-					reader(shaderConversionConfig);
+-
+-					SPIRVToMSLConversionResultInfo resultInfo;
+-					reader(resultInfo);
+-
+-					MVKCompressor<std::string> compressedMSL;
+-					reader(compressedMSL);
+-
+-					// Add the shader library to the staging cache.
+-					MVKShaderLibraryCache* slCache = getShaderLibraryCache(smKey);
++					entries.emplace_back();
++					Entry& entry = entries.back();
++					reader(entry.smKey);
++					reader(entry.config);
++					reader(entry.resultInfo);
++					reader(entry.compressedMSL);
+ 					addPerformanceInterval(getPerformanceStats().pipelineCache.readPipelineCache, startTime);
+-					slCache->addShaderLibrary(&shaderConversionConfig, resultInfo, compressedMSL);
+-
+ 					break;
+ 				}
+ 
+@@ -2801,6 +2828,18 @@ static void setEmulatedReversedDepthViewportConfig(SPIRVToMSLConversionConfigura
+ 			}
+ 		}
+ 
++		Entry* list = entries.data();
++		dispatch_apply(entries.size(), dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^(size_t index) {
++			@autoreleasepool {
++				list[index].library = new MVKShaderLibrary(this, list[index].resultInfo, list[index].compressedMSL);
++			}
++		});
++
++		// Add the shader libraries to the staging cache, in the saved order.
++		for (auto& entry : entries) {
++			getShaderLibraryCache(entry.smKey)->addShaderLibrary(&entry.config, entry.library);
++		}
++
+ 	} catch (cereal::Exception& ex) {
+ 		setConfigurationResult(reportError(VK_ERROR_INITIALIZATION_FAILED, "Error reading pipeline cache data: %s", ex.what()));
+ 	}
+diff --git a/MoltenVK/MoltenVK/GPUObjects/MVKShaderModule.h b/MoltenVK/MoltenVK/GPUObjects/MVKShaderModule.h
+index c5b7499..043b068 100644
+--- a/MoltenVK/MoltenVK/GPUObjects/MVKShaderModule.h
++++ b/MoltenVK/MoltenVK/GPUObjects/MVKShaderModule.h
+@@ -138,6 +138,7 @@ protected:
+ 	friend MVKShaderCacheIterator;
+ 	friend MVKShaderLibraryCache;
+ 	friend MVKShaderModule;
++	friend class MVKPipelineCache;
+ 
+ 	MVKMTLFunction getMTLFunction(const VkSpecializationInfo* pSpecializationInfo,
+ 								  VkPipelineCreationFeedback* pShaderFeedback,
+@@ -204,6 +205,8 @@ protected:
+ 	MVKShaderLibrary* addShaderLibrary(const mvk::SPIRVToMSLConversionConfiguration* pShaderConfig,
+ 									   const mvk::SPIRVToMSLConversionResultInfo& resultInfo,
+ 									   const MVKCompressor<std::string> compressedMSL);
++	MVKShaderLibrary* addShaderLibrary(const mvk::SPIRVToMSLConversionConfiguration* pShaderConfig,
++									   MVKShaderLibrary* shLib);
+ 	void merge(MVKShaderLibraryCache* other);
+ 
+ 	MVKVulkanAPIDeviceObject* _owner;
+@@ -280,6 +283,7 @@ protected:
+ 	MVKShaderLibrary* _directMSLLibrary;
+ 	MVKShaderModuleKey _key;
+     std::mutex _accessLock;
++	std::mutex _convertLock;
+ };
+ 
+ 
+diff --git a/MoltenVK/MoltenVK/GPUObjects/MVKShaderModule.mm b/MoltenVK/MoltenVK/GPUObjects/MVKShaderModule.mm
+index 3aa44a4..3881ed1 100644
+--- a/MoltenVK/MoltenVK/GPUObjects/MVKShaderModule.mm
++++ b/MoltenVK/MoltenVK/GPUObjects/MVKShaderModule.mm
+@@ -374,6 +374,13 @@ static uint32_t getWorkgroupDimensionSize(const SPIRVWorkgroupSizeDimension& wgD
+ 	return shLib;
+ }
+ 
++// Adds a library already compiled, as from a restored pipeline cache. Inquiline.
++MVKShaderLibrary* MVKShaderLibraryCache::addShaderLibrary(const SPIRVToMSLConversionConfiguration* pShaderConfig,
++														  MVKShaderLibrary* shLib) {
++	_shaderLibraries.emplace_back(*pShaderConfig, shLib);
++	return shLib;
++}
++
+ // Merge another shader library cache with this one. Handle null input.
+ void MVKShaderLibraryCache::merge(MVKShaderLibraryCache* other) {
+ 	if ( !other ) { return; }
+@@ -422,6 +429,9 @@ static uint32_t getWorkgroupDimensionSize(const SPIRVWorkgroupSizeDimension& wgD
+ 	bool shouldLogEstimatedGLSL = shouldLogCode && mvkCfg.shaderLogEstimatedGLSL;
+ 
+ 	uint64_t startTime = getPerformanceTimestamp();
++	// Inquiline: pipelines can now convert at the same time (MVKPipelineCache::getShaderLibrary);
++	// one module's converter is used by one at a time.
++	lock_guard<mutex> convertLock(_convertLock);
+ 	bool wasConverted = _spvConverter.convert(*pShaderConfig, conversionResult, shouldLogCode, shouldLogCode, shouldLogEstimatedGLSL);
+ 	addPerformanceInterval(getPerformanceStats().shaderCompilation.spirvToMSL, startTime);
+ 

@@ -1,0 +1,67 @@
+--- a/host/vulkan/vk_decoder.cpp	2026-11-10 19:06:50
++++ b/host/vulkan/vk_decoder.cpp	2026-11-10 19:06:50
+@@ -30,6 +30,8 @@
+ 
+ #include "vk_decoder.h"
+ 
++#include <thread>
++
+ #include <cstring>
+ #include <functional>
+ #include <optional>
+@@ -162,7 +164,11 @@
+             }
+             if (seqnoPtr && !m_forSnapshotLoad) {
+                 {
++                    // Inquiline: another thread's command may take long, as a pipeline
++                    // compiling; past a short spin this thread gives its core up meanwhile.
++                    uint32_t spins = 0;
+                     while ((seqno - seqnoPtr->load(std::memory_order_seq_cst) != 1)) {
++                        if (++spins > 1000) std::this_thread::yield();
+                         if (shouldExit.load(std::memory_order_relaxed)) {
+                             GFXSTREAM_WARNING(
+                                 "Process=%s is exitting. Skip processing seqno=%d on thread=0x%x.",
+@@ -5687,6 +5693,12 @@
+                         (unsigned long long)pAllocator, (unsigned long long)pPipelines);
+                 }
+                 VkResult vkCreateComputePipelines_VkResult_return = VK_ERROR_OUT_OF_HOST_MEMORY;
++                // Inquiline: a pipeline compiles for long and nothing else the app sends
++                // depends on it until it has the pipeline back, so the next command, from
++                // any of the app's threads, needn't wait for the compile: its turn is given
++                // up now. Games build pipelines on several threads at once.
++                const bool vkCreateComputePipelines_turnGivenUp = m_queueSubmitWithCommandsEnabled && seqnoPtr;
++                if (vkCreateComputePipelines_turnGivenUp) seqnoPtr->fetch_add(1, std::memory_order_seq_cst);
+                 if (CC_LIKELY(vk)) {
+                     vkCreateComputePipelines_VkResult_return = m_state->on_vkCreateComputePipelines(
+                         &m_pool, snapshotApiCallHandle, device, pipelineCache, createInfoCount,
+@@ -5717,7 +5729,7 @@
+                         createInfoCount, pCreateInfos, pAllocator, pPipelines);
+                 }
+                 vkReadStream->clearPool();
+-                if (m_queueSubmitWithCommandsEnabled)
++                if (m_queueSubmitWithCommandsEnabled && !vkCreateComputePipelines_turnGivenUp)
+                     seqnoPtr->fetch_add(1, std::memory_order_seq_cst);
+                 break;
+             }
+@@ -7210,6 +7222,12 @@
+                         (unsigned long long)pAllocator, (unsigned long long)pPipelines);
+                 }
+                 VkResult vkCreateGraphicsPipelines_VkResult_return = VK_ERROR_OUT_OF_HOST_MEMORY;
++                // Inquiline: a pipeline compiles for long and nothing else the app sends
++                // depends on it until it has the pipeline back, so the next command, from
++                // any of the app's threads, needn't wait for the compile: its turn is given
++                // up now. Games build pipelines on several threads at once.
++                const bool vkCreateGraphicsPipelines_turnGivenUp = m_queueSubmitWithCommandsEnabled && seqnoPtr;
++                if (vkCreateGraphicsPipelines_turnGivenUp) seqnoPtr->fetch_add(1, std::memory_order_seq_cst);
+                 if (CC_LIKELY(vk)) {
+                     vkCreateGraphicsPipelines_VkResult_return =
+                         m_state->on_vkCreateGraphicsPipelines(
+@@ -7241,7 +7259,7 @@
+                         createInfoCount, pCreateInfos, pAllocator, pPipelines);
+                 }
+                 vkReadStream->clearPool();
+-                if (m_queueSubmitWithCommandsEnabled)
++                if (m_queueSubmitWithCommandsEnabled && !vkCreateGraphicsPipelines_turnGivenUp)
+                     seqnoPtr->fetch_add(1, std::memory_order_seq_cst);
+                 break;
+             }

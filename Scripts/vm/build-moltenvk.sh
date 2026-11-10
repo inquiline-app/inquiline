@@ -25,6 +25,11 @@ for patch in "$ROOT"/Scripts/vm/patches/spirv-cross/*.patch; do
     git -C "$SRC/SPIRV-Cross" apply --reverse --check "$patch" 2>/dev/null || git -C "$SRC/SPIRV-Cross" apply "$patch"
 done
 
+# Inquiline's changes to MoltenVK itself: shaders compile at the same time.
+for patch in "$ROOT"/Scripts/vm/patches/moltenvk/*.patch; do
+    git -C "$SRC/MoltenVK" apply --reverse --check "$patch" 2>/dev/null || git -C "$SRC/MoltenVK" apply "$patch"
+done
+
 (cd "$SRC/MoltenVK"
  ./fetchDependencies --macos --spirv-cross-root "$ROOT/$SRC/SPIRV-Cross"
  make macos MVK_USE_METAL_PRIVATE_API=1)
