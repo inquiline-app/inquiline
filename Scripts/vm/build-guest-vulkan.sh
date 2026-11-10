@@ -14,8 +14,9 @@ HEADERS=$ROOT/Scripts/vm/guest-headers
 rm -rf "$BUILD"
 mkdir -p "$BUILD/pkgconfig"
 
-patch=$ROOT/Scripts/vm/patches/mesa/0100-gfxstream-Vulkan-for-Redroid.patch
-patch -d "$MESA" -p1 -R --dry-run -s -f < "$patch" >/dev/null 2>&1 || patch -d "$MESA" -p1 -s < "$patch"
+for patch in "$ROOT"/Scripts/vm/patches/mesa/*.patch; do
+    patch -d "$MESA" -p1 -R --dry-run -s -f < "$patch" >/dev/null 2>&1 || patch -d "$MESA" -p1 -s < "$patch"
+done
 
 # The driver asks for AOSP's libraries by pkg-config name; all it uses of them is in guest-headers.
 for name in android-base android-arect android-aemu-base android-aemu-gl-codec android-aemu-qemupipe \

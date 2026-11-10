@@ -245,8 +245,11 @@ final class AndroidRuntime {
     /// 6: a sound card (virtio-sound) and an audio HAL that plays into it.
     /// 7: the Vulkan driver slept, not spun, while the Mac worked. 8: back to upstream's
     /// waiting, as in revision 6. 9: the sound card holds 100 ms, not 40.
-    /// 10: Inquiline's own names for its files inside Android.
-    private static let diskRevision = 10
+    /// 10: Inquiline's own names for its files inside Android. 11: the Vulkan driver sleeps
+    /// after a short spin while the Mac compiles, as the Mac now compiles pipelines at once
+    /// and needs the cores (Mesa patch 0101). 12: only after 5 ms of waiting, as sleeping in
+    /// a frame's short waits cost about 15% of Asphalt Legends' frame rate.
+    private static let diskRevision = 12
     /// The VM's memory map fits the 36-bit (64 GB) address space Apple's M1 and M2 give a VM:
     /// above the RAM, the window for 64-bit device memory, such as the GPU's 2 GB, is 16 GB,
     /// not QEMU's 512 GB, which only M3 and later have room for (see the QEMU patch 0102).

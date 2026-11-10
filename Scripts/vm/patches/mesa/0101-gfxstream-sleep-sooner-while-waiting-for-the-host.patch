@@ -1,0 +1,55 @@
+--- a/src/gfxstream/guest/GoldfishAddressSpace/include/AddressSpaceStream.h	2026-11-10 20:29:43
++++ b/src/gfxstream/guest/GoldfishAddressSpace/include/AddressSpaceStream.h	2026-11-10 20:29:43
+@@ -6,6 +6,7 @@
+ #ifndef __ADDRESS_SPACE_STREAM_H
+ #define __ADDRESS_SPACE_STREAM_H
+ 
++#include <chrono>
+ #include "VirtGpu.h"
+ #include "address_space.h"
+ #include "address_space_graphics_types.h"
+@@ -77,6 +78,7 @@
+ 
+     uint64_t m_backoffIters;
+     uint64_t m_backoffFactor;
++    std::chrono::steady_clock::time_point m_backoffStart;
+ 
+     size_t m_ringStorageSize;
+     uint32_t m_resourceId = 0;
+--- a/src/gfxstream/guest/GoldfishAddressSpace/AddressSpaceStream.cpp	2026-11-10 20:29:43
++++ b/src/gfxstream/guest/GoldfishAddressSpace/AddressSpaceStream.cpp	2026-11-10 20:29:43
+@@ -562,19 +562,22 @@
+ }
+ 
+ void AddressSpaceStream::backoff() {
+-    static const uint32_t kBackoffItersThreshold = 50000000;
+-    static const uint32_t kBackoffFactorDoublingIncrement = 50000000;
+-    ++m_backoffIters;
+-
+-    if (m_backoffIters > kBackoffItersThreshold) {
+-        usleep(m_backoffFactor);
+-        uint32_t itersSoFarAfterThreshold = m_backoffIters - kBackoffItersThreshold;
+-        if (itersSoFarAfterThreshold > kBackoffFactorDoublingIncrement) {
+-            m_backoffFactor = m_backoffFactor << 1;
+-            if (m_backoffFactor > 1000) m_backoffFactor = 1000;
+-            m_backoffIters = kBackoffItersThreshold;
+-        }
++    // Inquiline: upstream spins 50 million times before it sleeps, which keeps a guest CPU
++    // busy for seconds while the Mac compiles a pipeline. A game creating pipelines on six
++    // threads then holds six of the Mac's cores, which Metal's compiler needs: it compiles
++    // pipelines at the same time since gfxstream patch 0103. Waits for a frame last a
++    // millisecond or two and stay spins, as sleeping there costs frames; a wait past 5 ms
++    // sleeps, longer each time, up to about 1 ms.
++    if (m_backoffIters++ == 0) {
++        m_backoffStart = std::chrono::steady_clock::now();
++        return;
+     }
++    if (m_backoffFactor == 1) {
++        if (m_backoffIters % 64) return;
++        if (std::chrono::steady_clock::now() - m_backoffStart < std::chrono::milliseconds(5)) return;
++    }
++    usleep(m_backoffFactor);
++    if (m_backoffFactor < 1000) m_backoffFactor <<= 1;
+ }
+ 
+ void AddressSpaceStream::resetBackoff() {
