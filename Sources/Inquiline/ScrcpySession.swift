@@ -13,8 +13,8 @@ final class ScrcpySession {
     }
     let screen: Screen
 
-    /// The toolbar's Resolution, kept for each app: how many pixels Android draws, 16:9. Apps
-    /// lay out the same at each, as on 1440 by 810 at 320 dpi; only sharpness changes.
+    /// How many pixels Android draws, in the screen's shape. Apps lay out the same at each, as
+    /// on 1440 by 810 at 320 dpi; only sharpness changes.
     enum Resolution: Int, CaseIterable {
         case low = 1, medium, high
 
@@ -32,6 +32,12 @@ final class ScrcpySession {
             case .medium: return 2560
             case .high: return 3840
             }
+        }
+
+        /// As sharp as the Mac's memory allows: High costs about 600 MB more than Low and
+        /// nothing in CPU, GPU or frame rate, which Macs with 16 GB or more don't feel.
+        static var forThisMac: Resolution {
+            ProcessInfo.processInfo.physicalMemory >= 16 << 30 ? .high : .medium
         }
 
         func screen(landscape: Bool) -> Screen {
@@ -52,11 +58,6 @@ final class ScrcpySession {
         return min(max(shape, 4 / 3), 21 / 9)
     }()
 
-    static func resolution(package: String) -> Resolution {
-        Resolution(rawValue: UserDefaults.standard.integer(forKey: resolutionKey(package))) ?? .medium
-    }
-
-    static func resolutionKey(_ package: String) -> String { "Resolution.\(package)" }
 
     /// What our server build sends where scrcpy sends a codec id.
     private static let framesCodec: UInt32 = 0x6672_6D73 // "frms"

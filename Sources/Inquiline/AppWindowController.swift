@@ -17,7 +17,7 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate {
     private var restarted = false
     /// The app's screen in pixels.
     private var displaySize: NSSize
-    private var resolution: ScrcpySession.Resolution
+    private let resolution: ScrcpySession.Resolution
     private var watch: Timer?
     private let launchScreen = LaunchScreen()
     /// The Android screen this window shows, once the app has appeared on it.
@@ -29,7 +29,7 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate {
         self.package = package
         self.orientation = orientation
         isLandscape = landscape
-        resolution = ScrcpySession.resolution(package: package)
+        resolution = ScrcpySession.Resolution.forThisMac
         let androidScreen = resolution.screen(landscape: landscape)
         let points = Self.smallest(landscape: landscape)
         session = ScrcpySession(package: package, screen: androidScreen)
@@ -251,51 +251,6 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate {
         UserDefaults.standard.set(false, forKey: fullScreenKey)
     }
 
-    // MARK: - Resolution
-
-    /// The toolbar's Resolution menu: Small, Medium or Large, each with its size on this screen,
-    /// kept for this app.
-    private func resolutionMenu() -> NSMenu {
-        let menu = NSMenu(title: "Resolution")
-        menu.delegate = self
-        return menu
-    }
-
-    /// Filled as it opens.
-    func menuNeedsUpdate(_ menu: NSMenu) {
-        menu.removeAllItems()
-        // A toolbar's pull-down menu takes its first item as its title, which it doesn't list.
-        menu.addItem(.sectionHeader(title: "Resolution"))
-        for level in ScrcpySession.Resolution.allCases.reversed() {
-            let entry = menu.addItem(withTitle: level.name, action: #selector(chooseResolution(_:)), keyEquivalent: "")
-            entry.target = self
-            entry.tag = level.rawValue
-            entry.state = level == ScrcpySession.resolution(package: package) ? .on : .off
-        }
-    }
-
-    /// Android sets an app's screen size only as the app starts, so a new resolution waits
-    /// for the next start, now if the user wants.
-    @objc func chooseResolution(_ sender: NSMenuItem) {
-        guard let level = ScrcpySession.Resolution(rawValue: sender.tag) else { return }
-        UserDefaults.standard.set(level.rawValue, forKey: ScrcpySession.resolutionKey(package))
-        guard level != resolution else { return }
-        AppLog.write("Resolution chosen: \(level.name)")
-        let alert = NSAlert()
-        alert.messageText = "Restart \(window.title) at \(level.name) resolution?"
-        alert.informativeText = "\(window.title) starts again to use the new resolution."
-        alert.addButton(withTitle: "Restart Now")
-        alert.addButton(withTitle: "Later")
-        alert.beginSheetModal(for: window) { [self] response in
-            guard response == .alertFirstButtonReturn else { return }
-            // The app starts again on a new Android screen in this same window and process, as
-            // when it turns: macOS keeps a game's Game Mode, which it gives only to games the user
-            // opened, not to ones opened again by a program.
-            resolution = level
-            restartApp()
-        }
-    }
-
     /// An app that turned itself may be stuck at its first screen's size, and is then
     /// started again once.
     private func followAndroid(landscape: Bool) {
@@ -315,7 +270,6 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate {
     private static let fpsItem = NSToolbarItem.Identifier("fps")
     private static let muteItem = NSToolbarItem.Identifier("mute")
     private static let rotateItem = NSToolbarItem.Identifier("rotate")
-    private static let resolutionItem = NSToolbarItem.Identifier("resolution")
     private static let clearCacheItem = NSToolbarItem.Identifier("clearCache")
     private static let clearDataItem = NSToolbarItem.Identifier("clearData")
 
@@ -376,25 +330,16 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate {
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
         // The space keeps the buttons clear of the window's rounded corner.
-        [.flexibleSpace, Self.fpsItem, Self.resolutionItem, Self.muteItem, Self.rotateItem, .space]
+        [.flexibleSpace, Self.fpsItem, Self.muteItem, Self.rotateItem, .space]
     }
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
         // Clearing is in the app's menu; these are there for those who want them at hand.
-        [.flexibleSpace, .space, Self.fpsItem, Self.resolutionItem, Self.muteItem, Self.rotateItem, Self.clearCacheItem, Self.clearDataItem]
+        [.flexibleSpace, .space, Self.fpsItem, Self.muteItem, Self.rotateItem, Self.clearCacheItem, Self.clearDataItem]
     }
 
     func toolbar(_ toolbar: NSToolbar, itemForItemIdentifier identifier: NSToolbarItem.Identifier,
                  willBeInsertedIntoToolbar flag: Bool) -> NSToolbarItem? {
-        if identifier == Self.resolutionItem {
-            let item = NSMenuToolbarItem(itemIdentifier: identifier)
-            item.label = "Resolution"
-            item.toolTip = "Resolution"
-            item.image = NSImage(systemSymbolName: "aspectratio", accessibilityDescription: "Resolution")
-            item.showsIndicator = false
-            item.menu = resolutionMenu()
-            return item
-        }
         let item = NSToolbarItem(itemIdentifier: identifier)
         switch identifier {
         case Self.fpsItem:
@@ -615,4 +560,3 @@ private final class EngineLoad {
     }
 }
 
-extension AppWindowController: NSMenuDelegate {}
