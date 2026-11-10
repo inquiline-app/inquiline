@@ -355,9 +355,10 @@ final class AndroidRuntime {
             throw RuntimeError("Android is missing from the app bundle.")
         }
         let cores = max(4, min(8, ProcessInfo.processInfo.activeProcessorCount - 2))
-        // 8 GB on Macs with 16 GB or more, 4 GB below. Android only holds what it uses and gives
-        // freed memory back. The GPU's memory (textures, shaders) is on the Mac, outside this.
-        let memory = ProcessInfo.processInfo.physicalMemory >= 16 << 30 ? 8192 : 4096
+        // 12 GB on Macs with 16 GB or more, so several apps stay in memory at once, 4 GB below.
+        // Android only holds what it uses and gives freed memory back. The GPU's memory
+        // (textures, shaders) is on the Mac, outside this.
+        let memory = ProcessInfo.processInfo.physicalMemory >= 16 << 30 ? 12288 : 4096
         let process = Process()
         process.executableURL = qemu
         process.currentDirectoryURL = vmHome
