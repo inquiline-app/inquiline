@@ -232,24 +232,26 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate {
         fpsLabel.widthAnchor.constraint(equalToConstant: 44).isActive = true
         let counter = frameCount
         let engine = EngineLoad()
-        var still = 0, seconds = 0, moving = 0
+        var still = 0, moving = 0, busyFor = 0, idleFor = 0
         fpsTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
             guard let self else { return }
             let fps = counter.take()
             self.fpsLabel.stringValue = "\(fps)"
-            // A game's first launch can sit on one picture for minutes, while its graphics are
-            // prepared for the Mac's GPU, which keeps the engine busy, or while it loads, still
-            // on its splash screen. An app just showing a still screen has moved for longer
-            // before, and leaves the engine idle.
-            seconds += 1
-            if fps > 0 { moving += 1 }
+            // A game's first launch can sit on one picture for minutes while its graphics are
+            // prepared for the Mac's GPU, which keeps the engine busy all along. A still screen
+            // that leaves the engine at rest, as a sign-in or a store page, is just still. Both
+            // must last, so a lone frame or a short burst of work doesn't make the note flicker.
             still = fps > 0 ? 0 : still + 1
+            moving = fps > 0 ? moving + 1 : 0
             let busy = engine.cores() >= 3
-            // A splash screen animates for a few seconds at most.
-            let splash = seconds < 5 * 60 && moving < 10
-            if fps > 0 || (self.loading && !busy && !splash) { self.showLoading(false) }
-            // Before the app's first picture, the launch screen already says it's starting.
-            else if still >= 4 && (busy || splash) && self.launchScreen.superview == nil { self.showLoading(true) }
+            busyFor = busy ? busyFor + 1 : 0
+            idleFor = busy ? 0 : idleFor + 1
+            if self.loading {
+                if moving >= 2 || idleFor >= 5 { self.showLoading(false) }
+            } else if still >= 8 && busyFor >= 8 && self.launchScreen.superview == nil {
+                // Before the app's first picture, the launch screen already says it's starting.
+                self.showLoading(true)
+            }
         }
         let toolbar = NSToolbar(identifier: "AppWindowToolbar")
         toolbar.delegate = self
