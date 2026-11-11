@@ -13,7 +13,8 @@
 
 ## Compatibility
 
-- [ ] Find why Genshin Impact shows as incompatible and Roblox doesn't appear: compare their APKs' required features with ours (`touchscreen.multitouch` and the gyroscope aren't declared).
+- [ ] Find why Genshin Impact shows as incompatible ("available only for your other devices"). Multitouch is declared now; still missing: a gyroscope and a chipset name (`ro.soc.*`). Genshin 7.0 lists minimum chipsets, so Play may filter by chipset. Needs the APK's manifest to tell.
+- Play Store check, 2026-11-11, 22 popular games: 20 can be installed (PUBG, CoD, Free Fire, Star Rail, ZZZ, Wuthering Waves, Clash Royale, Clash of Clans, Brawl Stars, Minecraft, MLBB, Subway Surfers, Candy Crush, eFootball, FC Mobile, Honor of Kings, Among Us, Stumble Guys, 8 Ball Pool, Asphalt). Not: Genshin, Pokémon GO (needs GPS). Roblox isn't listed because it's blocked in Turkey.
 - [ ] See how a banking app reacts (Play Integrity, root).
 - [ ] Compare with an Android tablet.
 
