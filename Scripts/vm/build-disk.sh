@@ -75,6 +75,45 @@ cat > "$ROOT/var/inquiline/vulkan-version.xml" <<'EOF'
     <feature name="android.hardware.vulkan.version" version="4206592" />
 </permissions>
 EOF
+cat > "$ROOT/var/inquiline/product-build.prop" <<'EOF'
+# Inquiline: the name Google Play and accounts show for this Android, "Inquiline Mac".
+####################################
+# from generate_common_build_props
+# These properties identify this partition image.
+####################################
+ro.product.product.brand=Inquiline
+ro.product.product.device=redroid_arm64_only
+ro.product.product.manufacturer=Inquiline
+ro.product.product.model=Mac
+ro.product.product.name=redroid_arm64_only
+ro.product.build.date=Thu Jun 26 22:56:34 CST 2025
+ro.product.build.date.utc=1750949794
+ro.product.build.fingerprint=redroid/redroid_arm64_only/redroid_arm64_only:15/BP1A.250505.005.D1/eng.root:userdebug/test-keys
+ro.product.build.id=BP1A.250505.005.D1
+ro.product.build.tags=test-keys
+ro.product.build.type=userdebug
+ro.product.build.version.incremental=eng.root
+ro.product.build.version.release=15
+ro.product.build.version.release_or_codename=15
+ro.product.build.version.sdk=35
+ro.product.build.version.sdk_minor=0
+####################################
+# from variable ADDITIONAL_PRODUCT_PROPERTIES
+####################################
+ro.product.build.16k_page.enabled=false
+ro.product.page_size=4096
+ro.build.characteristics=default
+ro.product.ab_ota_partitions=
+ro.product.cpu.pagesize.max=16384
+# Value overridden by post_process_props.py. Original value: default
+ro.dalvik.vm.enable_uffd_gc=true
+####################################
+# from variable PRODUCT_PRODUCT_PROPERTIES
+####################################
+persist.wm.extensions.enabled=true
+# end of file
+
+EOF
 cat > "$ROOT/var/inquiline/touchscreen.xml" <<'EOF'
 <?xml version="1.0" encoding="utf-8"?>
 <!-- Inquiline: a touchscreen with up to ten fingers at once, as the Mac's trackpad (pinch,
@@ -185,6 +224,7 @@ exec podman run --rm $EXTRA --name redroid --ip 10.88.0.2 --privileged --pull=ne
   -v $A/vulkan-version.xml:/vendor/etc/permissions/android.hardware.vulkan.version-1_1.xml:ro \
   -v $A/no-aep.xml:/vendor/etc/permissions/android.hardware.opengles.aep.xml:ro \
   -v $A/touchscreen.xml:/vendor/etc/permissions/android.hardware.touchscreen.xml:ro \
+  -v $A/product-build.prop:/system/product/etc/build.prop:ro \
   docker.io/redroid/redroid:15.0.0_64only-latest androidboot.redroid_gpu_mode=host androidboot.use_memfd=1 \
   androidboot.redroid_width=810 androidboot.redroid_height=1440 androidboot.redroid_dpi=320 androidboot.redroid_fps=60
 EOF
