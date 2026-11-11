@@ -104,8 +104,9 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate {
             let alert = NSAlert()
             alert.messageText = "Keyboard controls"
             alert.informativeText = "Click a button in the game, then press the key that should press it. "
-                + "Add a stick for W, A, S and D, and Mouse Aim to look around with the mouse; click the game to aim, Esc to stop.\n\n"
-                + "Online games such as shooters may not allow playing with a keyboard and mouse against touch players, "
+                + "Add a stick for W, A, S and D, Mouse Aim to look around with the mouse (click the game to aim, Esc to stop), "
+                + "and macros that tap several buttons in turn with one key.\n\n"
+                + "Online games such as shooters may not allow playing with a keyboard, a mouse or macros against touch players, "
                 + "and can ban accounts that do. Use controls in those at your own risk."
             alert.addButton(withTitle: "Continue")
             alert.addButton(withTitle: "Cancel")

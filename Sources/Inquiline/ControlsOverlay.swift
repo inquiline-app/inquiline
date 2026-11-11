@@ -20,6 +20,10 @@ final class ControlsOverlay: NSView {
     private var dragging: (index: Int, offset: CGPoint)?
     /// The stick being made larger or smaller by its rim.
     private var resizing: Int?
+    /// A macro being recorded: first its key, then its taps.
+    private var recording: (index: Int, hasKey: Bool, last: Date?)?
+    private let hint = NSTextField(labelWithString: "")
+    private static let editHint = "Click a button in the game, then press its key."
     private let bar = NSStackView()
 
     override init(frame: NSRect) {
@@ -48,6 +52,7 @@ final class ControlsOverlay: NSView {
     }
 
     private func endEditing() {
+        finishRecording()
         isEditing = false
         selected = nil
         bar.isHidden = true
@@ -68,10 +73,11 @@ final class ControlsOverlay: NSView {
         }
         let done = button("Done", "checkmark", #selector(done))
         done.keyEquivalent = "\r"
-        let hint = NSTextField(labelWithString: "Click a button in the game, then press its key.")
+        hint.stringValue = Self.editHint
         hint.textColor = .secondaryLabelColor
         for view in [hint, button("Move Stick (WASD)", "dpad", #selector(addStick)),
                      button("Mouse Aim", "scope", #selector(addAim)),
+                     button("Macro", "list.number", #selector(addMacro)),
                      button("Clear", "trash", #selector(clearAll)), done] as [NSView] {
             bar.addArrangedSubview(view)
         }
@@ -90,7 +96,38 @@ final class ControlsOverlay: NSView {
         ])
     }
 
-    @objc private func done() { endEditing() }
+    @objc private func done() {
+        if recording != nil { finishRecording() } else { endEditing() }
+    }
+
+    // MARK: - Macros
+
+    @objc private func addMacro() {
+        finishRecording()
+        set.controls.append(KeyControl(kind: .macro, x: 0.5, y: 0.5, steps: []))
+        recording = (set.controls.count - 1, false, nil)
+        selected = recording!.index
+        hint.stringValue = "Press the key for this macro."
+        needsDisplay = true
+    }
+
+    private func finishRecording() {
+        guard let recording else { return }
+        self.recording = nil
+        hint.stringValue = Self.editHint
+        if recording.index < set.controls.count,
+           set.controls[recording.index].key == nil || (set.controls[recording.index].steps ?? []).isEmpty {
+            set.controls.remove(at: recording.index)
+            selected = nil
+        }
+        needsDisplay = true
+    }
+
+    private func cancelRecording() {
+        guard let recording else { return }
+        if recording.index < set.controls.count { set.controls[recording.index].steps = [] }
+        finishRecording()
+    }
 
     @objc private func addStick() {
         if let index = set.controls.firstIndex(where: { $0.kind == .stick }) {
@@ -138,11 +175,18 @@ final class ControlsOverlay: NSView {
         case .tap: return 22
         case .aim: return 30
         case .stick: return max(30, control.size * screenRect().height)
+        case .macro: return 14
         }
     }
 
     private func control(at point: CGPoint) -> Int? {
-        set.controls.indices.reversed().first {
+        if let index = set.controls.indices.reversed().first(where: { index in
+            set.controls[index].kind == .macro && (set.controls[index].steps ?? []).contains { step in
+                let c = viewPoint(KeyControl(kind: .macro, x: step.x, y: step.y))
+                return hypot(point.x - c.x, point.y - c.y) <= 14
+            }
+        }) { return index }
+        return set.controls.indices.reversed().first {
             let c = viewPoint(set.controls[$0])
             return hypot(point.x - c.x, point.y - c.y) <= radius(set.controls[$0])
         }
@@ -161,6 +205,20 @@ final class ControlsOverlay: NSView {
 
     override func mouseDown(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
+        if let current = recording {
+            guard current.hasKey, screenRect().contains(CGPoint(x: point.x, y: bounds.height - point.y)) else { return }
+            let now = Date()
+            let delay = current.last.map { Int(now.timeIntervalSince($0) * 1000) } ?? 0
+            let (x, y) = fraction(point)
+            set.controls[current.index].steps?.append(KeyControl.Step(x: x, y: y, delay: min(delay, 5000)))
+            if set.controls[current.index].steps?.count == 1 {
+                set.controls[current.index].x = x
+                set.controls[current.index].y = y
+            }
+            recording = (current.index, true, now)
+            needsDisplay = true
+            return
+        }
         if let index = stickRim(at: point) {
             selected = index
             resizing = index
@@ -190,6 +248,11 @@ final class ControlsOverlay: NSView {
         }
         guard let dragging, dragging.index < set.controls.count else { return }
         let (x, y) = fraction(CGPoint(x: point.x - dragging.offset.x, y: point.y - dragging.offset.y))
+        if set.controls[dragging.index].kind == .macro, let steps = set.controls[dragging.index].steps {
+            // A macro moves whole.
+            let dx = x - set.controls[dragging.index].x, dy = y - set.controls[dragging.index].y
+            set.controls[dragging.index].steps = steps.map { KeyControl.Step(x: $0.x + dx, y: $0.y + dy, delay: $0.delay) }
+        }
         set.controls[dragging.index].x = x
         set.controls[dragging.index].y = y
         needsDisplay = true
@@ -248,6 +311,25 @@ final class ControlsOverlay: NSView {
     }
 
     override func keyDown(with event: NSEvent) {
+        if let current = recording {
+            switch event.keyCode {
+            case 53: cancelRecording() // Esc
+            case 36, 76: finishRecording() // Return
+            default:
+                guard !current.hasKey else { return }
+                let code = Int(event.keyCode)
+                // A key works one control; giving it to the macro takes it from the others.
+                for index in set.controls.indices where index != current.index && set.controls[index].key == code {
+                    set.controls[index].key = nil
+                }
+                set.controls[current.index].key = code
+                set.controls[current.index].label = KeyName.of(event)
+                recording = (current.index, true, nil)
+                hint.stringValue = "Click where it taps, in order. Return when done."
+                needsDisplay = true
+            }
+            return
+        }
         switch event.keyCode {
         case 53: endEditing() // Esc
         case 51, 117: // Delete
@@ -299,6 +381,25 @@ final class ControlsOverlay: NSView {
                 text(control.label ?? "Press a key", at: c, size: control.label == nil ? 10 : 13, alpha: alpha)
             case .aim:
                 text("Mouse", at: c, size: 11, alpha: alpha)
+            case .macro:
+                // Numbered dots joined in their order; the key on the first.
+                let points = (control.steps ?? []).map { viewPoint(KeyControl(kind: .macro, x: $0.x, y: $0.y)) }
+                let path = NSBezierPath()
+                for (n, p) in points.enumerated() { if n == 0 { path.move(to: p) } else { path.line(to: p) } }
+                NSColor.white.withAlphaComponent(0.6 * alpha).setStroke()
+                path.lineWidth = 2
+                path.setLineDash([4, 3], count: 2, phase: 0)
+                path.stroke()
+                for (n, p) in points.enumerated() where n > 0 {
+                    let dot = NSBezierPath(ovalIn: NSRect(x: p.x - 11, y: p.y - 11, width: 22, height: 22))
+                    NSColor.black.withAlphaComponent(0.45 * alpha).setFill()
+                    dot.fill()
+                    NSColor.white.withAlphaComponent(0.8 * alpha).setStroke()
+                    dot.lineWidth = 1.5
+                    dot.stroke()
+                    text("\(n + 1)", at: p, size: 11, alpha: alpha)
+                }
+                text(control.label.map { points.isEmpty ? $0 : $0 + " 1" } ?? "Key?", at: c, size: 11, alpha: alpha)
             case .stick:
                 text("W", at: CGPoint(x: c.x, y: c.y - r + 12), size: 13, alpha: alpha)
                 text("S", at: CGPoint(x: c.x, y: c.y + r - 12), size: 13, alpha: alpha)
