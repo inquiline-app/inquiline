@@ -103,8 +103,9 @@ final class KeyControlPlayer {
             dy += key.dy
         }
         let center = point(stick)
+        stickMoves += 1
         guard dx != 0 || dy != 0 else {
-            if stickDown { touch(.up, center, finger: Self.stickFinger) }
+            if stickDown { touch(.up, stickPoint, finger: Self.stickFinger) }
             stickDown = false
             return
         }
@@ -115,9 +116,24 @@ final class KeyControlPlayer {
             // Down in the middle first, as a thumb lands on a stick before pushing it.
             touch(.down, center, finger: Self.stickFinger)
             stickDown = true
+            stickPoint = center
         }
-        touch(.move, target, finger: Self.stickFinger)
+        // A thumb slides to where it pushes; games that ignore a finger jumping across their
+        // stick follow a slide. Four steps, 8 ms apart.
+        let from = stickPoint, move = stickMoves
+        for step in 1...4 {
+            DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(8 * step)) { [weak self] in
+                guard let self, self.stickMoves == move, self.stickDown else { return }
+                let t = CGFloat(step) / 4
+                let p = CGPoint(x: from.x + (target.x - from.x) * t, y: from.y + (target.y - from.y) * t)
+                self.stickPoint = p
+                self.touch(.move, p, finger: Self.stickFinger)
+            }
+        }
     }
+
+    private var stickPoint = CGPoint.zero
+    private var stickMoves = 0
 
     // MARK: - Aiming with the mouse
 

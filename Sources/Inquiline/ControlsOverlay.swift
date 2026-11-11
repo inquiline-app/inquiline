@@ -4,7 +4,12 @@ import AppKit
 /// full while editing them. Editing works as placing stickers: click where a button is and
 /// press its key; drag one to move it; Delete removes it.
 final class ControlsOverlay: NSView {
-    var set = KeyControlSet() { didSet { needsDisplay = true } }
+    var set = KeyControlSet() {
+        didSet {
+            needsDisplay = true
+            window?.invalidateCursorRects(for: self)
+        }
+    }
     /// Where the app's screen is, in this view.
     var screenRect: () -> NSRect = { .zero }
     var onDone: ((KeyControlSet) -> Void)?
@@ -13,6 +18,8 @@ final class ControlsOverlay: NSView {
     var showsLabels = false { didSet { needsDisplay = true } }
     private var selected: Int?
     private var dragging: (index: Int, offset: CGPoint)?
+    /// The stick being made larger or smaller by its rim.
+    private var resizing: Int?
     private let bar = NSStackView()
 
     override init(frame: NSRect) {
@@ -143,9 +150,21 @@ final class ControlsOverlay: NSView {
 
     // MARK: - Editing
 
+    /// The stick whose rim is under the pointer, where it's taken to resize it.
+    private func stickRim(at point: CGPoint) -> Int? {
+        set.controls.indices.first { index in
+            guard set.controls[index].kind == .stick else { return false }
+            let c = viewPoint(set.controls[index])
+            return abs(hypot(point.x - c.x, point.y - c.y) - radius(set.controls[index])) <= 8
+        }
+    }
+
     override func mouseDown(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
-        if let index = control(at: point) {
+        if let index = stickRim(at: point) {
+            selected = index
+            resizing = index
+        } else if let index = control(at: point) {
             selected = index
             let c = viewPoint(set.controls[index])
             dragging = (index, CGPoint(x: point.x - c.x, y: point.y - c.y))
@@ -162,15 +181,33 @@ final class ControlsOverlay: NSView {
     }
 
     override func mouseDragged(with event: NSEvent) {
-        guard let dragging, dragging.index < set.controls.count else { return }
         let point = convert(event.locationInWindow, from: nil)
+        if let resizing, resizing < set.controls.count {
+            let c = viewPoint(set.controls[resizing])
+            set.controls[resizing].size = min(max(hypot(point.x - c.x, point.y - c.y) / screenRect().height, 0.05), 0.4)
+            needsDisplay = true
+            return
+        }
+        guard let dragging, dragging.index < set.controls.count else { return }
         let (x, y) = fraction(CGPoint(x: point.x - dragging.offset.x, y: point.y - dragging.offset.y))
         set.controls[dragging.index].x = x
         set.controls[dragging.index].y = y
         needsDisplay = true
     }
 
-    override func mouseUp(with event: NSEvent) { dragging = nil }
+    override func mouseUp(with event: NSEvent) {
+        dragging = nil
+        resizing = nil
+    }
+
+    /// The rim of a stick shows it can be resized, as a window's edge does.
+    override func resetCursorRects() {
+        guard isEditing else { return }
+        for control in set.controls where control.kind == .stick {
+            let c = viewPoint(control), r = radius(control)
+            addCursorRect(NSRect(x: c.x + r - 8, y: c.y - 8, width: 16, height: 16), cursor: .resizeLeftRight)
+        }
+    }
 
     override func rightMouseDown(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
@@ -267,6 +304,15 @@ final class ControlsOverlay: NSView {
                 text("S", at: CGPoint(x: c.x, y: c.y + r - 12), size: 13, alpha: alpha)
                 text("A", at: CGPoint(x: c.x - r + 12, y: c.y), size: 13, alpha: alpha)
                 text("D", at: CGPoint(x: c.x + r - 12, y: c.y), size: 13, alpha: alpha)
+                if isEditing {
+                    // A knob on its rim, to pull it larger or smaller.
+                    let knob = NSBezierPath(ovalIn: NSRect(x: c.x + r - 6, y: c.y - 6, width: 12, height: 12))
+                    NSColor.controlAccentColor.setFill()
+                    knob.fill()
+                    NSColor.white.setStroke()
+                    knob.lineWidth = 2
+                    knob.stroke()
+                }
             }
         }
     }
