@@ -34,6 +34,14 @@ struct KeyControl: Codable, Equatable {
     var label: String?
     /// A macro's taps; its first is where the control is.
     var steps: [Step]?
+    /// How a macro plays: once a press, over and over while held, or until pressed again.
+    var repeats: Repeat?
+    /// A macro's pause between taps in milliseconds, or nil for the pauses it was recorded with.
+    var interval: Int?
+
+    enum Repeat: String, Codable {
+        case once, whileHeld, untilPressedAgain
+    }
 
     static let leftClick = 1000
     static let rightClick = 1001
@@ -97,7 +105,19 @@ final class KeyControlPlayer {
         guard isStickKey || !taps.isEmpty || !macros.isEmpty else { return false }
         if down {
             guard heldKeys.insert(code).inserted else { return true } // a key repeating
-            macros.forEach(play)
+            for macro in macros {
+                switch macro.repeats ?? .once {
+                case .once: play(macro, round: nextRound(code))
+                case .whileHeld: play(macro, round: nextRound(code), again: { [weak self] in self?.heldKeys.contains(code) == true })
+                case .untilPressedAgain:
+                    if looping.remove(code) != nil {
+                        _ = nextRound(code) // ends the one playing
+                    } else {
+                        looping.insert(code)
+                        play(macro, round: nextRound(code), again: { [weak self] in self?.looping.contains(code) == true })
+                    }
+                }
+            }
         } else {
             heldKeys.remove(code)
         }
@@ -145,21 +165,40 @@ final class KeyControlPlayer {
         }
     }
 
-    /// Taps a macro's spots in turn, each held for a moment as a finger's tap is.
-    private func play(_ macro: KeyControl) {
+    /// Taps a macro's spots in turn, each held for a moment as a finger's tap is, and starts
+    /// over while `again` says so. A newer round for the same key ends this one.
+    private func play(_ macro: KeyControl, round: Int, again: (() -> Bool)? = nil) {
+        guard let key = macro.key, let steps = macro.steps, !steps.isEmpty else { return }
         var at = 0
-        for (index, step) in (macro.steps ?? []).enumerated() {
-            at += step.delay
+        for (index, step) in steps.enumerated() {
+            if index > 0 { at += macro.interval ?? step.delay }
             let p = CGPoint(x: step.x * size.width, y: step.y * size.height)
             // Two fingers in turn, so a quick step can land before the last one lifts.
             let finger = Self.macroFinger + Int64(index % 2)
             DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(at)) { [weak self] in
-                self?.touch(.down, p, finger: finger)
-            }
-            DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(at + 50)) { [weak self] in
-                self?.touch(.up, p, finger: finger)
+                guard let self, rounds[key] == round else { return }
+                touch(.down, p, finger: finger)
+                DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(40)) { [weak self] in
+                    self?.touch(.up, p, finger: finger)
+                }
             }
         }
+        guard let again else { return }
+        // The next round after the same pause as between taps, at least 50 ms.
+        let pause = max(macro.interval ?? steps.last?.delay ?? 100, 50)
+        DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(at + pause)) { [weak self] in
+            guard let self, rounds[key] == round, again() else { return }
+            play(macro, round: round, again: again)
+        }
+    }
+
+    private var rounds: [Int: Int] = [:]
+    private var looping = Set<Int>()
+
+    private func nextRound(_ key: Int) -> Int {
+        let round = (rounds[key] ?? 0) + 1
+        rounds[key] = round
+        return round
     }
 
     private static let macroFinger: Int64 = 20
@@ -219,6 +258,8 @@ final class KeyControlPlayer {
 
     /// Lets go of everything, as when the window goes to the back.
     func releaseAll() {
+        looping.removeAll()
+        rounds = rounds.mapValues { $0 + 1 }
         for code in heldKeys { _ = key(code, down: false) }
         heldKeys.removeAll()
         releasePointer()

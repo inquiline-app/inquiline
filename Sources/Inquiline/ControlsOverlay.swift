@@ -123,6 +123,66 @@ final class ControlsOverlay: NSView {
         needsDisplay = true
     }
 
+    private func addMacroItems(to menu: NSMenu, for macro: KeyControl) {
+        let plays: [(String, KeyControl.Repeat)] = [("Play Once", .once), ("Repeat While Held", .whileHeld),
+                                                    ("Repeat Until Pressed Again", .untilPressedAgain)]
+        for (title, mode) in plays {
+            let item = menu.addItem(withTitle: title, action: #selector(setRepeat(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = mode.rawValue
+            item.state = (macro.repeats ?? .once) == mode ? .on : .off
+        }
+        menu.addItem(.separator())
+        let pause = menu.addItem(withTitle: "Pause Between Taps", action: nil, keyEquivalent: "")
+        let pauses = NSMenu()
+        let recorded = pauses.addItem(withTitle: "As Recorded", action: #selector(setInterval(_:)), keyEquivalent: "")
+        recorded.target = self
+        recorded.tag = -1
+        recorded.state = macro.interval == nil ? .on : .off
+        pauses.addItem(.separator())
+        let presets = [50, 100, 250, 500, 1000]
+        for ms in presets {
+            let item = pauses.addItem(withTitle: "\(ms) ms", action: #selector(setInterval(_:)), keyEquivalent: "")
+            item.target = self
+            item.tag = ms
+            item.state = macro.interval == ms ? .on : .off
+        }
+        let custom = pauses.addItem(withTitle: macro.interval.map { presets.contains($0) ? "Custom…" : "Custom (\($0) ms)…" } ?? "Custom…",
+                                    action: #selector(customInterval), keyEquivalent: "")
+        custom.target = self
+        custom.state = macro.interval.map { !presets.contains($0) } == true ? .on : .off
+        pause.submenu = pauses
+        menu.addItem(.separator())
+    }
+
+    @objc private func setRepeat(_ sender: NSMenuItem) {
+        guard let selected, let raw = sender.representedObject as? String else { return }
+        set.controls[selected].repeats = KeyControl.Repeat(rawValue: raw)
+    }
+
+    @objc private func setInterval(_ sender: NSMenuItem) {
+        guard let selected else { return }
+        set.controls[selected].interval = sender.tag < 0 ? nil : sender.tag
+    }
+
+    @objc private func customInterval() {
+        guard let selected, let window else { return }
+        let alert = NSAlert()
+        alert.messageText = "Pause Between Taps"
+        alert.informativeText = "Milliseconds between one tap and the next, from 10 to 10000."
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 120, height: 24))
+        field.integerValue = set.controls[selected].interval ?? 100
+        alert.accessoryView = field
+        alert.addButton(withTitle: "OK")
+        alert.addButton(withTitle: "Cancel")
+        alert.beginSheetModal(for: window) { [self] response in
+            guard response == .alertFirstButtonReturn, selected < set.controls.count else { return }
+            set.controls[selected].interval = min(max(field.integerValue, 10), 10000)
+            window.makeFirstResponder(self)
+        }
+        alert.window.initialFirstResponder = field
+    }
+
     private func cancelRecording() {
         guard let recording else { return }
         if recording.index < set.controls.count { set.controls[recording.index].steps = [] }
@@ -283,6 +343,7 @@ final class ControlsOverlay: NSView {
             menu.addItem(withTitle: "Use Right Click (While Aiming)", action: #selector(useRightClick), keyEquivalent: "").target = self
             menu.addItem(.separator())
         }
+        if set.controls[index].kind == .macro { addMacroItems(to: menu, for: set.controls[index]) }
         menu.addItem(withTitle: "Remove", action: #selector(removeSelected), keyEquivalent: "").target = self
         NSMenu.popUpContextMenu(menu, with: event, for: self)
     }
