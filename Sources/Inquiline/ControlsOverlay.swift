@@ -20,6 +20,8 @@ final class ControlsOverlay: NSView {
     private var dragging: (index: Int, offset: CGPoint)?
     /// The stick being made larger or smaller by its rim.
     private var resizing: Int?
+    /// A macro's tap being moved on its own, not the first, which moves the whole macro.
+    private var draggingStep: (control: Int, step: Int)?
     /// A macro being recorded: first its key, then its taps.
     private var recording: (index: Int, hasKey: Bool, last: Date?)?
     private let hint = NSTextField(labelWithString: "")
@@ -263,9 +265,27 @@ final class ControlsOverlay: NSView {
         }
     }
 
+    /// The macro tap under the pointer.
+    private func macroStep(at point: CGPoint) -> (control: Int, step: Int)? {
+        for index in set.controls.indices.reversed() where set.controls[index].kind == .macro {
+            for (n, step) in (set.controls[index].steps ?? []).enumerated() {
+                let c = viewPoint(KeyControl(kind: .macro, x: step.x, y: step.y))
+                if hypot(point.x - c.x, point.y - c.y) <= 14 { return (index, n) }
+            }
+        }
+        return nil
+    }
+
     override func mouseDown(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
-        if let current = recording {
+        // A macro's tap is moved, while recording too; the first moves the whole macro.
+        if let hit = macroStep(at: point), hit.step > 0 {
+            selected = hit.control
+            draggingStep = hit
+            needsDisplay = true
+            return
+        }
+        if let current = recording, macroStep(at: point) == nil {
             guard current.hasKey, screenRect().contains(CGPoint(x: point.x, y: bounds.height - point.y)) else { return }
             let now = Date()
             let delay = current.last.map { Int(now.timeIntervalSince($0) * 1000) } ?? 0
@@ -300,6 +320,13 @@ final class ControlsOverlay: NSView {
 
     override func mouseDragged(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
+        if let draggingStep, draggingStep.control < set.controls.count {
+            let (x, y) = fraction(point)
+            set.controls[draggingStep.control].steps?[draggingStep.step].x = x
+            set.controls[draggingStep.control].steps?[draggingStep.step].y = y
+            needsDisplay = true
+            return
+        }
         if let resizing, resizing < set.controls.count {
             let c = viewPoint(set.controls[resizing])
             set.controls[resizing].size = min(max(hypot(point.x - c.x, point.y - c.y) / screenRect().height, 0.05), 0.4)
@@ -320,6 +347,7 @@ final class ControlsOverlay: NSView {
 
     override func mouseUp(with event: NSEvent) {
         dragging = nil
+        draggingStep = nil
         resizing = nil
     }
 
@@ -430,6 +458,8 @@ final class ControlsOverlay: NSView {
         }
         let alpha: CGFloat = isEditing ? 1 : 0.55
         for (index, control) in set.controls.enumerated() {
+            // A macro shows from its first tap on.
+            if control.kind == .macro, (control.steps ?? []).isEmpty { continue }
             let c = viewPoint(control), r = radius(control)
             let circle = NSBezierPath(ovalIn: NSRect(x: c.x - r, y: c.y - r, width: r * 2, height: r * 2))
             NSColor.black.withAlphaComponent(0.45 * alpha).setFill()
@@ -460,7 +490,7 @@ final class ControlsOverlay: NSView {
                     dot.stroke()
                     text("\(n + 1)", at: p, size: 11, alpha: alpha)
                 }
-                text(control.label.map { points.isEmpty ? $0 : $0 + " 1" } ?? "Key?", at: c, size: 11, alpha: alpha)
+                if !points.isEmpty { text((control.label ?? "?") + " 1", at: c, size: 11, alpha: alpha) }
             case .stick:
                 text("W", at: CGPoint(x: c.x, y: c.y - r + 12), size: 13, alpha: alpha)
                 text("S", at: CGPoint(x: c.x, y: c.y + r - 12), size: 13, alpha: alpha)
