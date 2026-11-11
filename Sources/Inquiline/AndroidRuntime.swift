@@ -307,7 +307,9 @@ final class AndroidRuntime {
     /// 14 took it away for a test, which 15 undoes.
     /// 16: named "Inquiline Mac" where Google Play and accounts show the device, not Redroid's
     /// build name; its code name, which apps may be filtered by, stays.
-    private static let diskRevision = 16
+    /// 17: a gyroscope declared, as the accelerometer and compass are, for games Play Store
+    /// lists only with one.
+    private static let diskRevision = 17
     /// The VM's memory map fits the 36-bit (64 GB) address space Apple's M1 and M2 give a VM:
     /// above the RAM, the window for 64-bit device memory, such as the GPU's 2 GB, is 16 GB,
     /// not QEMU's 512 GB, which only M3 and later have room for (see the QEMU patch 0102).

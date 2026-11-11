@@ -128,6 +128,15 @@ cat > "$ROOT/var/inquiline/touchscreen.xml" <<'EOF'
     <feature name="android.hardware.faketouch.multitouch.jazzhand" />
 </permissions>
 EOF
+cat > "$ROOT/var/inquiline/gyroscope.xml" <<'EOF'
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Inquiline: a gyroscope declared, as the accelerometer and compass are, so Play Store lists
+     games that use one for optional tilt aiming. A Mac has none; an app finds no sensor and
+     leaves tilt off. -->
+<permissions>
+    <feature name="android.hardware.sensor.gyroscope" />
+</permissions>
+EOF
 cat > "$ROOT/var/inquiline/no-aep.xml" <<'EOF'
 <?xml version="1.0" encoding="utf-8"?>
 <!-- Inquiline: no Android Extension Pack, which needs custom border colors. -->
@@ -224,6 +233,7 @@ exec podman run --rm $EXTRA --name redroid --ip 10.88.0.2 --privileged --pull=ne
   -v $A/vulkan-version.xml:/vendor/etc/permissions/android.hardware.vulkan.version-1_1.xml:ro \
   -v $A/no-aep.xml:/vendor/etc/permissions/android.hardware.opengles.aep.xml:ro \
   -v $A/touchscreen.xml:/vendor/etc/permissions/android.hardware.touchscreen.xml:ro \
+  -v $A/gyroscope.xml:/vendor/etc/permissions/android.hardware.sensor.gyroscope.xml:ro \
   -v $A/product-build.prop:/system/product/etc/build.prop:ro \
   docker.io/redroid/redroid:15.0.0_64only-latest androidboot.redroid_gpu_mode=host androidboot.use_memfd=1 \
   androidboot.redroid_width=810 androidboot.redroid_height=1440 androidboot.redroid_dpi=320 androidboot.redroid_fps=60
