@@ -75,6 +75,20 @@ cat > "$ROOT/var/inquiline/vulkan-version.xml" <<'EOF'
     <feature name="android.hardware.vulkan.version" version="4206592" />
 </permissions>
 EOF
+cat > "$ROOT/var/inquiline/touchscreen.xml" <<'EOF'
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Inquiline: a touchscreen with up to ten fingers at once, as the Mac's trackpad (pinch,
+     rotate) and keyboard controls give, so Play Store lists games that need several. -->
+<permissions>
+    <feature name="android.hardware.touchscreen" />
+    <feature name="android.hardware.touchscreen.multitouch" />
+    <feature name="android.hardware.touchscreen.multitouch.distinct" />
+    <feature name="android.hardware.touchscreen.multitouch.jazzhand" />
+    <feature name="android.hardware.faketouch" />
+    <feature name="android.hardware.faketouch.multitouch.distinct" />
+    <feature name="android.hardware.faketouch.multitouch.jazzhand" />
+</permissions>
+EOF
 cat > "$ROOT/var/inquiline/no-aep.xml" <<'EOF'
 <?xml version="1.0" encoding="utf-8"?>
 <!-- Inquiline: no Android Extension Pack, which needs custom border colors. -->
@@ -170,6 +184,7 @@ exec podman run --rm $EXTRA --name redroid --ip 10.88.0.2 --privileged --pull=ne
   -v $A/audio.primary.redroid.so:/vendor/lib64/hw/audio.primary.redroid.so:ro \
   -v $A/vulkan-version.xml:/vendor/etc/permissions/android.hardware.vulkan.version-1_1.xml:ro \
   -v $A/no-aep.xml:/vendor/etc/permissions/android.hardware.opengles.aep.xml:ro \
+  -v $A/touchscreen.xml:/vendor/etc/permissions/android.hardware.touchscreen.xml:ro \
   docker.io/redroid/redroid:15.0.0_64only-latest androidboot.redroid_gpu_mode=host androidboot.use_memfd=1 \
   androidboot.redroid_width=810 androidboot.redroid_height=1440 androidboot.redroid_dpi=320 androidboot.redroid_fps=60
 EOF
