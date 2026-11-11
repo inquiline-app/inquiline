@@ -22,7 +22,8 @@ Each Android app gets its own window, Dock icon and menu, and shows up in Launch
 - **Real Android 15**, running on your Mac's own CPU, without translation
 - **Fast graphics**: Vulkan 1.3 and OpenGL ES 3.2 on your Mac's GPU through Metal, up to 60 FPS in 3D games
 - **Mac-native windows**: resize, full screen, Game Mode for games, a customizable toolbar with frame rate, mute and rotate
-- **Game controllers**, sound, copy and paste, and Android's files in Finder
+- **Keyboard and mouse controls** for touch games, with macros, and **game controllers**
+- Sound, copy and paste, and Android's files in Finder
 - **Google Play** if you add it yourself, or any APK
 - **Free and open source**, with no accounts and no tracking
 
@@ -62,7 +63,8 @@ Each app you add appears in your Applications folder and in Launchpad; you can m
 
 ## Using apps
 
-- **Mouse and trackpad** work as touch: click to tap, drag to swipe, scroll to scroll.
+- **Mouse and trackpad** work as touch: click to tap, drag to swipe, scroll to scroll, pinch and rotate with two fingers.
+- **Keyboard controls:** the keyboard button in the toolbar, or **Cmd+K**, puts keys on a game's buttons, a W A S D stick on its joystick, Mouse Aim to look around with the mouse, and macros that tap several buttons with one key. Online games may not allow them against touch players, and can ban accounts that use them.
 - **The toolbar** shows the frame rate and has buttons to mute the app and to turn it between portrait and landscape. **View > Customize Toolbar** changes it.
 - **Resolution** is the highest on Macs with 16 GB of memory or more, and lighter on others. Games get macOS's Game Mode.
 - **Resize** the window freely; the app keeps its shape, which is your screen's (16:10 on a MacBook). An app first opens at a phone's size, then where and as large as you left it. **Ctrl+Cmd+F** goes full screen, and an app closed in full screen opens in full screen.
@@ -85,7 +87,7 @@ Each app you add appears in your Applications folder and in Launchpad; you can m
 - **The first launch of a big game is slow.** The game's graphics programs (shaders) are prepared for your Mac's GPU, which can take a few minutes for large 3D games. Later launches are much faster.
 - **Not certified by Google.** Apps that check the device's integrity, such as most banking apps and some streaming apps, may refuse to run. Google may also limit Google Play on uncertified devices.
 - **Not for sensitive apps.** This preview's Android is a development build with root access, so don't use it for banking, payments or other sensitive accounts.
-- **Missing hardware:** no camera, microphone, location or vibration yet, and the trackpad doesn't do multi-touch gestures.
+- **Missing hardware:** no camera, microphone, location or vibration yet.
 - **Memory:** Android can use up to 12 GB on Macs with 16 GB or more, 4 GB on others, and gives back what it frees.
 - **Privacy:** everything stays on your Mac. Inquiline itself only asks GitHub once a day whether there's a new version; apps reach the internet as on a phone.
 - **Logs:** Inquiline, its engine and Android keep logs on your Mac, about 50 MB at most, for finding what went wrong. They stay there: only **Report a Problem…** gathers them, into a zip you can look at and send yourself, with your name, e-mail addresses, web addresses and numbers that could identify you taken out.
