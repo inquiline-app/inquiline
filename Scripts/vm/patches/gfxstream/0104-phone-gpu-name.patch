@@ -1,0 +1,30 @@
+diff --git a/host/vulkan/vk_decoder_global_state.cpp b/host/vulkan/vk_decoder_global_state.cpp
+index 5de0e7df..854d6e5d 100644
+--- a/host/vulkan/vk_decoder_global_state.cpp
++++ b/host/vulkan/vk_decoder_global_state.cpp
+@@ -1957,6 +1957,7 @@ class VkDecoderGlobalState::Impl {
+         auto vk = dispatch_VkPhysicalDevice(boxed_physicalDevice);
+ 
+         vk->vkGetPhysicalDeviceProperties(physicalDevice, pProperties);
++        setPhoneGpuName(pProperties);
+ 
+         m_vkEmulation->applyApiVersionLimits(pProperties->apiVersion);
+     }
+@@ -2006,9 +2007,17 @@ class VkDecoderGlobalState::Impl {
+             }
+         }
+ 
++        setPhoneGpuName(&pProperties->properties);
+         m_vkEmulation->applyApiVersionLimits(pProperties->properties.apiVersion);
+     }
+ 
++    // Inquiline: many games run at 30 FPS on a GPU they don't know, as Apple's is to them, and
++    // at 60 only on the phone GPUs they list. Android's apps see one of those by name; what
++    // the GPU can do is still the Mac's, as the rest of its properties say.
++    static void setPhoneGpuName(VkPhysicalDeviceProperties* props) {
++        snprintf(props->deviceName, sizeof(props->deviceName), "%s", "Adreno (TM) 740");
++    }
++
+     void on_vkGetPhysicalDeviceQueueFamilyProperties(
+         gfxstream::base::BumpPool* pool, VkSnapshotApiCallHandle,
+         VkPhysicalDevice boxed_physicalDevice, uint32_t* pQueueFamilyPropertyCount,

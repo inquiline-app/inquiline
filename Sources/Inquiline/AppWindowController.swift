@@ -22,6 +22,8 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate {
     private let launchScreen = LaunchScreen()
     /// The Android screen this window shows, once the app has appeared on it.
     private var watchedDisplay: String?
+    /// Screens of sessions before a restart: a slow app can stay on one a while as it ends.
+    private var oldDisplays: Set<String> = []
     /// Plugged in once the session can take input, with the app's first picture.
     private var gamepads: GamepadBridge?
 
@@ -211,6 +213,7 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate {
         gamepads = nil
         session.stop()
         session = ScrcpySession(package: package, screen: resolution.screen(landscape: isLandscape), restartsApp: true)
+        if let old = watchedDisplay { oldDisplays.insert(old) }
         watchedDisplay = nil // the new session brings a new Android screen
         connect(session)
         frameCount.markStart()
@@ -247,7 +250,9 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate {
                     }
                 }
                 DispatchQueue.main.async {
-                    self.watchedDisplay = self.watchedDisplay ?? screens.first { $0.activity.contains(" \(package)/") }?.display
+                    self.watchedDisplay = self.watchedDisplay ?? screens.first {
+                        $0.activity.contains(" \(package)/") && !self.oldDisplays.contains($0.display)
+                    }?.display
                     guard let display = self.watchedDisplay else { return }
                     // A restart for a new screen shape leaves it empty for a moment.
                     missing = screens.contains { $0.display == display } ? 0 : missing + 1
