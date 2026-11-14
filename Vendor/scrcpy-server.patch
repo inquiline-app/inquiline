@@ -4,6 +4,8 @@ power message turns only the app's own virtual display off, so its app is stoppe
 as on a phone whose screen turns off.
 A HID device opened from the Mac carries a country code, as a real keyboard reports
 its layout with one, so Android picks the matching layout itself.
+ClipboardReader prints the clipboard for the Mac, run as the shell user over adb: as the
+system user the server may not read it in the background.
 
 --- a/server/src/main/java/com/genymobile/scrcpy/FakeContext.java
 +++ b/server/src/main/java/com/genymobile/scrcpy/FakeContext.java
@@ -571,3 +573,56 @@ index 20532c0..6f20ac5 100644
          buf.put(reportDesc);
          return buf.array();
      }
+diff --git a/server/src/main/java/com/genymobile/scrcpy/ClipboardReader.java b/server/src/main/java/com/genymobile/scrcpy/ClipboardReader.java
+new file mode 100644
+index 0000000..b6e1f58
+--- /dev/null
++++ b/server/src/main/java/com/genymobile/scrcpy/ClipboardReader.java
+@@ -0,0 +1,47 @@
++package com.genymobile.scrcpy;
++
++import android.content.ClipData;
++import android.os.IBinder;
++import android.os.IInterface;
++import android.util.Base64;
++
++import java.lang.reflect.Method;
++import java.nio.charset.StandardCharsets;
++
++/**
++ * Inquiline: prints Android's clipboard text, base64, run as the shell user. The server runs as
++ * the system user, as package "android", which Android 15 doesn't let read the clipboard in the
++ * background; com.android.shell may (READ_CLIPBOARD_IN_BACKGROUND), as upstream scrcpy reads it.
++ */
++public final class ClipboardReader {
++    private ClipboardReader() {
++    }
++
++    public static void main(String... args) throws Exception {
++        Class<?> serviceManager = Class.forName("android.os.ServiceManager");
++        IBinder binder = (IBinder) serviceManager.getMethod("getService", String.class).invoke(null, "clipboard");
++        Class<?> stub = Class.forName("android.content.IClipboard$Stub");
++        IInterface clipboard = (IInterface) stub.getMethod("asInterface", IBinder.class).invoke(null, binder);
++        ClipData clip = null;
++        for (Method method : clipboard.getClass().getMethods()) {
++            if (!method.getName().equals("getPrimaryClip")) {
++                continue;
++            }
++            Class<?>[] types = method.getParameterTypes();
++            Object[] values = new Object[types.length];
++            int strings = 0;
++            for (int i = 0; i < types.length; i++) {
++                // (package, attribution tag, user, device): the shell's package, no tag, user 0,
++                // the default device.
++                values[i] = types[i] == String.class ? (strings++ == 0 ? "com.android.shell" : null) : 0;
++            }
++            clip = (ClipData) method.invoke(clipboard, values);
++            break;
++        }
++        if (clip == null || clip.getItemCount() == 0 || clip.getItemAt(0).getText() == null) {
++            return;
++        }
++        byte[] text = clip.getItemAt(0).getText().toString().getBytes(StandardCharsets.UTF_8);
++        System.out.print(Base64.encodeToString(text, Base64.NO_WRAP));
++    }
++}

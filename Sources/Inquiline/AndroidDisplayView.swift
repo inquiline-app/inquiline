@@ -185,8 +185,18 @@ final class AndroidDisplayView: NSView {
 
     // MARK: - Clipboard
 
-    @objc func copy(_ sender: Any?) { session?.sendCopy(.copy) }
-    @objc func cut(_ sender: Any?) { session?.sendCopy(.cut) }
+    @objc func copy(_ sender: Any?) { copyOrCut(.copy) }
+    @objc func cut(_ sender: Any?) { copyOrCut(.cut) }
+
+    /// The app copies its selection as on a keyboard's Copy key, and the text comes to the Mac.
+    private func copyOrCut(_ key: ScrcpySession.CopyKey) {
+        guard let session else { return }
+        session.sendCopy(key)
+        // The server presses the key and waits for the app to take it; then the clipboard is read.
+        DispatchQueue.global().asyncAfter(deadline: .now() + 0.15) {
+            if let text = ScrcpyServer.clipboardText() { session.onClipboard?(text) }
+        }
+    }
 
     /// Mac clipboard text only reaches Android on an explicit paste, so apps in
     /// the VM can't read whatever else gets copied on the Mac.

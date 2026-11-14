@@ -6,6 +6,15 @@ import Foundation
 enum ScrcpyServer {
     private static let version = "5.0.1"
     private static let remotePath = "/data/local/tmp/inquiline-scrcpy-server.jar"
+
+    /// Android's clipboard text, read as adb's shell user. The server, as the system user, may
+    /// not read it in the background on Android 15; the shell may (ClipboardReader, in its patch).
+    static func clipboardText() -> String? {
+        guard let output = try? AdbClient.shell("CLASSPATH=\(remotePath) app_process / com.genymobile.scrcpy.ClipboardReader", timeout: 5),
+              let data = Data(base64Encoded: output.trimmingCharacters(in: .whitespacesAndNewlines)), !data.isEmpty
+        else { return nil }
+        return String(decoding: data, as: UTF8.self)
+    }
     /// The server's native part, which names the GPU resource of each frame. It loads it from here.
     private static let framesLibraryPath = "/data/local/tmp/libinquiline-frames.so"
 
