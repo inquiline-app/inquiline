@@ -36,8 +36,15 @@ final class AndroidDisplayView: NSView {
     func showCaughtNote(_ on: Bool) { onCaught?(on) }
 
     override func resignFirstResponder() -> Bool {
-        controls.releaseAll()
+        releaseAllKeys()
         return true
+    }
+
+    /// Lets go of every key and control held down, as when the window stops taking keys.
+    func releaseAllKeys() {
+        controls.releaseAll()
+        for key in heldKeys.values { session?.sendKey(.up, keycode: key.keycode, metaState: key.metaState) }
+        heldKeys.removeAll()
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
@@ -215,12 +222,41 @@ final class AndroidDisplayView: NSView {
         121: 93,  // page down
     ]
 
+    /// Letters, digits and space go as keys pressed and let go, as a phone's keyboard sends
+    /// them, so a game that asks which keys are down sees them held. As text they would
+    /// come and go at once. A key whose character Android's own layout wouldn't give, as
+    /// ş, İ or a shifted digit's symbol, still goes as text.
+    private var heldKeys: [UInt16: (keycode: Int32, metaState: UInt32)] = [:]
+
+    private static func androidKey(for event: NSEvent) -> (keycode: Int32, metaState: UInt32)? {
+        let flags = event.modifierFlags
+        guard !flags.contains(.option), !flags.contains(.control),
+              let base = event.charactersIgnoringModifiers?.lowercased(), base.count == 1,
+              let scalar = base.unicodeScalars.first, scalar.isASCII else { return nil }
+        let keycode: Int32
+        switch Character(scalar) {
+        case "a"..."z": keycode = 29 + Int32(scalar.value - 97) // KEYCODE_A
+        case "0"..."9": keycode = 7 + Int32(scalar.value - 48)  // KEYCODE_0
+        case " ": keycode = 62                                  // KEYCODE_SPACE
+        default: return nil
+        }
+        let shift = flags.contains(.shift), capsLock = flags.contains(.capsLock)
+        let upper = shift != capsLock && scalar.properties.isAlphabetic
+        let expected = upper ? base.uppercased() : (shift && !scalar.properties.isAlphabetic ? nil : base)
+        guard let expected, event.characters == expected else { return nil }
+        // META_SHIFT_ON | META_SHIFT_LEFT_ON, META_CAPS_LOCK_ON
+        return (keycode, (shift ? 0x41 : 0) | (capsLock ? 0x100000 : 0))
+    }
+
     override func keyDown(with event: NSEvent) {
         // Esc lets go of a caught pointer, as in Mac games, instead of going back.
         if controls.isCaught && event.keyCode == 53 { controls.releasePointer(); return }
         if controls.key(Int(event.keyCode), down: true) { return }
         if let keycode = Self.specialKeys[event.keyCode] {
             session?.sendKey(.down, keycode: keycode)
+        } else if let key = heldKeys[event.keyCode] ?? Self.androidKey(for: event) {
+            heldKeys[event.keyCode] = key
+            session?.sendKey(.down, keycode: key.keycode, metaState: key.metaState)
         } else if let text = event.characters, !text.isEmpty, !event.modifierFlags.contains(.control) {
             session?.sendText(text)
         }
@@ -230,6 +266,8 @@ final class AndroidDisplayView: NSView {
         if controls.key(Int(event.keyCode), down: false) { return }
         if let keycode = Self.specialKeys[event.keyCode] {
             session?.sendKey(.up, keycode: keycode)
+        } else if let key = heldKeys.removeValue(forKey: event.keyCode) {
+            session?.sendKey(.up, keycode: key.keycode, metaState: key.metaState)
         }
     }
 

@@ -138,7 +138,7 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate {
     }
 
     func windowDidResignKey(_ notification: Notification) {
-        displayView.controls.releaseAll()
+        displayView.releaseAllKeys()
     }
     /// Pictures Android drew in the last second: Android sends one only when the app's screen
     /// changes, so this is the app's own frame rate.
