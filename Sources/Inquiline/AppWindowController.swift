@@ -195,6 +195,7 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate {
                 guard let self else { return }
                 self.launchScreen.removeFromSuperview()
                 if self.gamepads == nil { self.gamepads = GamepadBridge(session: session) }
+                if self.displayView.keyboard == nil { self.displayView.keyboard = KeyboardBridge(session: session) }
             }
         }
         session.onEnd = { [weak self] error in
@@ -211,6 +212,8 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate {
         restarted = true
         gamepads?.stop()
         gamepads = nil
+        displayView.keyboard?.stop()
+        displayView.keyboard = nil
         session.stop()
         session = ScrcpySession(package: package, screen: resolution.screen(landscape: isLandscape), restartsApp: true)
         if let old = watchedDisplay { oldDisplays.insert(old) }
@@ -545,6 +548,7 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate {
         watch?.invalidate()
         fpsTimer?.invalidate()
         gamepads?.stop()
+        displayView.keyboard?.stop()
         session.stop()
     }
 }

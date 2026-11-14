@@ -328,7 +328,8 @@ final class ScrcpySession {
     }
 
     /// Plugs a HID device into Android, on this app's display only.
-    func sendHIDOpen(id: UInt16, vendor: UInt16, product: UInt16, name: String, descriptor: [UInt8]) {
+    /// `country` is the HID country code a keyboard reports its layout with (0: none).
+    func sendHIDOpen(id: UInt16, vendor: UInt16, product: UInt16, name: String, descriptor: [UInt8], country: UInt8 = 0) {
         let nameBytes = Data(name.utf8.prefix(127))
         var message = Data([12])
         message.appendBigEndian(id)
@@ -338,6 +339,7 @@ final class ScrcpySession {
         message.append(nameBytes)
         message.appendBigEndian(UInt16(descriptor.count))
         message.append(contentsOf: descriptor)
+        message.append(country)
         send(message)
     }
 

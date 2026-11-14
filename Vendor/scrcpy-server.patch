@@ -2,6 +2,8 @@ Changes to scrcpy 5.0.1's server. The server runs as Android's system user, and
 Android checks that the package name it presents belongs to that user. A display
 power message turns only the app's own virtual display off, so its app is stopped
 as on a phone whose screen turns off.
+A HID device opened from the Mac carries a country code, as a real keyboard reports
+its layout with one, so Android picks the matching layout itself.
 
 --- a/server/src/main/java/com/genymobile/scrcpy/FakeContext.java
 +++ b/server/src/main/java/com/genymobile/scrcpy/FakeContext.java
@@ -465,3 +467,107 @@ index 0000000..5a73e4c
 +        }
 +    }
 +}
+diff --git a/server/src/main/java/com/genymobile/scrcpy/control/ControlMessage.java b/server/src/main/java/com/genymobile/scrcpy/control/ControlMessage.java
+index d17ac96..9dd836c 100644
+--- a/server/src/main/java/com/genymobile/scrcpy/control/ControlMessage.java
++++ b/server/src/main/java/com/genymobile/scrcpy/control/ControlMessage.java
+@@ -59,6 +59,7 @@ public final class ControlMessage {
+     private boolean on;
+     private int vendorId;
+     private int productId;
++    private int country;
+     private int width;
+     private int height;
+ 
+@@ -150,7 +151,7 @@ public final class ControlMessage {
+         return msg;
+     }
+ 
+-    public static ControlMessage createUhidCreate(int id, int vendorId, int productId, String name, byte[] reportDesc) {
++    public static ControlMessage createUhidCreate(int id, int vendorId, int productId, String name, byte[] reportDesc, int country) {
+         ControlMessage msg = new ControlMessage();
+         msg.type = TYPE_UHID_CREATE;
+         msg.id = id;
+@@ -158,9 +159,14 @@ public final class ControlMessage {
+         msg.productId = productId;
+         msg.text = name;
+         msg.data = reportDesc;
++        msg.country = country;
+         return msg;
+     }
+ 
++    public int getCountry() {
++        return country;
++    }
++
+     public static ControlMessage createUhidInput(int id, byte[] data) {
+         ControlMessage msg = new ControlMessage();
+         msg.type = TYPE_UHID_INPUT;
+diff --git a/server/src/main/java/com/genymobile/scrcpy/control/ControlMessageReader.java b/server/src/main/java/com/genymobile/scrcpy/control/ControlMessageReader.java
+index a9f5319..8dae088 100644
+--- a/server/src/main/java/com/genymobile/scrcpy/control/ControlMessageReader.java
++++ b/server/src/main/java/com/genymobile/scrcpy/control/ControlMessageReader.java
+@@ -157,7 +157,9 @@ public class ControlMessageReader {
+         int productId = dis.readUnsignedShort();
+         String name = parseString(1);
+         byte[] data = parseByteArray(2);
+-        return ControlMessage.createUhidCreate(id, vendorId, productId, name, data);
++        // Inquiline: the HID country code, as a real keyboard reports its layout.
++        int country = dis.readUnsignedByte();
++        return ControlMessage.createUhidCreate(id, vendorId, productId, name, data, country);
+     }
+ 
+     private ControlMessage parseUhidInput() throws IOException {
+diff --git a/server/src/main/java/com/genymobile/scrcpy/control/Controller.java b/server/src/main/java/com/genymobile/scrcpy/control/Controller.java
+index 7af8add..01ff00a 100644
+--- a/server/src/main/java/com/genymobile/scrcpy/control/Controller.java
++++ b/server/src/main/java/com/genymobile/scrcpy/control/Controller.java
+@@ -407,7 +407,7 @@ public class Controller implements AsyncProcessor, VirtualDisplayListener {
+                     }
+                     return true;
+                 case ControlMessage.TYPE_UHID_CREATE:
+-                    getUhidManager().open(msg.getId(), msg.getVendorId(), msg.getProductId(), msg.getText(), msg.getData());
++                    getUhidManager().open(msg.getId(), msg.getVendorId(), msg.getProductId(), msg.getText(), msg.getData(), msg.getCountry());
+                     return true;
+                 case ControlMessage.TYPE_UHID_INPUT:
+                     getUhidManager().writeInput(msg.getId(), msg.getData());
+diff --git a/server/src/main/java/com/genymobile/scrcpy/control/UhidManager.java b/server/src/main/java/com/genymobile/scrcpy/control/UhidManager.java
+index 20532c0..6f20ac5 100644
+--- a/server/src/main/java/com/genymobile/scrcpy/control/UhidManager.java
++++ b/server/src/main/java/com/genymobile/scrcpy/control/UhidManager.java
+@@ -55,7 +55,7 @@ public final class UhidManager {
+         }
+     }
+ 
+-    public void open(int id, int vendorId, int productId, String name, byte[] reportDesc) throws IOException {
++    public void open(int id, int vendorId, int productId, String name, byte[] reportDesc, int country) throws IOException {
+         try {
+             FileDescriptor fd = Os.open("/dev/uhid", OsConstants.O_RDWR, 0);
+             try {
+@@ -69,7 +69,7 @@ public final class UhidManager {
+                 }
+ 
+                 String phys = mustUseInputPort() ? INPUT_PORT : null;
+-                byte[] req = buildUhidCreate2Req(vendorId, productId, name, reportDesc, phys);
++                byte[] req = buildUhidCreate2Req(vendorId, productId, name, reportDesc, phys, country);
+                 Os.write(fd, req, 0, req.length);
+ 
+                 if (firstDevice) {
+@@ -162,7 +162,7 @@ public final class UhidManager {
+         }
+     }
+ 
+-    private static byte[] buildUhidCreate2Req(int vendorId, int productId, String name, byte[] reportDesc, String phys) {
++    private static byte[] buildUhidCreate2Req(int vendorId, int productId, String name, byte[] reportDesc, String phys, int country) {
+         /*
+          * struct uhid_event {
+          *     uint32_t type;
+@@ -206,7 +206,7 @@ public final class UhidManager {
+         buf.putInt(vendorId);
+         buf.putInt(productId);
+         buf.putInt(0); // version
+-        buf.putInt(0); // country;
++        buf.putInt(country);
+         buf.put(reportDesc);
+         return buf.array();
+     }

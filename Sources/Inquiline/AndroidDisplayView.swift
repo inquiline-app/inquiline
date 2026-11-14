@@ -43,6 +43,7 @@ final class AndroidDisplayView: NSView {
     /// Lets go of every key and control held down, as when the window stops taking keys.
     func releaseAllKeys() {
         controls.releaseAll()
+        keyboard?.releaseAll()
         for key in heldKeys.values { session?.sendKey(.up, keycode: key.keycode, metaState: key.metaState) }
         heldKeys.removeAll()
     }
@@ -248,22 +249,34 @@ final class AndroidDisplayView: NSView {
         return (keycode, (shift ? 0x41 : 0) | (capsLock ? 0x100000 : 0))
     }
 
+    /// The Mac's keyboard plugged into Android, once the app shows; most keys go through it.
+    var keyboard: KeyboardBridge?
+
     override func keyDown(with event: NSEvent) {
         // Esc lets go of a caught pointer, as in Mac games, instead of going back.
         if controls.isCaught && event.keyCode == 53 { controls.releasePointer(); return }
         if controls.key(Int(event.keyCode), down: true) { return }
+        // Esc stays Android's Back, as Android's keyboards give it nothing else to do. A
+        // character made with Option goes as text, unless the layout's Option is a PC's AltGr.
+        if event.keyCode != 53, !event.modifierFlags.contains(.option) || keyboard?.optionIsAltGr == true,
+           keyboard?.key(event.keyCode, down: true, flags: event.modifierFlags) == true { return }
         if let keycode = Self.specialKeys[event.keyCode] {
             session?.sendKey(.down, keycode: keycode)
         } else if let key = heldKeys[event.keyCode] ?? Self.androidKey(for: event) {
             heldKeys[event.keyCode] = key
             session?.sendKey(.down, keycode: key.keycode, metaState: key.metaState)
-        } else if let text = event.characters, !text.isEmpty, !event.modifierFlags.contains(.control) {
-            session?.sendText(text)
+        } else if let text = event.characters, !text.isEmpty, !event.modifierFlags.contains(.control),
+                  !text.unicodeScalars.contains(where: { (0xF700...0xF8FF).contains($0.value) }) {
+            // Android types only the characters of its own virtual keyboard from text, so others,
+            // as €, é or ş without a keyboard of that layout, are pasted.
+            if text.unicodeScalars.allSatisfy(\.isASCII) { session?.sendText(text) } else { session?.sendPaste(text) }
         }
     }
 
     override func keyUp(with event: NSEvent) {
         if controls.key(Int(event.keyCode), down: false) { return }
+        // Let go even with Option now held: a key pressed through the keyboard is let go there.
+        if event.keyCode != 53, keyboard?.key(event.keyCode, down: false) == true { return }
         if let keycode = Self.specialKeys[event.keyCode] {
             session?.sendKey(.up, keycode: keycode)
         } else if let key = heldKeys.removeValue(forKey: event.keyCode) {
@@ -278,8 +291,12 @@ final class AndroidDisplayView: NSView {
         case 56, 60: flag = .shift
         case 59, 62: flag = .control
         case 58, 61: flag = .option
+        case 57:
+            keyboard?.modifiersChanged(event)
+            return
         default: return
         }
-        _ = controls.key(Int(event.keyCode), down: event.modifierFlags.contains(flag))
+        if controls.key(Int(event.keyCode), down: event.modifierFlags.contains(flag)) { return }
+        keyboard?.modifiersChanged(event)
     }
 }
