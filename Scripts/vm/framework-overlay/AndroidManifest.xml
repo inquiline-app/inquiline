@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Inquiline: changes to Android's own settings, applied as a phone maker's overlay is. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="io.github.inquiline.framework.overlay">
+    <overlay android:targetPackage="android" android:isStatic="true" android:priority="1" />
+    <application android:hasCode="false" />
+</manifest>

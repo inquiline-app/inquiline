@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- A key pressed on the Mac's keyboard puts Android out of touch mode, and Android then
+         frames the focused view: in a game, its whole screen. Apps that show focus draw their own. -->
+    <bool name="config_useDefaultFocusHighlight">false</bool>
+</resources>

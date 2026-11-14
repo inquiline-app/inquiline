@@ -309,7 +309,9 @@ final class AndroidRuntime {
     /// build name; its code name, which apps may be filtered by, stays.
     /// 17: a gyroscope declared, as the accelerometer and compass are, for games Play Store
     /// lists only with one.
-    private static let diskRevision = 17
+    /// 18: Android's own settings changed by an overlay in /vendor/overlay: no frame around the
+    /// whole screen of a game once a key is pressed.
+    private static let diskRevision = 18
     /// The VM's memory map fits the 36-bit (64 GB) address space Apple's M1 and M2 give a VM:
     /// above the RAM, the window for 64-bit device memory, such as the GPU's 2 GB, is 16 GB,
     /// not QEMU's 512 GB, which only M3 and later have room for (see the QEMU patch 0102).

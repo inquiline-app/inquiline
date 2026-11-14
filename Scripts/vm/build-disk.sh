@@ -2,8 +2,8 @@
 # Builds the Android VM's disk from nothing, so it holds nothing from the machine
 # that built it. Run as root in a Fedora guest with the same kernel, the guest GPU
 # libraries in $1 (libdrm.so from Mesa, vulkan.gfxstream.so from build-guest-vulkan.sh and
-# audio.primary.redroid.so from build-guest-audio.sh),
-# the Redroid image in podman, and the empty target disk at $2.
+# audio.primary.redroid.so from build-guest-audio.sh, and Vendor/inquiline-framework-overlay.apk
+# from build-framework-overlay.sh), the Redroid image in podman, and the empty target disk at $2.
 set -eu
 
 LIBS=$1
@@ -51,6 +51,9 @@ chroot "$ROOT" /sbin/depmod "$KERNEL"
 mkdir -p "$ROOT/var/inquiline"
 cp "$LIBS"/*.so "$ROOT/var/inquiline/"
 chmod 644 "$ROOT"/var/inquiline/*.so
+# Changes to Android's own settings, as a phone maker's overlay (Scripts/vm/framework-overlay).
+cp "$LIBS/inquiline-framework-overlay.apk" "$ROOT/var/inquiline/"
+chmod 644 "$ROOT/var/inquiline/inquiline-framework-overlay.apk"
 # Vulkan goes to the Mac through gfxstream, GLES is Android's own ANGLE on that Vulkan,
 # and buffers come from minigbm (gralloc.cros), which the gfxstream driver understands.
 cat > "$ROOT/var/inquiline/gpu_config.sh" <<'EOF'
@@ -234,6 +237,7 @@ exec podman run --rm $EXTRA --name redroid --ip 10.88.0.2 --privileged --pull=ne
   -v $A/no-aep.xml:/vendor/etc/permissions/android.hardware.opengles.aep.xml:ro \
   -v $A/touchscreen.xml:/vendor/etc/permissions/android.hardware.touchscreen.xml:ro \
   -v $A/gyroscope.xml:/vendor/etc/permissions/android.hardware.sensor.gyroscope.xml:ro \
+  -v $A/inquiline-framework-overlay.apk:/vendor/overlay/InquilineFramework.apk:ro \
   -v $A/product-build.prop:/system/product/etc/build.prop:ro \
   docker.io/redroid/redroid:15.0.0_64only-latest androidboot.redroid_gpu_mode=host androidboot.use_memfd=1 \
   androidboot.redroid_width=810 androidboot.redroid_height=1440 androidboot.redroid_dpi=320 androidboot.redroid_fps=60
