@@ -216,6 +216,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, SPUSta
         return image
     }
 
+    /// "Version 0.1.11", and for a build that isn't a release, which branch it came from.
+    private static let versionLine: String = {
+        let info = Bundle.main.infoDictionary ?? [:]
+        let version = "Version " + (info["CFBundleShortVersionString"] as? String ?? "?")
+        guard let branch = info["InquilineTestBuild"] as? String else { return version }
+        return version + " · test (\(branch))"
+    }()
+
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
         let state = status ?? (!AndroidRuntime.shared.isRunning ? "Android is stopped"
@@ -232,6 +240,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, SPUSta
         login.target = self
         login.state = SMAppService.mainApp.status == .enabled ? .on : .off
         menu.addItem(withTitle: "Report a Problem…", action: #selector(reportProblem(_:)), keyEquivalent: "").target = self
+        menu.addItem(.separator())
+        menu.addItem(withTitle: Self.versionLine, action: nil, keyEquivalent: "").isEnabled = false
         if updater != nil {
             menu.addItem(withTitle: "Check for Updates…", action: #selector(checkForUpdates(_:)), keyEquivalent: "").target = self
         }

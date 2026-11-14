@@ -26,6 +26,12 @@ rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp .build/release/Inquiline "$APP/Contents/MacOS/Inquiline"
 cp Resources/Info.plist "$APP/Contents/Info.plist"
+# A build from anything but main, or with changes not committed, says so in the menu, so a
+# test copy can't pass for a release.
+BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo unknown)
+if [ "$BRANCH" != main ] || [ -n "$(git status --porcelain --untracked-files=no 2>/dev/null)" ]; then
+    /usr/libexec/PlistBuddy -c "Add :InquilineTestBuild string $BRANCH" "$APP/Contents/Info.plist"
+fi
 cp Vendor/scrcpy-server "$APP/Contents/Resources/scrcpy-server"
 cp Vendor/libinquiline-frames.so "$APP/Contents/Resources/libinquiline-frames.so"
 cp "$CACHE/LICENSE" "$APP/Contents/Resources/scrcpy-LICENSE.txt"
