@@ -7,6 +7,9 @@ struct ApkManifest {
     let orientation: AppOrientation
     /// Whether the app says it's a game: android:appCategory="game", or the older android:isGame.
     let isGame: Bool
+    /// For one part of an app split into several APKs, its name, as "config.arm64_v8a";
+    /// nil for the base APK, or an app in one piece.
+    var split: String?
 
     init?(apk: URL) {
         guard let archive = try? Data(contentsOf: apk, options: .alwaysMapped),
@@ -22,10 +25,11 @@ struct ApkManifest {
         self = parsed
     }
 
-    private init(package: String, orientation: AppOrientation, isGame: Bool) {
+    private init(package: String, orientation: AppOrientation, isGame: Bool, split: String?) {
         self.package = package
         self.orientation = orientation
         self.isGame = isGame
+        self.split = split
     }
 
     // MARK: - ZIP
@@ -99,6 +103,7 @@ struct ApkManifest {
         var launcher: String?
         var isMain = false, isLauncher = false
         var isGame = false
+        var split: String?
 
         var offset = 8 // past the file header
         while offset + 8 <= xml.count {
@@ -127,6 +132,7 @@ struct ApkManifest {
                     if tag == "application", resource == isGameAttribute, xml.uint32(at: attribute + 16) != 0 { isGame = true }
                     if tag == "application", resource == appCategoryAttribute, xml.uint32(at: attribute + 16) == gameCategory { isGame = true }
                     if tag == "manifest", nameIndex < strings.count, strings[nameIndex] == "package" { package = text }
+                    if tag == "manifest", nameIndex < strings.count, strings[nameIndex] == "split" { split = text }
                 }
                 switch tag {
                 case "activity", "activity-alias":
@@ -150,7 +156,7 @@ struct ApkManifest {
         guard let package else { return nil }
         let start = launcher.flatMap { aliasTargets[$0] ?? $0 }
         let declared = start.flatMap { orientations[$0] } ?? launcher.flatMap { orientations[$0] }
-        return ApkManifest(package: package, orientation: AppOrientation(screenOrientation: declared), isGame: isGame)
+        return ApkManifest(package: package, orientation: AppOrientation(screenOrientation: declared), isGame: isGame, split: split)
     }
 
     private static func stringPool(in xml: Data, at chunk: Int) -> [String] {

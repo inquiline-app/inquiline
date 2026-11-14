@@ -494,23 +494,46 @@ final class AndroidRuntime {
 
     // MARK: - Apps
 
-    func install(apk: URL) throws -> ApkManifest {
-        guard let manifest = ApkManifest(apk: apk) else {
-            throw RuntimeError("\(apk.lastPathComponent) is not a valid APK.")
-        }
-        guard let size = try apk.resourceValues(forKeys: [.fileSizeKey]).fileSize else {
-            throw RuntimeError("Could not read \(apk.lastPathComponent).")
-        }
+    /// Installs one app of an APK or a bundle: all its parts at once, as Play Store does, then
+    /// its game data.
+    func install(_ app: ApkBundle.App) throws {
         // Adding an APK is a USB install in Android's terms. With Google Play added, Play Protect
         // checks those through a Google service that MindTheGapps lacks, so the install waits
         // forever. Android's developer option "Verify apps over USB" turns that check off.
         _ = try shell("settings put global verifier_verify_adb_installs 0")
-        // -g grants runtime permissions up front: the app is confined to the VM.
-        let output = try AdbClient.exec("cmd package install -S \(size) -r -d -t -g", input: apk)
-        guard output.contains("Success") else {
-            throw RuntimeError(output.trimmingCharacters(in: .whitespacesAndNewlines))
+        let sizes = try app.apks.map { url -> Int in
+            guard let size = try url.resourceValues(forKeys: [.fileSizeKey]).fileSize else {
+                throw RuntimeError("Could not read \(url.lastPathComponent).")
+            }
+            return size
         }
-        return manifest
+        // -g grants runtime permissions up front: the app is confined to the VM.
+        let created = try shell("cmd package install-create -S \(sizes.reduce(0, +)) -r -d -t -g")
+        guard let session = created.split(whereSeparator: { "[]".contains($0) }).dropFirst().first.flatMap({ Int($0) }) else {
+            throw RuntimeError(created.trimmingCharacters(in: .whitespacesAndNewlines))
+        }
+        do {
+            for (index, (apk, size)) in zip(app.apks, sizes).enumerated() {
+                let written = try AdbClient.exec("cmd package install-write -S \(size) \(session) \(index).apk -", input: apk)
+                guard written.contains("Success") else { throw RuntimeError(written.trimmingCharacters(in: .whitespacesAndNewlines)) }
+            }
+            let committed = try shell("cmd package install-commit \(session)")
+            guard committed.contains("Success") else { throw RuntimeError(committed.trimmingCharacters(in: .whitespacesAndNewlines)) }
+        } catch {
+            _ = try? shell("cmd package install-abandon \(session)")
+            throw error
+        }
+        let package = app.manifest.package
+        guard !app.obbs.isEmpty, package.range(of: "^[A-Za-z0-9_.]+$", options: .regularExpression) != nil else { return }
+        let folder = "/sdcard/Android/obb/\(package)"
+        _ = try shell("mkdir -p \(folder)")
+        for obb in app.obbs {
+            let name = obb.lastPathComponent
+            guard name.range(of: "^[A-Za-z0-9_.-]+$", options: .regularExpression) != nil,
+                  let size = try obb.resourceValues(forKeys: [.fileSizeKey]).fileSize else { continue }
+            // The stream gives no end of file, so the copy takes as many bytes as the file has.
+            _ = try AdbClient.exec("sh -c 'head -c \(size) > \(folder)/\(name)'", input: obb)
+        }
     }
 
     /// Mutes one app as Android itself does, by taking away its permission to play sound

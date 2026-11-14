@@ -285,7 +285,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, SPUSta
     @objc private func addAPK(_ sender: Any?) {
         NSApp.activate(ignoringOtherApps: true)
         let panel = NSOpenPanel()
-        panel.allowedContentTypes = [UTType(filenameExtension: "apk") ?? .data]
+        panel.allowedContentTypes = ApkBundle.contentTypes
         panel.allowsMultipleSelection = true
         panel.directoryURL = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first
         if panel.runModal() == .OK {
@@ -371,26 +371,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, SPUSta
         run("Installing \(name)…", hiding: [name], { [self] in
             let runtime = AndroidRuntime.shared
             try prepareAndroid()
-            setStatus("Installing \(name)…")
-            let manifest = try runtime.install(apk: apk)
-            let package = manifest.package
-            AppLog.write("Installed \(package)")
-            // The launcher caches a new app's icon and name shortly after installation.
-            var icon = runtime.iconPNG(package: package)
-            var label = runtime.label(package: package)
-            for _ in 0..<10 where icon == nil || label == nil {
-                Thread.sleep(forTimeInterval: 0.5)
-                icon = runtime.iconPNG(package: package)
-                label = runtime.label(package: package)
-            }
-            let info = ApkInfo(package: package, label: label ?? package, orientation: manifest.orientation,
-                               isGame: runtime.isGame(package: package, manifest: manifest))
-            DispatchQueue.main.sync {
-                library.add(info)
-                if let icon { library.setIcon(icon, package: package) }
-                // As after any install, the new app is shown where it now is.
-                updateShortcuts { locations in
-                    if let app = locations[package] { NSWorkspace.shared.activateFileViewerSelecting([app]) }
+            setStatus("Opening \(name)…")
+            let bundle = try ApkBundle(file: apk)
+            defer { bundle.remove() }
+            for app in bundle.apps {
+                setStatus("Installing \(name)…")
+                try runtime.install(app)
+                let manifest = app.manifest
+                let package = manifest.package
+                AppLog.write("Installed \(package)\(app.apks.count > 1 ? " from \(app.apks.count) parts" : "")\(app.obbs.isEmpty ? "" : " with its game data")")
+                // The launcher caches a new app's icon and name shortly after installation.
+                var icon = runtime.iconPNG(package: package)
+                var label = runtime.label(package: package)
+                for _ in 0..<10 where icon == nil || label == nil {
+                    Thread.sleep(forTimeInterval: 0.5)
+                    icon = runtime.iconPNG(package: package)
+                    label = runtime.label(package: package)
+                }
+                let info = ApkInfo(package: package, label: label ?? package, orientation: manifest.orientation,
+                                   isGame: runtime.isGame(package: package, manifest: manifest))
+                DispatchQueue.main.sync {
+                    library.add(info)
+                    if let icon { library.setIcon(icon, package: package) }
+                    // As after any install, the new app is shown where it now is.
+                    updateShortcuts { locations in
+                        if let app = locations[package] { NSWorkspace.shared.activateFileViewerSelecting([app]) }
+                    }
                 }
             }
         }, failure: "Couldn't add \(name)",

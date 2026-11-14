@@ -60,13 +60,13 @@ On a phone these come built into the system, with privileged permissions. An APK
 
 ### What the "27 S" or "BUNDLE" label means
 
-On APK download sites, these labels mean one app split into several files: the main app, code for each processor, graphics for each screen and languages. **These parts aren't the missing Google components.** Google Play Services is a separate app that isn't in the Play Store's package.
+On APK download sites, these labels mean one app split into several files: the main app, code for each processor, graphics for each screen and languages. Inquiline installs these bundles and takes the parts your Mac needs. **These parts aren't the missing Google components.** Google Play Services is a separate app that isn't in the Play Store's package.
 
 ## Without Google Play
 
-### Install single-file APKs
+### Install APKs and app bundles
 
-Choose **Add APK…** from Inquiline in the menu bar, or open the `.apk` file. On download sites, choose a variant without a `BUNDLE` label. `.apkm`, `.xapk` and `.apks` files aren't supported yet.
+Choose **Add APK…** from Inquiline in the menu bar, or open the file. Inquiline installs `.apk` files and the bundles download sites offer: `.xapk`, `.apkm`, `.apks`, `.apkx`, and a `.zip` with APKs in it. A game's data in an `.xapk` is installed with it. Older `.apkm` files are encrypted and can't be opened; download the app again.
 
 Apps that don't depend on Google Play Services are the most likely to work.
 
