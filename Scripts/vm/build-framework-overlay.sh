@@ -15,5 +15,5 @@ trap 'rm -rf "$OUT"' EXIT
 # A partition's overlay needn't be signed by anyone in particular, only signed: a key made for each build.
 keytool -genkeypair -keystore "$OUT/key.jks" -storepass inquiline -keypass inquiline -alias overlay \
     -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Inquiline" >/dev/null 2>&1
-"$TOOLS/apksigner" sign --ks "$OUT/key.jks" --ks-pass pass:inquiline --out Vendor/inquiline-framework-overlay.apk "$OUT/aligned.apk"
+"$TOOLS/apksigner" sign --v4-signing-enabled false --ks "$OUT/key.jks" --ks-pass pass:inquiline --out Vendor/inquiline-framework-overlay.apk "$OUT/aligned.apk"
 echo "Built Vendor/inquiline-framework-overlay.apk"
