@@ -3,7 +3,8 @@ package io.github.inquiline.notifications;
 import android.app.Notification;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
-import android.app.ActivityOptions;
+import android.app.RemoteInput;
+import android.content.Intent;
 import android.net.LocalServerSocket;
 import android.net.LocalSocket;
 import android.os.Bundle;
@@ -27,7 +28,9 @@ import java.util.concurrent.CopyOnWriteArrayList;
  *
  * What Android shows a phone's user is what the Mac gets: notifications that would alert, from
  * apps the user let post them, and not the ones an app keeps up while it works (music, downloads).
- * Inquiline may send back "open <key>", which runs the notification's own action.
+ * Inquiline may send back {"reply": key, "text": ...}, which answers it as a phone's reply box
+ * does. Opening a notification's screen is Open's, which Android allows only to a privileged
+ * process.
  */
 public final class Listener extends NotificationListenerService {
     private static final String SOCKET = "inquiline-notifications";
@@ -79,7 +82,11 @@ public final class Listener extends NotificationListenerService {
                 new InputStreamReader(socket.getInputStream(), StandardCharsets.UTF_8))) {
             String line;
             while ((line = in.readLine()) != null) {
-                if (line.startsWith("open ")) open(line.substring(5));
+                try {
+                    JSONObject command = new JSONObject(line);
+                    if (command.has("reply")) reply(command.getString("reply"), command.getString("text"));
+                } catch (org.json.JSONException ignored) {
+                }
             }
         } catch (IOException ignored) {
         } finally {
@@ -88,8 +95,24 @@ public final class Listener extends NotificationListenerService {
         }
     }
 
-    /** Runs the notification's own action, as tapping it on a phone does, and clears it if it asks. */
-    private void open(String key) {
+    /** The notification's own reply action: what a phone sends when you answer from it. */
+    private static Notification.Action replyAction(Notification n) {
+        if (n.actions == null) return null;
+        Notification.Action found = null;
+        for (Notification.Action action : n.actions) {
+            RemoteInput[] inputs = action.getRemoteInputs();
+            if (inputs == null || action.actionIntent == null) continue;
+            for (RemoteInput input : inputs) {
+                if (!input.getAllowFreeFormInput()) continue;
+                if (action.getSemanticAction() == Notification.Action.SEMANTIC_ACTION_REPLY) return action;
+                if (found == null) found = action;
+            }
+        }
+        return found;
+    }
+
+    /** Answers a notification as its reply box on a phone does. */
+    private void reply(String key, String text) {
         StatusBarNotification[] active;
         try {
             active = getActiveNotifications(new String[] { key });
@@ -97,18 +120,18 @@ public final class Listener extends NotificationListenerService {
             return;
         }
         if (active == null || active.length == 0) return;
-        Notification n = active[0].getNotification();
-        if (n.contentIntent != null) {
-            try {
-                ActivityOptions options = ActivityOptions.makeBasic();
-                options.setPendingIntentBackgroundActivityStartMode(
-                        ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED);
-                n.contentIntent.send(this, 0, null, null, null, null, options.toBundle());
-            } catch (PendingIntent.CanceledException | RuntimeException ignored) {
-            }
+        Notification.Action action = replyAction(active[0].getNotification());
+        if (action == null) return;
+        Intent intent = new Intent();
+        Bundle results = new Bundle();
+        for (RemoteInput input : action.getRemoteInputs()) {
+            if (input.getAllowFreeFormInput()) results.putCharSequence(input.getResultKey(), text);
         }
-        if ((n.flags & Notification.FLAG_AUTO_CANCEL) != 0) {
-            try { cancelNotification(key); } catch (RuntimeException ignored) { }
+        RemoteInput.addResultsToIntent(action.getRemoteInputs(), intent, results);
+        RemoteInput.setResultsSource(intent, RemoteInput.SOURCE_FREE_FORM_INPUT);
+        try {
+            action.actionIntent.send(this, 0, intent);
+        } catch (PendingIntent.CanceledException ignored) {
         }
     }
 
@@ -128,6 +151,7 @@ public final class Listener extends NotificationListenerService {
             message.put("title", title == null ? "" : title.toString());
             message.put("text", text == null ? "" : text.toString());
             message.put("silent", (n.flags & Notification.FLAG_ONLY_ALERT_ONCE) != 0);
+            message.put("replies", replyAction(n) != null);
             send(message);
         } catch (org.json.JSONException ignored) {
         }

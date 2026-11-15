@@ -6,13 +6,14 @@ import UserNotifications
 /// A small app inside Android (Scripts/vm/notifications-agent) reads them with Android's
 /// notification access and hands them over adb, which only Inquiline holds. What Android would
 /// alert with, from apps the user let post notifications, shows on the Mac; clicking one opens
-/// its app. Android keeps them coming while it rests (EngineControl).
+/// its app where the notification points, as tapping it on a phone does, and a chat's can be
+/// answered from the Mac. Android keeps them coming while it rests (EngineControl).
 /// Nothing of what they say is logged or kept.
 final class NotificationBridge: NSObject, UNUserNotificationCenterDelegate {
     static let shared = NotificationBridge()
 
     static let agent = "io.github.inquiline.notifications"
-    static let agentVersion = 2
+    static let agentVersion = 3
     private static let socket = "localabstract:inquiline-notifications"
 
     /// Opens an app's window, given its package.
@@ -27,9 +28,16 @@ final class NotificationBridge: NSObject, UNUserNotificationCenterDelegate {
     private var shown: [String: String] = [:]
     private var iconFiles: [String: URL] = [:]
 
+    private static let replyCategory = "reply"
+
     private override init() {
         super.init()
-        UNUserNotificationCenter.current().delegate = self
+        let center = UNUserNotificationCenter.current()
+        center.delegate = self
+        let reply = UNTextInputNotificationAction(identifier: Self.replyCategory, title: "Reply", options: [],
+                                                  textInputButtonTitle: "Send", textInputPlaceholder: "")
+        center.setNotificationCategories([UNNotificationCategory(identifier: Self.replyCategory, actions: [reply],
+                                                                 intentIdentifiers: [])])
     }
 
     /// Called whenever Android is ready; connects once, and again after Android restarts.
@@ -121,6 +129,8 @@ final class NotificationBridge: NSObject, UNUserNotificationCenterDelegate {
         content.sound = .default
         content.threadIdentifier = package
         content.userInfo = ["key": key, "package": package]
+        // A chat's notification can be answered, as from a phone's notification shade.
+        if message["replies"] as? Bool == true { content.categoryIdentifier = Self.replyCategory }
         if let icon = info?.icon, let file = iconFile(package: package, icon: icon),
            let attachment = try? UNNotificationAttachment(identifier: "icon", url: file) {
             content.attachments = [attachment]
@@ -143,6 +153,73 @@ final class NotificationBridge: NSObject, UNUserNotificationCenterDelegate {
         return (try? png.write(to: file)) != nil ? file : nil
     }
 
+    private func send(_ command: [String: String]) {
+        guard let data = try? JSONSerialization.data(withJSONObject: command) else { return }
+        queue.async { [self] in
+            guard connection >= 0 else { return }
+            let line = [UInt8](data) + [10]
+            _ = write(connection, line, line.count)
+        }
+    }
+
+    /// Opens the app's window and, in it, the screen the notification points to: the chat, the
+    /// mail. Android lets only a privileged process open an app's screen from the background,
+    /// so the helper's Open runs as root. It takes the notification's action before the app
+    /// opens, as opening may clear the notification, and runs it once the window's display is
+    /// known.
+    private func open(key: String, package: String) {
+        let safe = key.range(of: "[\"'`$\\]", options: .regularExpression) == nil
+        DispatchQueue.global().async { [self] in
+            var helper: Int32 = -1
+            if safe, let fd = try? AdbClient.open("shell,raw:su 0 sh -c 'CLASSPATH=$(pm path \(Self.agent) | cut -d: -f2) "
+                                                 + "app_process / \(Self.agent).Open \"\(key)\"'") {
+                if Self.readLine(fd, seconds: 5) == "ready" { helper = fd } else { close(fd) }
+            }
+            DispatchQueue.main.async { self.openApp?(package) }
+            guard helper >= 0 else { return }
+            defer { close(helper) }
+            // The window shows the app on a display of its own, there once the app has started.
+            for _ in 0..<40 {
+                if let display = Self.display(of: package) {
+                    let line = Array("\(display)\n".utf8)
+                    _ = write(helper, line, line.count)
+                    _ = Self.readLine(helper, seconds: 5)
+                    return
+                }
+                Thread.sleep(forTimeInterval: 0.5)
+            }
+        }
+    }
+
+    /// The display of the app's window: one of Inquiline's, not Android's own (0).
+    private static func display(of package: String) -> Int? {
+        guard let output = try? AdbClient.shell("dumpsys activity activities | grep -E '^Display #|Hist  #'") else { return nil }
+        var current: Int?
+        for line in output.split(whereSeparator: \.isNewline) {
+            if line.hasPrefix("Display #") {
+                current = Int(line.dropFirst("Display #".count).prefix { $0.isNumber })
+            } else if line.contains(" \(package)/"), let current, current > 0 {
+                return current
+            }
+        }
+        return nil
+    }
+
+    private static func readLine(_ fd: Int32, seconds: Int) -> String? {
+        var line = [UInt8]()
+        var byte: UInt8 = 0
+        var waiting = pollfd(fd: fd, events: Int16(POLLIN), revents: 0)
+        let deadline = Date().addingTimeInterval(TimeInterval(seconds))
+        while Date() < deadline {
+            guard poll(&waiting, 1, 200) >= 0 else { return nil }
+            if waiting.revents == 0 { continue }
+            guard Darwin.read(fd, &byte, 1) == 1 else { return nil }
+            if byte == 10 { return String(decoding: line, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines) }
+            line.append(byte)
+        }
+        return nil
+    }
+
     // MARK: - UNUserNotificationCenterDelegate
 
     func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification,
@@ -153,10 +230,15 @@ final class NotificationBridge: NSObject, UNUserNotificationCenterDelegate {
     func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse,
                                 withCompletionHandler completionHandler: @escaping () -> Void) {
         let info = response.notification.request.content.userInfo
-        if response.actionIdentifier == UNNotificationDefaultActionIdentifier,
-           let package = info["package"] as? String {
+        guard let key = info["key"] as? String, let package = info["package"] as? String else {
+            completionHandler()
+            return
+        }
+        if let reply = response as? UNTextInputNotificationResponse, !reply.userText.isEmpty {
+            send(["reply": key, "text": reply.userText])
+        } else if response.actionIdentifier == UNNotificationDefaultActionIdentifier {
             AppLog.write("Opening \(package) from its notification")
-            openApp?(package)
+            open(key: key, package: package)
         }
         completionHandler()
     }
