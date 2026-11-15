@@ -26,6 +26,7 @@ final class NotificationBridge: NSObject, UNUserNotificationCenterDelegate {
     private var connecting = false
     /// What each shown notification said, so an update that changes nothing doesn't alert again.
     private var shown: [String: String] = [:]
+    private var shownAt: [String: Date] = [:]
     private var iconFiles: [String: URL] = [:]
 
     private static let replyCategory = "reply"
@@ -112,8 +113,12 @@ final class NotificationBridge: NSObject, UNUserNotificationCenterDelegate {
     private func handle(_ message: [String: Any]) {
         let center = UNUserNotificationCenter.current()
         if let key = message["removed"] as? String {
+            // Gmail and others take a notification down and put it up again as they group it,
+            // a second after posting: the banner stays, as a phone's heads-up does.
+            if let at = shownAt[key], Date().timeIntervalSince(at) < 10 { return }
             if shown[key] != nil { AppLog.write("Notification removed in Android, so on the Mac too") }
             shown[key] = nil
+            shownAt[key] = nil
             center.removeDeliveredNotifications(withIdentifiers: [key])
             return
         }
@@ -128,6 +133,7 @@ final class NotificationBridge: NSObject, UNUserNotificationCenterDelegate {
             return
         }
         shown[key] = said
+        shownAt[key] = Date()
 
         let info = appInfo?(package)
         let content = UNMutableNotificationContent()
@@ -194,6 +200,9 @@ final class NotificationBridge: NSObject, UNUserNotificationCenterDelegate {
             // The window shows the app on a display of its own, there once the app has started.
             for _ in 0..<40 {
                 if let display = Self.display(of: package) {
+                    // The app's first screen settles first, or it may set itself up over the
+                    // one the notification opens, as Gmail falls back to its inbox.
+                    Thread.sleep(forTimeInterval: 1.5)
                     let line = Array("\(display)\n".utf8)
                     _ = write(helper, line, line.count)
                     _ = Self.readLine(helper, seconds: 5)
