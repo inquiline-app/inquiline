@@ -104,6 +104,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, SPUSta
         if library.apps.isEmpty {
             statusItem.button?.perform(#selector(NSButton.performClick(_:)), with: nil, afterDelay: 0.5)
         }
+        startAndroidInBackground()
+    }
+
+    /// With Open at Login on, Inquiline starts Android in the background, which then rests: as
+    /// a phone's, its notifications come as soon as the Mac is on, without opening an app.
+    private func startAndroidInBackground() {
+        guard SMAppService.mainApp.status == .enabled, !library.apps.isEmpty,
+              !AndroidRuntime.shared.isRunning else { return }
+        run("Starting Android…") { try self.prepareAndroid() }
     }
 
     /// A downloaded Mac app belongs in the Applications folder; one opened from elsewhere, as
@@ -585,11 +594,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, SPUSta
         }
     }
 
-    /// The Mac is short of memory: a resting Android gives its own back.
+    private var stoppedForMemory = false
+
+    /// The Mac is short of memory: a resting Android gives its own back, and starts again once
+    /// memory is back.
     private lazy var memoryPressure: DispatchSourceMemoryPressure = {
-        let source = DispatchSource.makeMemoryPressureSource(eventMask: [.warning, .critical], queue: .main)
-        source.setEventHandler { [weak self] in
-            guard let self, AndroidRuntime.isFrozen() else { return }
+        let source = DispatchSource.makeMemoryPressureSource(eventMask: [.normal, .warning, .critical], queue: .main)
+        source.setEventHandler { [weak self, weak source] in
+            guard let self, let source else { return }
+            if source.data.contains(.normal) {
+                // Memory is back: Android starts again, so notifications come again.
+                guard stoppedForMemory else { return }
+                stoppedForMemory = false
+                startAndroidInBackground()
+                return
+            }
+            guard AndroidRuntime.isFrozen() else { return }
+            stoppedForMemory = true
             stopResting("the Mac is short of memory")
         }
         return source
