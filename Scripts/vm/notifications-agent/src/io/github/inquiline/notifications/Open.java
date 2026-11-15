@@ -3,6 +3,7 @@ package io.github.inquiline.notifications;
 import android.app.ActivityOptions;
 import android.app.PendingIntent;
 import android.os.IBinder;
+import android.os.Looper;
 import android.service.notification.StatusBarNotification;
 
 import java.io.BufferedReader;
@@ -20,6 +21,7 @@ import java.io.InputStreamReader;
 public final class Open {
     public static void main(String[] args) throws Exception {
         String key = args[0];
+        Looper.prepareMainLooper();
         IBinder binder = (IBinder) Class.forName("android.os.ServiceManager")
                 .getMethod("getService", String.class).invoke(null, "notification");
         Object manager = Class.forName("android.app.INotificationManager$Stub")
@@ -49,6 +51,14 @@ public final class Open {
         ActivityOptions options = ActivityOptions.makeBasic();
         if (display > 0) options.setLaunchDisplayId(display);
         options.setPendingIntentBackgroundActivityStartMode(ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED);
+        // PendingIntent.send asks the process's ActivityThread, which app_process has none of:
+        // one is made as scrcpy's server does.
+        Class<?> threadClass = Class.forName("android.app.ActivityThread");
+        java.lang.reflect.Constructor<?> constructor = threadClass.getDeclaredConstructor();
+        constructor.setAccessible(true);
+        java.lang.reflect.Field current = threadClass.getDeclaredField("sCurrentActivityThread");
+        current.setAccessible(true);
+        current.set(null, constructor.newInstance());
         action.send(options.toBundle());
         System.out.println("ok");
     }
