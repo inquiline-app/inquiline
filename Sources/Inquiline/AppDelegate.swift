@@ -80,7 +80,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, SPUSta
         }
         NotificationBridge.shared.openApp = { [weak self] package in
             self?.updateShortcuts { locations in
-                guard let app = locations[package] else { return }
+                guard let app = locations[package] else {
+                    AppLog.write("\(package) has no app on the Mac to open")
+                    return
+                }
                 NSWorkspace.shared.openApplication(at: app, configuration: NSWorkspace.OpenConfiguration())
             }
         }

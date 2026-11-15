@@ -155,6 +155,7 @@ final class NotificationBridge: NSObject, UNUserNotificationCenterDelegate {
         let info = response.notification.request.content.userInfo
         if response.actionIdentifier == UNNotificationDefaultActionIdentifier,
            let package = info["package"] as? String {
+            AppLog.write("Opening \(package) from its notification")
             openApp?(package)
         }
         completionHandler()
