@@ -28,13 +28,17 @@ public final class Open {
                 .getMethod("getActiveNotificationsWithAttribution", String.class, String.class)
                 .invoke(manager, "root", null);
         PendingIntent action = null;
+        boolean found = false;
         if (active != null) {
             for (StatusBarNotification sbn : active) {
-                if (key.equals(sbn.getKey())) action = sbn.getNotification().contentIntent;
+                if (key.equals(sbn.getKey())) {
+                    found = true;
+                    action = sbn.getNotification().contentIntent;
+                }
             }
         }
         if (action == null) {
-            System.out.println("none");
+            System.out.println(found ? "no action" : "missing of " + (active == null ? 0 : active.length));
             return;
         }
         System.out.println("ready");

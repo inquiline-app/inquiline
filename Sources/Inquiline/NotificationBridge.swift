@@ -60,6 +60,10 @@ final class NotificationBridge: NSObject, UNUserNotificationCenterDelegate {
                     if connection == fd { connection = -1 }
                     close(fd)
                 }
+                // The helper restarted, as when it's updated, while Android runs on: connect again.
+                queue.asyncAfter(deadline: .now() + 3) { [self] in
+                    if AndroidRuntime.shared.isRunning { start() }
+                }
             }
         }
     }
