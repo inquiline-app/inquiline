@@ -350,6 +350,7 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate {
     private static let controlsItem = NSToolbarItem.Identifier("controls")
     private static let clearCacheItem = NSToolbarItem.Identifier("clearCache")
     private static let clearDataItem = NSToolbarItem.Identifier("clearData")
+    private static let settingsItem = NSToolbarItem.Identifier("settings")
 
     /// The frame rate, sound and orientation, in the Mac's own toolbar.
     private func addToolbar() {
@@ -396,7 +397,7 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate {
                 self.showLoading(true)
             }
         }
-        let toolbar = NSToolbar(identifier: "AppWindowToolbar3")
+        let toolbar = NSToolbar(identifier: "AppWindowToolbar4")
         toolbar.delegate = self
         toolbar.displayMode = .iconOnly
         toolbar.allowsUserCustomization = true
@@ -408,12 +409,14 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate {
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
         // The space keeps the buttons clear of the window's rounded corner.
-        [.flexibleSpace, Self.fpsItem, Self.controlsItem, Self.muteItem, Self.rotateItem, .space]
+        [.flexibleSpace, Self.fpsItem, Self.controlsItem, Self.muteItem, Self.rotateItem, Self.settingsItem, .space]
     }
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        // Clearing is in the app's menu; these are there for those who want them at hand.
-        [.flexibleSpace, .space, Self.fpsItem, Self.controlsItem, Self.muteItem, Self.rotateItem, Self.clearCacheItem, Self.clearDataItem]
+        // Clearing is in App Settings and the app's menu; these are there for those who want
+        // them at hand.
+        [.flexibleSpace, .space, Self.fpsItem, Self.controlsItem, Self.muteItem, Self.rotateItem, Self.settingsItem,
+         Self.clearCacheItem, Self.clearDataItem]
     }
 
     func toolbar(_ toolbar: NSToolbar, itemForItemIdentifier identifier: NSToolbarItem.Identifier,
@@ -427,6 +430,17 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate {
             let menu = NSMenu()
             Self.addControlsItems(to: menu, target: self)
             item.menu = menu
+            return item
+        }
+        if identifier == Self.settingsItem {
+            let item = NSToolbarItem(itemIdentifier: identifier)
+            item.label = "App Settings"
+            item.toolTip = "App Settings"
+            // A button of its own, so the settings can point at it.
+            let button = NSButton(image: NSImage(systemSymbolName: "gearshape", accessibilityDescription: "App Settings")!,
+                                  target: self, action: #selector(showSettings(_:)))
+            button.bezelStyle = .toolbar
+            item.view = button
             return item
         }
         let item = NSToolbarItem(itemIdentifier: identifier)
@@ -490,6 +504,20 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate {
         UserDefaults.standard.set(muted, forKey: mutedKey)
         let package = package
         DispatchQueue.global().async { AndroidRuntime.shared.setMuted(muted, package: package) }
+    }
+
+    /// The app's own settings, as Android's Settings > Apps shows them for one app, in a small
+    /// popover so the toolbar stays short. More go here as they come.
+    @objc private func showSettings(_ sender: NSButton) {
+        let popover = NSPopover()
+        popover.behavior = .transient
+        let settings = AppSettingsView(package: package)
+        settings.clearCache = { [weak self, weak popover] in popover?.close(); self?.clearCache() }
+        settings.clearData = { [weak self, weak popover] in popover?.close(); self?.clearData() }
+        let controller = NSViewController()
+        controller.view = settings
+        popover.contentViewController = controller
+        popover.show(relativeTo: sender.bounds, of: sender, preferredEdge: .minY)
     }
 
     @objc func clearCache() {
@@ -664,4 +692,70 @@ extension AppWindowController: NSMenuItemValidation {
             return true
         }
     }
+}
+
+/// What App Settings shows: whether the app may send notifications, which reach the Mac's
+/// Notification Center, and clearing its cache or data.
+private final class AppSettingsView: NSView {
+    var clearCache: (() -> Void)?
+    var clearData: (() -> Void)?
+    private let package: String
+    private let notifications = NSSwitch()
+
+    init(package: String) {
+        self.package = package
+        super.init(frame: .zero)
+        let label = NSTextField(labelWithString: "Notifications")
+        notifications.target = self
+        notifications.action = #selector(notificationsChanged)
+        // Until Android answers, nothing to switch.
+        notifications.isEnabled = false
+        let row = NSStackView(views: [label, NSView(), notifications])
+        row.orientation = .horizontal
+        let cache = NSButton(title: "Clear Cache", target: self, action: #selector(clearCacheClicked))
+        let data = NSButton(title: "Clear Data…", target: self, action: #selector(clearDataClicked))
+        data.hasDestructiveAction = true
+        for button in [cache, data] { button.controlSize = .regular }
+        let buttons = NSStackView(views: [cache, data])
+        buttons.orientation = .horizontal
+        buttons.distribution = .fillEqually
+        let separator = NSBox()
+        separator.boxType = .separator
+        let stack = NSStackView(views: [row, separator, buttons])
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 12
+        stack.edgeInsets = NSEdgeInsets(top: 14, left: 16, bottom: 14, right: 16)
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.leadingAnchor.constraint(equalTo: leadingAnchor),
+            stack.trailingAnchor.constraint(equalTo: trailingAnchor),
+            stack.topAnchor.constraint(equalTo: topAnchor),
+            stack.bottomAnchor.constraint(equalTo: bottomAnchor),
+            row.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -32),
+            buttons.widthAnchor.constraint(equalTo: row.widthAnchor),
+            separator.widthAnchor.constraint(equalTo: row.widthAnchor),
+            widthAnchor.constraint(equalToConstant: 260),
+        ])
+        DispatchQueue.global().async { [weak self] in
+            let allowed = AndroidRuntime.shared.notificationsAllowed(package: package)
+            DispatchQueue.main.async {
+                guard let self, let allowed else { return }
+                self.notifications.state = allowed ? .on : .off
+                self.notifications.isEnabled = true
+            }
+        }
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    @objc private func notificationsChanged() {
+        let allowed = notifications.state == .on
+        let package = package
+        DispatchQueue.global().async { AndroidRuntime.shared.setNotificationsAllowed(allowed, package: package) }
+    }
+
+    @objc private func clearCacheClicked() { clearCache?() }
+    @objc private func clearDataClicked() { clearData?() }
 }

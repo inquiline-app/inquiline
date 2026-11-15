@@ -506,6 +506,8 @@ final class AndroidRuntime {
             }
             return size
         }
+        let package = app.manifest.package
+        let notificationsBefore = notificationsAllowed(package: package)
         // -g grants runtime permissions up front: the app is confined to the VM.
         let created = try shell("cmd package install-create -S \(sizes.reduce(0, +)) -r -d -t -g")
         guard let session = created.split(whereSeparator: { "[]".contains($0) }).dropFirst().first.flatMap({ Int($0) }) else {
@@ -522,7 +524,14 @@ final class AndroidRuntime {
             _ = try? shell("cmd package install-abandon \(session)")
             throw error
         }
-        let package = app.manifest.package
+        // Except notifications, which reach the Mac: as from Google Play, a new app asks for
+        // them when it wants them, and an updated one keeps what the user chose.
+        if notificationsBefore == nil {
+            _ = try? shell("pm revoke \(package) \(Self.notificationPermission)")
+            _ = try? shell("pm clear-permission-flags \(package) \(Self.notificationPermission) user-set user-fixed")
+        } else if notificationsBefore == false {
+            _ = try? shell("pm revoke \(package) \(Self.notificationPermission)")
+        }
         guard !app.obbs.isEmpty, package.range(of: "^[A-Za-z0-9_.]+$", options: .regularExpression) != nil else { return }
         let folder = "/sdcard/Android/obb/\(package)"
         _ = try shell("mkdir -p \(folder)")
@@ -533,6 +542,26 @@ final class AndroidRuntime {
             // The stream gives no end of file, so the copy takes as many bytes as the file has.
             _ = try AdbClient.exec("sh -c 'head -c \(size) > \(folder)/\(name)'", input: obb)
         }
+    }
+
+    private static let notificationPermission = "android.permission.POST_NOTIFICATIONS"
+
+    /// Whether the app may post notifications, as Android's Settings > Apps > Notifications
+    /// shows it; nil when the app isn't installed.
+    func notificationsAllowed(package: String) -> Bool? {
+        guard package.range(of: "^[A-Za-z0-9_.]+$", options: .regularExpression) != nil,
+              let output = try? shell("dumpsys package \(package) | grep '\(Self.notificationPermission): granted='"),
+              !output.isEmpty
+        else { return nil }
+        return output.contains("granted=true")
+    }
+
+    /// As the switch in Android's Settings does: the app gets or loses the permission at once,
+    /// without asking, and doesn't ask again on its own.
+    func setNotificationsAllowed(_ allowed: Bool, package: String) {
+        guard package.range(of: "^[A-Za-z0-9_.]+$", options: .regularExpression) != nil else { return }
+        _ = try? shell("pm \(allowed ? "grant" : "revoke") \(package) \(Self.notificationPermission)")
+        _ = try? shell("pm set-permission-flags \(package) \(Self.notificationPermission) user-set")
     }
 
     /// Mutes one app as Android itself does, by taking away its permission to play sound
