@@ -11,8 +11,8 @@ import UserNotifications
 final class NotificationBridge: NSObject, UNUserNotificationCenterDelegate {
     static let shared = NotificationBridge()
 
-    private static let agent = "io.github.inquiline.notifications"
-    private static let agentVersion = 1
+    static let agent = "io.github.inquiline.notifications"
+    static let agentVersion = 2
     private static let socket = "localabstract:inquiline-notifications"
 
     /// Opens an app's window, given its package.

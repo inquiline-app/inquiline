@@ -557,11 +557,15 @@ final class AndroidRuntime {
     }
 
     /// As the switch in Android's Settings does: the app gets or loses the permission at once,
-    /// without asking, and doesn't ask again on its own.
+    /// without asking, and doesn't ask again on its own. `pm revoke` would end the running app,
+    /// so the notifications helper does it the way that doesn't (its Switch class).
     func setNotificationsAllowed(_ allowed: Bool, package: String) {
-        guard package.range(of: "^[A-Za-z0-9_.]+$", options: .regularExpression) != nil else { return }
-        _ = try? shell("pm \(allowed ? "grant" : "revoke") \(package) \(Self.notificationPermission)")
-        _ = try? shell("pm set-permission-flags \(package) \(Self.notificationPermission) user-set")
+        guard package.range(of: "^[A-Za-z0-9_.]+$", options: .regularExpression) != nil,
+              let uid = try? shell("su 0 stat -c %u /data/data/\(package)").trimmingCharacters(in: .whitespacesAndNewlines),
+              Int(uid) != nil
+        else { return }
+        let agent = NotificationBridge.agent
+        _ = try? shell("su 0 sh -c 'CLASSPATH=$(pm path \(agent) | cut -d: -f2) app_process / \(agent).Switch \(package) \(uid) \(allowed ? "on" : "off")'")
     }
 
     /// Mutes one app as Android itself does, by taking away its permission to play sound
