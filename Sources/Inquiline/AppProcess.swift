@@ -26,7 +26,8 @@ final class AppProcess: NSObject, NSApplicationDelegate {
         // A Mac screen is wide, so every app that can run in landscape starts that way.
         // Only portrait-only apps start upright.
         let landscape = orientation != .portrait
-        let controller = AppWindowController(package: package, label: label, orientation: orientation, landscape: landscape)
+        let controller = AppWindowController(package: package, label: label, orientation: orientation, landscape: landscape,
+                                             fromNotification: CommandLine.arguments.contains(NotificationBridge.fromNotification))
         self.controller = controller
         buildMenu(label: label, controller: controller)
         controller.window.subtitle = "Starting Android…"

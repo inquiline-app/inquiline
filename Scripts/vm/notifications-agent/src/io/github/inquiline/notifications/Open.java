@@ -15,13 +15,14 @@ import java.io.InputStreamReader;
  * root with app_process: root reads the notifications, then the process becomes Android's
  * system user, which Android lets open an app's screen from the background (root it blocks,
  * as it does the helper's own service):
- *   app_process / io.github.inquiline.notifications.Open <key>
+ *   app_process / io.github.inquiline.notifications.Open <key> [<group key>]
  * It takes the action at once and says "ready", as opening the app may clear the notification,
  * then reads the display of the app's window on its input and runs the action there.
  */
 public final class Open {
     public static void main(String[] args) throws Exception {
         String key = args[0];
+        String group = args.length > 1 ? args[1] : null;
         Looper.prepareMainLooper();
         IBinder binder = (IBinder) Class.forName("android.os.ServiceManager")
                 .getMethod("getService", String.class).invoke(null, "notification");
@@ -37,6 +38,17 @@ public final class Open {
                 if (key.equals(sbn.getKey())) {
                     found = true;
                     action = sbn.getNotification().contentIntent;
+                }
+            }
+            // A notification since gathered into its group opens what the group opens, as
+            // tapping the group on a phone does.
+            if (action == null && group != null) {
+                for (StatusBarNotification sbn : active) {
+                    if (group.equals(sbn.getGroupKey()) && sbn.getNotification().contentIntent != null) {
+                        found = true;
+                        action = sbn.getNotification().contentIntent;
+                        if ((sbn.getNotification().flags & android.app.Notification.FLAG_GROUP_SUMMARY) != 0) break;
+                    }
                 }
             }
         }

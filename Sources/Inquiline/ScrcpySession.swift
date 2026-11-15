@@ -67,6 +67,9 @@ final class ScrcpySession {
 
     private let package: String
     private let restartsApp: Bool
+    /// False when a notification opens the app: its own screen starts on this display
+    /// instead of the app's first one (NotificationBridge), as tapping it does on a phone.
+    var startsApp = true
     private let scid = String(format: "%08x", UInt32.random(in: 1...0x7FFF_FFFF))
 
     private let stateLock = NSLock()
@@ -164,7 +167,7 @@ final class ScrcpySession {
         guard codec == Self.framesCodec else {
             throw RuntimeError("The display server could not start the video stream.")
         }
-        sendStartApp()
+        if startsApp { sendStartApp() }
         startDeviceMessageReader()
         askForPictureIfNone(tries: 2)
     }
@@ -300,7 +303,7 @@ final class ScrcpySession {
         send(message)
     }
 
-    private func sendStartApp() {
+    func sendStartApp() {
         // A leading "+" makes the server force-stop the app before starting it.
         let name = Data(((restartsApp ? "+" : "") + package).utf8.prefix(255))
         var message = Data([16, UInt8(name.count)])

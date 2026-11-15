@@ -27,7 +27,7 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate {
     /// Plugged in once the session can take input, with the app's first picture.
     private var gamepads: GamepadBridge?
 
-    init(package: String, label: String, orientation: AppOrientation, landscape: Bool) {
+    init(package: String, label: String, orientation: AppOrientation, landscape: Bool, fromNotification: Bool = false) {
         self.package = package
         self.orientation = orientation
         isLandscape = landscape
@@ -35,6 +35,7 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate {
         let androidScreen = resolution.screen(landscape: landscape)
         let points = Self.smallest(landscape: landscape)
         session = ScrcpySession(package: package, screen: androidScreen)
+        session.startsApp = !fromNotification
         displaySize = NSSize(width: androidScreen.width, height: androidScreen.height)
         displayView = AndroidDisplayView(frame: NSRect(origin: .zero, size: points))
         window = NSWindow(
@@ -229,6 +230,15 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate {
         session.start()
         window.makeFirstResponder(displayView)
         watchApp()
+        // Opened by a notification, whose screen Inquiline starts here: if none comes, the
+        // app's first screen does.
+        if !session.startsApp {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 10) { [weak self] in
+                guard let self, self.watchedDisplay == nil else { return }
+                AppLog.write("The notification's screen didn't open, so the app's first one does")
+                self.session.sendStartApp()
+            }
+        }
     }
 
     /// When an Android app closes itself, or Back leaves its first screen, a phone goes

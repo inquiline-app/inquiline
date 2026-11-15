@@ -147,6 +147,7 @@ public final class Listener extends NotificationListenerService {
         try {
             JSONObject message = new JSONObject();
             message.put("posted", sbn.getKey());
+            message.put("group", sbn.getGroupKey());
             message.put("package", sbn.getPackageName());
             message.put("title", title == null ? "" : title.toString());
             message.put("text", text == null ? "" : text.toString());
@@ -160,8 +161,24 @@ public final class Listener extends NotificationListenerService {
     @Override
     public void onNotificationRemoved(StatusBarNotification sbn) {
         if (clients.isEmpty()) return;
+        // An app that gathers its notifications into a group takes the single one down and
+        // puts the group up: on a phone the group shows on, so the Mac's stays.
+        boolean groupRemains = false;
         try {
-            send(new JSONObject().put("removed", sbn.getKey()));
+            StatusBarNotification[] active = getActiveNotifications();
+            if (active != null) {
+                for (StatusBarNotification other : active) {
+                    if (other.getGroupKey().equals(sbn.getGroupKey()) && !other.getKey().equals(sbn.getKey())) {
+                        groupRemains = true;
+                        break;
+                    }
+                }
+            }
+        } catch (RuntimeException ignored) {
+        }
+        try {
+            send(new JSONObject().put("removed", sbn.getKey()).put("group", sbn.getGroupKey())
+                    .put("groupRemains", groupRemains));
         } catch (org.json.JSONException ignored) {
         }
     }

@@ -13,11 +13,14 @@ final class NotificationBridge: NSObject, UNUserNotificationCenterDelegate {
     static let shared = NotificationBridge()
 
     static let agent = "io.github.inquiline.notifications"
-    static let agentVersion = 5
+    static let agentVersion = 6
     private static let socket = "localabstract:inquiline-notifications"
 
-    /// Opens an app's window, given its package.
-    var openApp: ((String) -> Void)?
+    /// Opens an app's window, given its package; with true, without starting the app, whose
+    /// notification's screen starts there instead.
+    var openApp: ((String, Bool) -> Void)?
+    /// The argument an app's window gets when a notification opens it.
+    static let fromNotification = "--from-notification"
     /// The app's name and icon, given its package, when Inquiline knows the app.
     var appInfo: ((String) -> (label: String, icon: NSImage)?)?
 
@@ -26,7 +29,8 @@ final class NotificationBridge: NSObject, UNUserNotificationCenterDelegate {
     private var connecting = false
     /// What each shown notification said, so an update that changes nothing doesn't alert again.
     private var shown: [String: String] = [:]
-    private var shownAt: [String: Date] = [:]
+    /// Each shown notification's group, which Android may gather it into.
+    private var groupOf: [String: String] = [:]
     private var iconFiles: [String: URL] = [:]
 
     private static let replyCategory = "reply"
@@ -113,13 +117,17 @@ final class NotificationBridge: NSObject, UNUserNotificationCenterDelegate {
     private func handle(_ message: [String: Any]) {
         let center = UNUserNotificationCenter.current()
         if let key = message["removed"] as? String {
-            // Gmail and others take a notification down and put it up again as they group it,
-            // a second after posting: the banner stays, as a phone's heads-up does.
-            if let at = shownAt[key], Date().timeIntervalSince(at) < 10 { return }
-            if shown[key] != nil { AppLog.write("Notification removed in Android, so on the Mac too") }
-            shown[key] = nil
-            shownAt[key] = nil
-            center.removeDeliveredNotifications(withIdentifiers: [key])
+            // Gathered into its group, as Gmail does a second after posting: the group shows
+            // on, on a phone, so the Mac's stays. When the group goes, all of it goes.
+            if message["groupRemains"] as? Bool == true { return }
+            let group = message["group"] as? String
+            let keys = [key] + groupOf.filter { $0.value == group && group != nil }.map(\.key)
+            if keys.contains(where: { shown[$0] != nil }) { AppLog.write("Notification removed in Android, so on the Mac too") }
+            for gone in keys {
+                shown[gone] = nil
+                groupOf[gone] = nil
+            }
+            center.removeDeliveredNotifications(withIdentifiers: keys)
             return
         }
         guard let key = message["posted"] as? String, let package = message["package"] as? String else { return }
@@ -133,7 +141,7 @@ final class NotificationBridge: NSObject, UNUserNotificationCenterDelegate {
             return
         }
         shown[key] = said
-        shownAt[key] = Date()
+        if let group = message["group"] as? String { groupOf[key] = group }
 
         let info = appInfo?(package)
         let content = UNMutableNotificationContent()
@@ -142,7 +150,7 @@ final class NotificationBridge: NSObject, UNUserNotificationCenterDelegate {
         content.body = text
         content.sound = .default
         content.threadIdentifier = package
-        content.userInfo = ["key": key, "package": package]
+        content.userInfo = ["key": key, "package": package, "group": message["group"] as? String ?? ""]
         // A chat's notification can be answered, as from a phone's notification shade.
         if message["replies"] as? Bool == true { content.categoryIdentifier = Self.replyCategory }
         if let icon = info?.icon, let file = iconFile(package: package, icon: icon),
@@ -181,36 +189,49 @@ final class NotificationBridge: NSObject, UNUserNotificationCenterDelegate {
         }
     }
 
-    /// Opens the app's window and, in it, the screen the notification points to: the chat, the
-    /// mail. Android lets only a privileged process open an app's screen from the background,
-    /// so the helper's Open runs as root, then as Android's system user. It takes the notification's action before the app
-    /// opens, as opening may clear the notification, and runs it once the window's display is
-    /// known.
-    private func open(key: String, package: String) {
-        let safe = key.range(of: "[\"'`$\\]", options: .regularExpression) == nil
+    /// Opens the screen the notification points to, the chat or the mail, in the app's window,
+    /// as tapping it does on a phone: a window already open shows it, and one opened for it
+    /// starts with it, not with the app's first screen. Android lets only a privileged process
+    /// open an app's screen from the background, so the helper's Open does it. It takes the
+    /// notification's action at once, as opening may clear the notification, and runs it once
+    /// it knows the window's display.
+    private func open(key: String, group: String, package: String) {
+        let unsafe = "[\"'`$\\\\]"
+        let safe = key.range(of: unsafe, options: .regularExpression) == nil
+            && group.range(of: unsafe, options: .regularExpression) == nil
+        let identifier = "io.github.inquiline-app.app." + package.replacingOccurrences(of: "_", with: "-")
         DispatchQueue.global().async { [self] in
             var helper: Int32 = -1
             if safe, let fd = try? AdbClient.open("shell,raw:su 0 sh -c 'CLASSPATH=$(pm path \(Self.agent) | cut -d: -f2) "
-                                                 + "app_process / \(Self.agent).Open \"\(key)\"'") {
+                                                 + "app_process / \(Self.agent).Open \"\(key)\" \"\(group)\"'") {
                 if Self.readLine(fd, seconds: 5) == "ready" { helper = fd } else { close(fd) }
             }
-            DispatchQueue.main.async { self.openApp?(package) }
-            guard helper >= 0 else { return }
+            guard helper >= 0 else {
+                DispatchQueue.main.async { self.openApp?(package, false) }
+                return
+            }
             defer { close(helper) }
-            // The window shows the app on a display of its own, there once the app has started.
+            let open = !NSRunningApplication.runningApplications(withBundleIdentifier: identifier).isEmpty
+            let before = Self.windowDisplays()
+            DispatchQueue.main.async { self.openApp?(package, !open) }
             for _ in 0..<40 {
-                if let display = Self.display(of: package) {
-                    // The app's first screen settles first, or it may set itself up over the
-                    // one the notification opens, as Gmail falls back to its inbox.
-                    Thread.sleep(forTimeInterval: 1.5)
+                // An open window's display shows the app; a new one is the display it makes.
+                let display = open ? Self.display(of: package) : Self.windowDisplays().subtracting(before).first
+                if let display {
                     let line = Array("\(display)\n".utf8)
                     _ = write(helper, line, line.count)
                     _ = Self.readLine(helper, seconds: 5)
                     return
                 }
-                Thread.sleep(forTimeInterval: 0.5)
+                Thread.sleep(forTimeInterval: 0.25)
             }
         }
+    }
+
+    /// The displays Inquiline's windows show, which its server names "scrcpy".
+    private static func windowDisplays() -> Set<Int> {
+        guard let output = try? AdbClient.shell("dumpsys display | grep -o '\"scrcpy\", displayId [0-9]*'") else { return [] }
+        return Set(output.split(whereSeparator: \.isNewline).compactMap { Int($0.split(separator: " ").last ?? "") })
     }
 
     /// The display of the app's window: one of Inquiline's, not Android's own (0).
@@ -260,7 +281,7 @@ final class NotificationBridge: NSObject, UNUserNotificationCenterDelegate {
             send(["reply": key, "text": reply.userText])
         } else if response.actionIdentifier == UNNotificationDefaultActionIdentifier {
             AppLog.write("Opening \(package) from its notification")
-            open(key: key, package: package)
+            open(key: key, group: info["group"] as? String ?? "", package: package)
         }
         completionHandler()
     }

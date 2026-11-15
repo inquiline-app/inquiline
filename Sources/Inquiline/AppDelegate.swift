@@ -78,13 +78,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, SPUSta
             guard let self, let app = library.app(package: package) else { return nil }
             return (app.label, library.icon(package: package))
         }
-        NotificationBridge.shared.openApp = { [weak self] package in
+        NotificationBridge.shared.openApp = { [weak self] package, fromNotification in
             self?.updateShortcuts { locations in
                 guard let app = locations[package] else {
                     AppLog.write("\(package) has no app on the Mac to open")
                     return
                 }
-                NSWorkspace.shared.openApplication(at: app, configuration: NSWorkspace.OpenConfiguration())
+                let configuration = NSWorkspace.OpenConfiguration()
+                if fromNotification { configuration.arguments = [NotificationBridge.fromNotification] }
+                NSWorkspace.shared.openApplication(at: app, configuration: configuration)
             }
         }
 
