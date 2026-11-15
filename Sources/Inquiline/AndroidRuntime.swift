@@ -69,6 +69,7 @@ final class AndroidRuntime {
         if vm?.isRunning == true {
             if isReady() {
                 watchPackages()
+                NotificationBridge.shared.start()
                 return
             }
         } else {
@@ -97,6 +98,7 @@ final class AndroidRuntime {
         turnOffBluetooth()
         nameDevice()
         watchPackages()
+        NotificationBridge.shared.start()
     }
 
     /// The VM has no Bluetooth, and Android's Bluetooth crashes over and over at each start
@@ -196,31 +198,27 @@ final class AndroidRuntime {
 
     // MARK: - Resting
 
-    /// A few minutes after the last app closes, Android rests as a phone does with its screen
-    /// off: frozen, it takes no CPU, and an app opens again in about a second instead of
-    /// waiting for Android to start. It keeps its memory meanwhile, so Inquiline stops it after
-    /// an hour of rest, or when the Mac runs short of memory.
+    /// Shortly after the last app closes, Android rests as a phone does with its screen off:
+    /// its processors stop, so it takes no CPU, and an app opens again in about a second
+    /// instead of waiting for Android to start. Its network stays awake, so a notification
+    /// wakes it (EngineControl), and it keeps its memory until the Mac runs short of it.
     func freeze() {
-        guard let pid = vm?.processIdentifier, isRunning, !Self.isFrozen() else { return }
+        guard isRunning, !Self.isFrozen() else { return }
         // Finder would wait on a disk whose server can't answer.
         AndroidFiles.eject()
-        kill(pid, SIGSTOP)
+        EngineControl.pause()
         AppLog.write("Android is resting")
     }
 
     /// Wakes a resting Android; Inquiline's app windows can do it too, as each runs on its own.
     static func wake() {
-        let pid = enginePID()
-        guard pid > 0, isFrozen(pid) else { return }
-        kill(pid, SIGCONT)
+        guard isFrozen() else { return }
+        EngineControl.resume()
         AppLog.write("Android woke up")
     }
 
-    static func isFrozen(_ pid: pid_t = enginePID()) -> Bool {
-        guard pid > 0 else { return false }
-        var info = proc_bsdinfo()
-        guard proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &info, Int32(MemoryLayout<proc_bsdinfo>.size)) > 0 else { return false }
-        return info.pbi_status == SSTOP
+    static func isFrozen() -> Bool {
+        EngineControl.isPaused
     }
 
     /// The engine of this user's Inquiline, whichever process asks.
@@ -399,6 +397,7 @@ final class AndroidRuntime {
             "-device", "virtio-net-pci,netdev=n,romfile=",
             "-netdev", "user,id=n,hostfwd=tcp:127.0.0.1:5556-:5555,hostfwd=tcp:127.0.0.1:\(Self.powerOffPort)-:5000,hostfwd=tcp:127.0.0.1:\(Self.filesPort)-:445",
             "-display", "none", "-serial", "none", "-monitor", "none",
+            "-qmp", "unix:\(EngineControl.socket.path),server=on,wait=off",
         ]
         let contents = qemu.deletingLastPathComponent().deletingLastPathComponent()
         var env = ProcessInfo.processInfo.environment

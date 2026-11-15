@@ -1,0 +1,72 @@
+diff --git a/net/queue.c b/net/queue.c
+index fb33856c18..b4c6bd17c4 100644
+--- a/net/queue.c
++++ b/net/queue.c
+@@ -25,6 +25,8 @@
+ #include "net/queue.h"
+ #include "qemu/queue.h"
+ #include "net/net.h"
++#include "qemu/main-loop.h"
++#include "system/runstate.h"
+ 
+ /* The delivery handler may only return zero if it will call
+  * qemu_net_queue_flush() when it determines that it is once again able
+@@ -193,6 +195,24 @@ ssize_t qemu_net_queue_receive(NetQueue *queue,
+     return qemu_net_queue_deliver(queue, NULL, 0, data, size);
+ }
+ 
++/*
++ * Inquiline: a resting Android has its processors paused while this keeps receiving, and
++ * a packet for it wakes it, as a phone's modem wakes its processor for a notification.
++ */
++static void wake_guest_bh(void *opaque)
++{
++    if (runstate_check(RUN_STATE_PAUSED)) {
++        vm_start();
++    }
++}
++
++static void wake_guest(void)
++{
++    if (runstate_check(RUN_STATE_PAUSED)) {
++        aio_bh_schedule_oneshot(qemu_get_aio_context(), wake_guest_bh, NULL);
++    }
++}
++
+ ssize_t qemu_net_queue_send(NetQueue *queue,
+                             NetClientState *sender,
+                             unsigned flags,
+@@ -204,6 +224,7 @@ ssize_t qemu_net_queue_send(NetQueue *queue,
+ 
+     if (queue->delivering || !qemu_can_send_packet(sender)) {
+         qemu_net_queue_append(queue, sender, flags, data, size, sent_cb);
++        wake_guest();
+         return 0;
+     }
+ 
+@@ -229,6 +250,7 @@ ssize_t qemu_net_queue_send_iov(NetQueue *queue,
+ 
+     if (queue->delivering || !qemu_can_send_packet(sender)) {
+         qemu_net_queue_append_iov(queue, sender, flags, iov, iovcnt, sent_cb);
++        wake_guest();
+         return 0;
+     }
+ 
+diff --git a/target/arm/hvf/hvf.c b/target/arm/hvf/hvf.c
+index b00a7e1a84..30675a70b8 100644
+--- a/target/arm/hvf/hvf.c
++++ b/target/arm/hvf/hvf.c
+@@ -2651,8 +2651,11 @@ static void hvf_vm_state_change(void *opaque, bool running, RunState state)
+     HVFVTimer *s = opaque;
+ 
+     if (running) {
+-        /* Update vtimer offset on all CPUs */
+-        hvf_state->vtimer_offset = mach_absolute_time() - s->vtimer_val;
++        /*
++         * Inquiline: Android's clock keeps the Mac's time across a rest, as a phone's does
++         * with its screen off, so the offset stays and the guest counter runs on. Timers
++         * that fell due meanwhile fire at once below.
++         */
+         cpu_synchronize_all_states();
+ 
+         /*

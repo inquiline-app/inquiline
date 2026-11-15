@@ -34,6 +34,7 @@ if [ "$BRANCH" != main ] || [ -n "$(git status --porcelain --untracked-files=no 
 fi
 cp Vendor/scrcpy-server "$APP/Contents/Resources/scrcpy-server"
 cp Vendor/libinquiline-frames.so "$APP/Contents/Resources/libinquiline-frames.so"
+cp Vendor/inquiline-notifications.apk "$APP/Contents/Resources/inquiline-notifications.apk"
 cp "$CACHE/LICENSE" "$APP/Contents/Resources/scrcpy-LICENSE.txt"
 cp LICENSE "$APP/Contents/Resources/LICENSE.txt"
 cp Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"

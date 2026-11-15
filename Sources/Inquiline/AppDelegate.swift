@@ -74,6 +74,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, SPUSta
         updateStatusIcon()
         updateShortcuts()
 
+        NotificationBridge.shared.appInfo = { [weak self] package in
+            guard let self, let app = library.app(package: package) else { return nil }
+            return (app.label, library.icon(package: package))
+        }
+        NotificationBridge.shared.openApp = { [weak self] package in
+            self?.updateShortcuts { locations in
+                guard let app = locations[package] else { return }
+                NSWorkspace.shared.openApplication(at: app, configuration: NSWorkspace.OpenConfiguration())
+            }
+        }
+
         let center = NSWorkspace.shared.notificationCenter
         center.addObserver(self, selector: #selector(appTerminated(_:)), name: NSWorkspace.didTerminateApplicationNotification, object: nil)
         Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in self?.stopAndroidIfIdle() }
@@ -532,22 +543,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, SPUSta
         DispatchQueue.main.asyncAfter(deadline: .now() + Self.idleLimit) { [self] in stopAndroidIfIdle() }
     }
 
-    /// As on a phone, nothing runs once its apps are closed: Android rests a few minutes
-    /// after the last one, unless an app is still at work, as a download or music, and stops
-    /// after an hour of rest, giving its memory back.
+    /// As on a phone, nothing runs once its apps are closed: Android rests shortly after the
+    /// last one, unless an app is still at work, as a download or music. A notification wakes
+    /// it for a moment, and this puts it back to rest on the next round.
     private func stopAndroidIfIdle() {
         let runtime = AndroidRuntime.shared
         guard runtime.isRunning, runningApps.isEmpty, busy == 0 else {
             restingSince = nil
             return
         }
+        // A resting Android stays, so notifications keep coming; it stops only when the Mac
+        // runs short of memory. As a phone in its sleep does, it wakes now and then for a
+        // moment, so the connections notifications come over stay open.
         if AndroidRuntime.isFrozen() {
             let since = restingSince ?? Date()
             restingSince = since
-            guard Date().timeIntervalSince(since) > Self.restLimit else { return }
-            stopResting("an hour of rest")
+            if Date().timeIntervalSince(since) > Self.maintenanceInterval {
+                restingSince = nil
+                AndroidRuntime.wake()
+            }
             return
         }
+        restingSince = nil
         launchQueue.async {
             // Android stays awake while an app still works, as a download or music, and is
             // looked at again on the next round.
@@ -556,7 +573,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, SPUSta
         }
     }
 
-    private static let restLimit: TimeInterval = 60 * 60
+
+    private static let maintenanceInterval: TimeInterval = 15 * 60
     private var restingSince: Date?
 
     private func stopResting(_ reason: String) {
