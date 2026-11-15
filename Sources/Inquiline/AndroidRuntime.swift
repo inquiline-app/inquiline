@@ -270,6 +270,12 @@ final class AndroidRuntime {
     /// Work an app keeps going after its screen closes, such as a Play Store download or
     /// music, runs as a foreground service, which a phone never stops. Android's own
     /// services don't count: only those of installed apps and the Play Store do.
+    /// As a phone's processor sleeps only when nothing holds it awake: an app that got a
+    /// notification, or syncs mail, holds a wake lock until it's done.
+    func holdsWakeLock() -> Bool {
+        (try? shell("dumpsys power | grep mHoldingWakeLockSuspendBlocker"))?.contains("=true") == true
+    }
+
     func hasForegroundWork() -> Bool {
         guard let output = try? shell("dumpsys activity services | grep -E '^  \\* ServiceRecord|isForeground=true'"),
               let apps = try? installedPackages()

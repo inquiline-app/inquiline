@@ -566,9 +566,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, SPUSta
         }
         restingSince = nil
         launchQueue.async {
-            // Android stays awake while an app still works, as a download or music, and is
-            // looked at again on the next round.
-            guard !runtime.isInstalling(), !runtime.hasForegroundWork() else { return }
+            // Android stays awake while an app still works, as a download, music or a mail
+            // being fetched after a notification, and is looked at again on the next round.
+            guard !runtime.isInstalling(), !runtime.hasForegroundWork(), !runtime.holdsWakeLock() else { return }
             runtime.freeze()
         }
     }
