@@ -1,27 +1,43 @@
 diff --git a/host/vulkan/vk_decoder_global_state.cpp b/host/vulkan/vk_decoder_global_state.cpp
-index 5de0e7df..854d6e5d 100644
+index 5de0e7df..a004736b 100644
 --- a/host/vulkan/vk_decoder_global_state.cpp
 +++ b/host/vulkan/vk_decoder_global_state.cpp
-@@ -1957,6 +1957,7 @@ class VkDecoderGlobalState::Impl {
+@@ -1957,6 +1957,10 @@ class VkDecoderGlobalState::Impl {
          auto vk = dispatch_VkPhysicalDevice(boxed_physicalDevice);
  
          vk->vkGetPhysicalDeviceProperties(physicalDevice, pProperties);
-+        setPhoneGpuName(pProperties);
++        {
++            std::lock_guard<std::mutex> lock(mMutex);
++            setPhoneGpuName(pProperties, physicalDevice);
++        }
  
          m_vkEmulation->applyApiVersionLimits(pProperties->apiVersion);
      }
-@@ -2006,9 +2007,17 @@ class VkDecoderGlobalState::Impl {
+@@ -2006,9 +2010,30 @@ class VkDecoderGlobalState::Impl {
              }
          }
  
-+        setPhoneGpuName(&pProperties->properties);
++        setPhoneGpuName(&pProperties->properties, physicalDevice);
          m_vkEmulation->applyApiVersionLimits(pProperties->properties.apiVersion);
      }
  
 +    // Inquiline: many games run at 30 FPS on a GPU they don't know, as Apple's is to them, and
 +    // at 60 only on the phone GPUs they list. Android's apps see one of those by name; what
 +    // the GPU can do is still the Mac's, as the rest of its properties say.
-+    static void setPhoneGpuName(VkPhysicalDeviceProperties* props) {
++    // Flutter's Impeller is the exception: on its Vulkan path parts of a screen go undrawn here
++    // (Supercell ID, a portrait app turned on a landscape screen, text at high density), while
++    // its OpenGL ES path, on ANGLE as Android's own views are, draws them. Impeller takes that
++    // path on the Qualcomm GPUs whose Vulkan drivers it knows to be buggy, so it's told it has one.
++    // Call with mMutex held.
++    void setPhoneGpuName(VkPhysicalDeviceProperties* props, VkPhysicalDevice physicalDevice) {
++        const auto* physicalDeviceInfo = gfxstream::base::find(mPhysdevInfo, physicalDevice);
++        const auto* instanceInfo =
++            physicalDeviceInfo ? gfxstream::base::find(mInstanceInfo, physicalDeviceInfo->instance) : nullptr;
++        if (instanceInfo && instanceInfo->engineName == "Impeller") {
++            props->vendorID = 0x5143;  // Qualcomm
++            snprintf(props->deviceName, sizeof(props->deviceName), "%s", "Adreno (TM) 650");
++            return;
++        }
 +        snprintf(props->deviceName, sizeof(props->deviceName), "%s", "Adreno (TM) 740");
 +    }
 +
