@@ -1,78 +1,69 @@
-Changes to scrcpy 5.0.1's server. The server runs as Android's system user, and
-Android checks that the package name it presents belongs to that user. A display
-power message turns only the app's own virtual display off, so its app is stopped
-as on a phone whose screen turns off.
-A HID device opened from the Mac carries a country code, as a real keyboard reports
-its layout with one, so Android picks the matching layout itself.
-ClipboardReader prints the clipboard for the Mac, run as the shell user over adb: as the
-system user the server may not read it in the background.
-
---- a/server/src/main/java/com/genymobile/scrcpy/FakeContext.java
-+++ b/server/src/main/java/com/genymobile/scrcpy/FakeContext.java
-@@ -16,7 +16,7 @@
--    public static final String PACKAGE_NAME = "com.android.shell";
-+    public static final String PACKAGE_NAME = "android";
---- a/server/src/main/java/com/genymobile/scrcpy/control/Controller.java
-+++ b/server/src/main/java/com/genymobile/scrcpy/control/Controller.java
-@@ -855,6 +855,11 @@
-     }
- 
-     private void setDisplayPower(boolean on) {
-+        if (surfaceCapture instanceof NewDisplayCapture) {
-+            // Only this app's display, as a phone's screen turning off: its app is stopped.
-+            ((NewDisplayCapture) surfaceCapture).setDisplayOn(on);
-+            return;
-+        }
-         // Change the power of the main display when mirroring a virtual display
-         int targetDisplayId = displayId != Device.DISPLAY_ID_NONE ? displayId : 0;
-         boolean setDisplayPowerOk = Device.setDisplayPower(targetDisplayId, on);
---- a/server/src/main/java/com/genymobile/scrcpy/video/NewDisplayCapture.java
-+++ b/server/src/main/java/com/genymobile/scrcpy/video/NewDisplayCapture.java
-@@ -73,6 +73,9 @@
-     private DisplayResizeDebouncer debouncer;
- 
-     private int dpi;
+diff --git a/server/src/main/java/com/genymobile/scrcpy/ClipboardReader.java b/server/src/main/java/com/genymobile/scrcpy/ClipboardReader.java
+new file mode 100644
+index 0000000..b6e1f58
+--- /dev/null
++++ b/server/src/main/java/com/genymobile/scrcpy/ClipboardReader.java
+@@ -0,0 +1,47 @@
++package com.genymobile.scrcpy;
 +
-+    private Surface surface;
-+    private boolean displayOn = true;
- 
-     public NewDisplayCapture(VirtualDisplayListener vdListener, Options options) {
-         this.vdListener = vdListener;
-@@ -272,10 +275,11 @@
-             surface = glRunner.start(physicalSize, videoSize, surface);
-         }
- 
-+        this.surface = surface;
-         if (virtualDisplay == null) {
-             startNew(surface);
-         } else {
--            virtualDisplay.setSurface(surface);
-+            setDisplayOn(displayOn);
-         }
- 
-         if (vdListener != null) {
-@@ -339,6 +343,16 @@
-         }
- 
-         debouncer.requestResize(newSize);
++import android.content.ClipData;
++import android.os.IBinder;
++import android.os.IInterface;
++import android.util.Base64;
++
++import java.lang.reflect.Method;
++import java.nio.charset.StandardCharsets;
++
++/**
++ * Inquiline: prints Android's clipboard text, base64, run as the shell user. The server runs as
++ * the system user, as package "android", which Android 15 doesn't let read the clipboard in the
++ * background; com.android.shell may (READ_CLIPBOARD_IN_BACKGROUND), as upstream scrcpy reads it.
++ */
++public final class ClipboardReader {
++    private ClipboardReader() {
 +    }
 +
-+    /**
-+     * A virtual display without a surface is off, and Android stops the activities on it.
-+     */
-+    public synchronized void setDisplayOn(boolean on) {
-+        displayOn = on;
-+        if (virtualDisplay != null) {
-+            virtualDisplay.setSurface(on ? surface : null);
++    public static void main(String... args) throws Exception {
++        Class<?> serviceManager = Class.forName("android.os.ServiceManager");
++        IBinder binder = (IBinder) serviceManager.getMethod("getService", String.class).invoke(null, "clipboard");
++        Class<?> stub = Class.forName("android.content.IClipboard$Stub");
++        IInterface clipboard = (IInterface) stub.getMethod("asInterface", IBinder.class).invoke(null, binder);
++        ClipData clip = null;
++        for (Method method : clipboard.getClass().getMethods()) {
++            if (!method.getName().equals("getPrimaryClip")) {
++                continue;
++            }
++            Class<?>[] types = method.getParameterTypes();
++            Object[] values = new Object[types.length];
++            int strings = 0;
++            for (int i = 0; i < types.length; i++) {
++                // (package, attribution tag, user, device): the shell's package, no tag, user 0,
++                // the default device.
++                values[i] = types[i] == String.class ? (strings++ == 0 ? "com.android.shell" : null) : 0;
++            }
++            clip = (ClipData) method.invoke(clipboard, values);
++            break;
 +        }
-     }
++        if (clip == null || clip.getItemCount() == 0 || clip.getItemAt(0).getText() == null) {
++            return;
++        }
++        byte[] text = clip.getItemAt(0).getText().toString().getBytes(StandardCharsets.UTF_8);
++        System.out.print(Base64.encodeToString(text, Base64.NO_WRAP));
++    }
++}
+diff --git a/server/src/main/java/com/genymobile/scrcpy/FakeContext.java b/server/src/main/java/com/genymobile/scrcpy/FakeContext.java
+index 5d41a8f..0f7dc4b 100644
+--- a/server/src/main/java/com/genymobile/scrcpy/FakeContext.java
++++ b/server/src/main/java/com/genymobile/scrcpy/FakeContext.java
+@@ -16,7 +16,7 @@ import java.lang.reflect.Field;
  
-     private synchronized void setCurrentVirtualDisplay(VirtualDisplay virtualDisplay) {
-Frames: with frames=true, the server sends each frame of the app's display as the
-virtio-gpu resource Android drew it into (FrameStreamer, and Vendor/frames for the native
-part that finds the resource), and the Mac copies it on the GPU instead of decoding video.
-These changes come after the ones above.
-
+ public final class FakeContext extends ContextWrapper {
+ 
+-    public static final String PACKAGE_NAME = "com.android.shell";
++    public static final String PACKAGE_NAME = "android";
+     public static final int ROOT_UID = 0; // Like android.os.Process.ROOT_UID, but before API 29
+ 
+     private static final FakeContext INSTANCE = new FakeContext();
 diff --git a/server/src/main/java/com/genymobile/scrcpy/Options.java b/server/src/main/java/com/genymobile/scrcpy/Options.java
 index 26a6ba9..fb81a71 100644
 --- a/server/src/main/java/com/genymobile/scrcpy/Options.java
@@ -138,7 +129,7 @@ index d7d1a76..9b5e1ed 100644
                  if (controller != null) {
                      controller.setSurfaceCapture(surfaceCapture);
 diff --git a/server/src/main/java/com/genymobile/scrcpy/control/ControlMessage.java b/server/src/main/java/com/genymobile/scrcpy/control/ControlMessage.java
-index 777873b..d17ac96 100644
+index 777873b..9dd836c 100644
 --- a/server/src/main/java/com/genymobile/scrcpy/control/ControlMessage.java
 +++ b/server/src/main/java/com/genymobile/scrcpy/control/ControlMessage.java
 @@ -30,6 +30,7 @@ public final class ControlMessage {
@@ -149,7 +140,11 @@ index 777873b..d17ac96 100644
  
      public static final long SEQUENCE_INVALID = 0;
  
-@@ -61,6 +62,8 @@ public final class ControlMessage {
+@@ -58,9 +59,12 @@ public final class ControlMessage {
+     private boolean on;
+     private int vendorId;
+     private int productId;
++    private int country;
      private int width;
      private int height;
  
@@ -158,7 +153,7 @@ index 777873b..d17ac96 100644
      private ControlMessage() {
      }
  
-@@ -134,6 +137,13 @@ public final class ControlMessage {
+@@ -134,13 +138,20 @@ public final class ControlMessage {
          return msg;
      }
  
@@ -172,7 +167,30 @@ index 777873b..d17ac96 100644
      public static ControlMessage createEmpty(int type) {
          ControlMessage msg = new ControlMessage();
          msg.type = type;
-@@ -195,6 +205,10 @@ public final class ControlMessage {
+         return msg;
+     }
+ 
+-    public static ControlMessage createUhidCreate(int id, int vendorId, int productId, String name, byte[] reportDesc) {
++    public static ControlMessage createUhidCreate(int id, int vendorId, int productId, String name, byte[] reportDesc, int country) {
+         ControlMessage msg = new ControlMessage();
+         msg.type = TYPE_UHID_CREATE;
+         msg.id = id;
+@@ -148,9 +159,14 @@ public final class ControlMessage {
+         msg.productId = productId;
+         msg.text = name;
+         msg.data = reportDesc;
++        msg.country = country;
+         return msg;
+     }
+ 
++    public int getCountry() {
++        return country;
++    }
++
+     public static ControlMessage createUhidInput(int id, byte[] data) {
+         ControlMessage msg = new ControlMessage();
+         msg.type = TYPE_UHID_INPUT;
+@@ -195,6 +211,10 @@ public final class ControlMessage {
          return msg;
      }
  
@@ -184,7 +202,7 @@ index 777873b..d17ac96 100644
          return type;
      }
 diff --git a/server/src/main/java/com/genymobile/scrcpy/control/ControlMessageReader.java b/server/src/main/java/com/genymobile/scrcpy/control/ControlMessageReader.java
-index b2591d6..a9f5319 100644
+index b2591d6..8dae088 100644
 --- a/server/src/main/java/com/genymobile/scrcpy/control/ControlMessageReader.java
 +++ b/server/src/main/java/com/genymobile/scrcpy/control/ControlMessageReader.java
 @@ -64,6 +64,8 @@ public class ControlMessageReader {
@@ -196,8 +214,19 @@ index b2591d6..a9f5319 100644
              default:
                  throw new ControlProtocolException("Unknown event type: " + type);
          }
+@@ -155,7 +157,9 @@ public class ControlMessageReader {
+         int productId = dis.readUnsignedShort();
+         String name = parseString(1);
+         byte[] data = parseByteArray(2);
+-        return ControlMessage.createUhidCreate(id, vendorId, productId, name, data);
++        // Inquiline: the HID country code, as a real keyboard reports its layout.
++        int country = dis.readUnsignedByte();
++        return ControlMessage.createUhidCreate(id, vendorId, productId, name, data, country);
+     }
+ 
+     private ControlMessage parseUhidInput() throws IOException {
 diff --git a/server/src/main/java/com/genymobile/scrcpy/control/Controller.java b/server/src/main/java/com/genymobile/scrcpy/control/Controller.java
-index 189f4c7..7af8add 100644
+index 55d6e11..01ff00a 100644
 --- a/server/src/main/java/com/genymobile/scrcpy/control/Controller.java
 +++ b/server/src/main/java/com/genymobile/scrcpy/control/Controller.java
 @@ -14,6 +14,7 @@ import com.genymobile.scrcpy.util.Ln;
@@ -239,6 +268,67 @@ index 189f4c7..7af8add 100644
              default:
                  // fall through
          }
+@@ -396,7 +407,7 @@ public class Controller implements AsyncProcessor, VirtualDisplayListener {
+                     }
+                     return true;
+                 case ControlMessage.TYPE_UHID_CREATE:
+-                    getUhidManager().open(msg.getId(), msg.getVendorId(), msg.getProductId(), msg.getText(), msg.getData());
++                    getUhidManager().open(msg.getId(), msg.getVendorId(), msg.getProductId(), msg.getText(), msg.getData(), msg.getCountry());
+                     return true;
+                 case ControlMessage.TYPE_UHID_INPUT:
+                     getUhidManager().writeInput(msg.getId(), msg.getData());
+@@ -855,6 +866,11 @@ public class Controller implements AsyncProcessor, VirtualDisplayListener {
+     }
+ 
+     private void setDisplayPower(boolean on) {
++        if (surfaceCapture instanceof NewDisplayCapture) {
++            // Only this app's display, as a phone's screen turning off: its app is stopped.
++            ((NewDisplayCapture) surfaceCapture).setDisplayOn(on);
++            return;
++        }
+         // Change the power of the main display when mirroring a virtual display
+         int targetDisplayId = displayId != Device.DISPLAY_ID_NONE ? displayId : 0;
+         boolean setDisplayPowerOk = Device.setDisplayPower(targetDisplayId, on);
+diff --git a/server/src/main/java/com/genymobile/scrcpy/control/UhidManager.java b/server/src/main/java/com/genymobile/scrcpy/control/UhidManager.java
+index 20532c0..6f20ac5 100644
+--- a/server/src/main/java/com/genymobile/scrcpy/control/UhidManager.java
++++ b/server/src/main/java/com/genymobile/scrcpy/control/UhidManager.java
+@@ -55,7 +55,7 @@ public final class UhidManager {
+         }
+     }
+ 
+-    public void open(int id, int vendorId, int productId, String name, byte[] reportDesc) throws IOException {
++    public void open(int id, int vendorId, int productId, String name, byte[] reportDesc, int country) throws IOException {
+         try {
+             FileDescriptor fd = Os.open("/dev/uhid", OsConstants.O_RDWR, 0);
+             try {
+@@ -69,7 +69,7 @@ public final class UhidManager {
+                 }
+ 
+                 String phys = mustUseInputPort() ? INPUT_PORT : null;
+-                byte[] req = buildUhidCreate2Req(vendorId, productId, name, reportDesc, phys);
++                byte[] req = buildUhidCreate2Req(vendorId, productId, name, reportDesc, phys, country);
+                 Os.write(fd, req, 0, req.length);
+ 
+                 if (firstDevice) {
+@@ -162,7 +162,7 @@ public final class UhidManager {
+         }
+     }
+ 
+-    private static byte[] buildUhidCreate2Req(int vendorId, int productId, String name, byte[] reportDesc, String phys) {
++    private static byte[] buildUhidCreate2Req(int vendorId, int productId, String name, byte[] reportDesc, String phys, int country) {
+         /*
+          * struct uhid_event {
+          *     uint32_t type;
+@@ -206,7 +206,7 @@ public final class UhidManager {
+         buf.putInt(vendorId);
+         buf.putInt(productId);
+         buf.putInt(0); // version
+-        buf.putInt(0); // country;
++        buf.putInt(country);
+         buf.put(reportDesc);
+         return buf.array();
+     }
 diff --git a/server/src/main/java/com/genymobile/scrcpy/video/FrameStreamer.java b/server/src/main/java/com/genymobile/scrcpy/video/FrameStreamer.java
 new file mode 100644
 index 0000000..5a73e4c
@@ -469,160 +559,59 @@ index 0000000..5a73e4c
 +        }
 +    }
 +}
-diff --git a/server/src/main/java/com/genymobile/scrcpy/control/ControlMessage.java b/server/src/main/java/com/genymobile/scrcpy/control/ControlMessage.java
-index d17ac96..9dd836c 100644
---- a/server/src/main/java/com/genymobile/scrcpy/control/ControlMessage.java
-+++ b/server/src/main/java/com/genymobile/scrcpy/control/ControlMessage.java
-@@ -59,6 +59,7 @@ public final class ControlMessage {
-     private boolean on;
-     private int vendorId;
-     private int productId;
-+    private int country;
-     private int width;
-     private int height;
+diff --git a/server/src/main/java/com/genymobile/scrcpy/video/NewDisplayCapture.java b/server/src/main/java/com/genymobile/scrcpy/video/NewDisplayCapture.java
+index 5ed4c73..1bde59a 100644
+--- a/server/src/main/java/com/genymobile/scrcpy/video/NewDisplayCapture.java
++++ b/server/src/main/java/com/genymobile/scrcpy/video/NewDisplayCapture.java
+@@ -74,6 +74,9 @@ public class NewDisplayCapture extends SurfaceCapture {
  
-@@ -150,7 +151,7 @@ public final class ControlMessage {
-         return msg;
-     }
+     private int dpi;
  
--    public static ControlMessage createUhidCreate(int id, int vendorId, int productId, String name, byte[] reportDesc) {
-+    public static ControlMessage createUhidCreate(int id, int vendorId, int productId, String name, byte[] reportDesc, int country) {
-         ControlMessage msg = new ControlMessage();
-         msg.type = TYPE_UHID_CREATE;
-         msg.id = id;
-@@ -158,9 +159,14 @@ public final class ControlMessage {
-         msg.productId = productId;
-         msg.text = name;
-         msg.data = reportDesc;
-+        msg.country = country;
-         return msg;
-     }
- 
-+    public int getCountry() {
-+        return country;
-+    }
++    private Surface surface;
++    private boolean displayOn = true;
 +
-     public static ControlMessage createUhidInput(int id, byte[] data) {
-         ControlMessage msg = new ControlMessage();
-         msg.type = TYPE_UHID_INPUT;
-diff --git a/server/src/main/java/com/genymobile/scrcpy/control/ControlMessageReader.java b/server/src/main/java/com/genymobile/scrcpy/control/ControlMessageReader.java
-index a9f5319..8dae088 100644
---- a/server/src/main/java/com/genymobile/scrcpy/control/ControlMessageReader.java
-+++ b/server/src/main/java/com/genymobile/scrcpy/control/ControlMessageReader.java
-@@ -157,7 +157,9 @@ public class ControlMessageReader {
-         int productId = dis.readUnsignedShort();
-         String name = parseString(1);
-         byte[] data = parseByteArray(2);
--        return ControlMessage.createUhidCreate(id, vendorId, productId, name, data);
-+        // Inquiline: the HID country code, as a real keyboard reports its layout.
-+        int country = dis.readUnsignedByte();
-+        return ControlMessage.createUhidCreate(id, vendorId, productId, name, data, country);
-     }
- 
-     private ControlMessage parseUhidInput() throws IOException {
-diff --git a/server/src/main/java/com/genymobile/scrcpy/control/Controller.java b/server/src/main/java/com/genymobile/scrcpy/control/Controller.java
-index 7af8add..01ff00a 100644
---- a/server/src/main/java/com/genymobile/scrcpy/control/Controller.java
-+++ b/server/src/main/java/com/genymobile/scrcpy/control/Controller.java
-@@ -407,7 +407,7 @@ public class Controller implements AsyncProcessor, VirtualDisplayListener {
-                     }
-                     return true;
-                 case ControlMessage.TYPE_UHID_CREATE:
--                    getUhidManager().open(msg.getId(), msg.getVendorId(), msg.getProductId(), msg.getText(), msg.getData());
-+                    getUhidManager().open(msg.getId(), msg.getVendorId(), msg.getProductId(), msg.getText(), msg.getData(), msg.getCountry());
-                     return true;
-                 case ControlMessage.TYPE_UHID_INPUT:
-                     getUhidManager().writeInput(msg.getId(), msg.getData());
-diff --git a/server/src/main/java/com/genymobile/scrcpy/control/UhidManager.java b/server/src/main/java/com/genymobile/scrcpy/control/UhidManager.java
-index 20532c0..6f20ac5 100644
---- a/server/src/main/java/com/genymobile/scrcpy/control/UhidManager.java
-+++ b/server/src/main/java/com/genymobile/scrcpy/control/UhidManager.java
-@@ -55,7 +55,7 @@ public final class UhidManager {
+     public NewDisplayCapture(VirtualDisplayListener vdListener, Options options) {
+         this.vdListener = vdListener;
+         this.newDisplay = options.getNewDisplay();
+@@ -214,7 +217,10 @@ public class NewDisplayCapture extends SurfaceCapture {
+                     | VIRTUAL_DISPLAY_FLAG_PRESENTATION
+                     | VIRTUAL_DISPLAY_FLAG_OWN_CONTENT_ONLY
+                     | VIRTUAL_DISPLAY_FLAG_SUPPORTS_TOUCH
+-                    | VIRTUAL_DISPLAY_FLAG_ROTATES_WITH_CONTENT;
++                    | VIRTUAL_DISPLAY_FLAG_ROTATES_WITH_CONTENT
++                    // Inquiline: the window is the app's screen, not a recording of it, so
++                    // screens an app marks secure (FLAG_SECURE) show there as on a phone.
++                    | android.hardware.display.DisplayManager.VIRTUAL_DISPLAY_FLAG_SECURE;
+             if (vdDestroyContent) {
+                 flags |= VIRTUAL_DISPLAY_FLAG_DESTROY_CONTENT_ON_REMOVAL;
+             }
+@@ -272,10 +278,11 @@ public class NewDisplayCapture extends SurfaceCapture {
+             surface = glRunner.start(physicalSize, videoSize, surface);
          }
-     }
  
--    public void open(int id, int vendorId, int productId, String name, byte[] reportDesc) throws IOException {
-+    public void open(int id, int vendorId, int productId, String name, byte[] reportDesc, int country) throws IOException {
-         try {
-             FileDescriptor fd = Os.open("/dev/uhid", OsConstants.O_RDWR, 0);
-             try {
-@@ -69,7 +69,7 @@ public final class UhidManager {
-                 }
- 
-                 String phys = mustUseInputPort() ? INPUT_PORT : null;
--                byte[] req = buildUhidCreate2Req(vendorId, productId, name, reportDesc, phys);
-+                byte[] req = buildUhidCreate2Req(vendorId, productId, name, reportDesc, phys, country);
-                 Os.write(fd, req, 0, req.length);
- 
-                 if (firstDevice) {
-@@ -162,7 +162,7 @@ public final class UhidManager {
++        this.surface = surface;
+         if (virtualDisplay == null) {
+             startNew(surface);
+         } else {
+-            virtualDisplay.setSurface(surface);
++            setDisplayOn(displayOn);
          }
+ 
+         if (vdListener != null) {
+@@ -341,6 +348,16 @@ public class NewDisplayCapture extends SurfaceCapture {
+         debouncer.requestResize(newSize);
      }
  
--    private static byte[] buildUhidCreate2Req(int vendorId, int productId, String name, byte[] reportDesc, String phys) {
-+    private static byte[] buildUhidCreate2Req(int vendorId, int productId, String name, byte[] reportDesc, String phys, int country) {
-         /*
-          * struct uhid_event {
-          *     uint32_t type;
-@@ -206,7 +206,7 @@ public final class UhidManager {
-         buf.putInt(vendorId);
-         buf.putInt(productId);
-         buf.putInt(0); // version
--        buf.putInt(0); // country;
-+        buf.putInt(country);
-         buf.put(reportDesc);
-         return buf.array();
++    /**
++     * A virtual display without a surface is off, and Android stops the activities on it.
++     */
++    public synchronized void setDisplayOn(boolean on) {
++        displayOn = on;
++        if (virtualDisplay != null) {
++            virtualDisplay.setSurface(on ? surface : null);
++        }
++    }
++
+     private synchronized void setCurrentVirtualDisplay(VirtualDisplay virtualDisplay) {
+         this.virtualDisplay = virtualDisplay;
      }
-diff --git a/server/src/main/java/com/genymobile/scrcpy/ClipboardReader.java b/server/src/main/java/com/genymobile/scrcpy/ClipboardReader.java
-new file mode 100644
-index 0000000..b6e1f58
---- /dev/null
-+++ b/server/src/main/java/com/genymobile/scrcpy/ClipboardReader.java
-@@ -0,0 +1,47 @@
-+package com.genymobile.scrcpy;
-+
-+import android.content.ClipData;
-+import android.os.IBinder;
-+import android.os.IInterface;
-+import android.util.Base64;
-+
-+import java.lang.reflect.Method;
-+import java.nio.charset.StandardCharsets;
-+
-+/**
-+ * Inquiline: prints Android's clipboard text, base64, run as the shell user. The server runs as
-+ * the system user, as package "android", which Android 15 doesn't let read the clipboard in the
-+ * background; com.android.shell may (READ_CLIPBOARD_IN_BACKGROUND), as upstream scrcpy reads it.
-+ */
-+public final class ClipboardReader {
-+    private ClipboardReader() {
-+    }
-+
-+    public static void main(String... args) throws Exception {
-+        Class<?> serviceManager = Class.forName("android.os.ServiceManager");
-+        IBinder binder = (IBinder) serviceManager.getMethod("getService", String.class).invoke(null, "clipboard");
-+        Class<?> stub = Class.forName("android.content.IClipboard$Stub");
-+        IInterface clipboard = (IInterface) stub.getMethod("asInterface", IBinder.class).invoke(null, binder);
-+        ClipData clip = null;
-+        for (Method method : clipboard.getClass().getMethods()) {
-+            if (!method.getName().equals("getPrimaryClip")) {
-+                continue;
-+            }
-+            Class<?>[] types = method.getParameterTypes();
-+            Object[] values = new Object[types.length];
-+            int strings = 0;
-+            for (int i = 0; i < types.length; i++) {
-+                // (package, attribution tag, user, device): the shell's package, no tag, user 0,
-+                // the default device.
-+                values[i] = types[i] == String.class ? (strings++ == 0 ? "com.android.shell" : null) : 0;
-+            }
-+            clip = (ClipData) method.invoke(clipboard, values);
-+            break;
-+        }
-+        if (clip == null || clip.getItemCount() == 0 || clip.getItemAt(0).getText() == null) {
-+            return;
-+        }
-+        byte[] text = clip.getItemAt(0).getText().toString().getBytes(StandardCharsets.UTF_8);
-+        System.out.print(Base64.encodeToString(text, Base64.NO_WRAP));
-+    }
-+}
