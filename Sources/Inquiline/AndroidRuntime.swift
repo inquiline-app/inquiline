@@ -124,10 +124,11 @@ final class AndroidRuntime {
     }
 
     /// The Mac's volume is the one that counts, as for iPhone apps on a Mac, so Android's own
-    /// volumes stay at their highest: music and games, ringtones, alarms, notifications and
-    /// system sounds. Android's sound card plays at the level these leave.
+    /// volumes stay at their highest: music and games, ringtones, alarms and system sounds.
+    /// Android's sound card plays at the level these leave. Notifications are silent in
+    /// Android: the Mac plays their sound (NotificationBridge), so Focus applies to them.
     private func setFullVolume() {
-        _ = try? shell("for v in '1 7' '2 7' '3 15' '4 7' '5 7'; do cmd audio set-volume $v >/dev/null; done")
+        _ = try? shell("for v in '1 7' '2 7' '3 15' '4 7' '5 0'; do cmd audio set-volume $v >/dev/null; done")
     }
 
     /// Called on a background thread when an app is installed or removed inside Android,
