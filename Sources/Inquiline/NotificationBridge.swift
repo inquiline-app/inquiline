@@ -13,7 +13,7 @@ final class NotificationBridge: NSObject, UNUserNotificationCenterDelegate {
     static let shared = NotificationBridge()
 
     static let agent = "io.github.inquiline.notifications"
-    static let agentVersion = 4
+    static let agentVersion = 5
     private static let socket = "localabstract:inquiline-notifications"
 
     /// Opens an app's window, given its package.
@@ -177,7 +177,7 @@ final class NotificationBridge: NSObject, UNUserNotificationCenterDelegate {
 
     /// Opens the app's window and, in it, the screen the notification points to: the chat, the
     /// mail. Android lets only a privileged process open an app's screen from the background,
-    /// so the helper's Open runs as root. It takes the notification's action before the app
+    /// so the helper's Open runs as root, then as Android's system user. It takes the notification's action before the app
     /// opens, as opening may clear the notification, and runs it once the window's display is
     /// known.
     private func open(key: String, package: String) {
