@@ -112,6 +112,7 @@ final class NotificationBridge: NSObject, UNUserNotificationCenterDelegate {
     private func handle(_ message: [String: Any]) {
         let center = UNUserNotificationCenter.current()
         if let key = message["removed"] as? String {
+            if shown[key] != nil { AppLog.write("Notification removed in Android, so on the Mac too") }
             shown[key] = nil
             center.removeDeliveredNotifications(withIdentifiers: [key])
             return
@@ -122,7 +123,10 @@ final class NotificationBridge: NSObject, UNUserNotificationCenterDelegate {
         let said = title + "\n" + text
         // An app that updates a notification in place, as a chat adding a message, alerts
         // again unless it asked to alert once.
-        if let before = shown[key], before == said || message["silent"] as? Bool == true { return }
+        if let before = shown[key], before == said || message["silent"] as? Bool == true {
+            AppLog.write("Notification from \(package): an update, not shown again")
+            return
+        }
         shown[key] = said
 
         let info = appInfo?(package)
@@ -141,8 +145,13 @@ final class NotificationBridge: NSObject, UNUserNotificationCenterDelegate {
         }
         // The Mac asks the user once, when the first notification arrives.
         center.requestAuthorization(options: [.alert, .sound]) { granted, _ in
-            guard granted else { return }
-            center.add(UNNotificationRequest(identifier: key, content: content, trigger: nil))
+            guard granted else {
+                AppLog.write("Notification from \(package): not shown, the Mac doesn't allow Inquiline's")
+                return
+            }
+            center.add(UNNotificationRequest(identifier: key, content: content, trigger: nil)) { error in
+                AppLog.write("Notification from \(package): " + (error.map { "not shown, \($0.localizedDescription)" } ?? "shown"))
+            }
         }
     }
 
