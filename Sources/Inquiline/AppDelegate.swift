@@ -578,7 +578,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, SPUSta
             }
             return
         }
-        restingSince = nil
+        // Found awake after resting: something woke it, a notification or its alarm. As a
+        // phone stays awake a few seconds after its network wakes it, it stays this round,
+        // so it can tell Google it got the notification; without that, Google holds the
+        // next ones back until Android next wakes.
+        if restingSince != nil {
+            restingSince = nil
+            return
+        }
         launchQueue.async {
             // Android stays awake while an app still works, as a download, music or a mail
             // being fetched after a notification, and is looked at again on the next round.
