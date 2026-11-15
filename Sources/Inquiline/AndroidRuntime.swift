@@ -203,12 +203,47 @@ final class AndroidRuntime {
     /// its processors stop, so it takes no CPU, and an app opens again in about a second
     /// instead of waiting for Android to start. Its network stays awake, so a notification
     /// wakes it (EngineControl), and it keeps its memory until the Mac runs short of it.
-    func freeze() {
-        guard isRunning, !Self.isFrozen() else { return }
+    /// Returns when Android next wants to be woken, as a phone's alarm clock chip wakes it:
+    /// Google's notification service keeps its connection alive this way.
+    @discardableResult
+    func freeze() -> TimeInterval? {
+        guard isRunning, !Self.isFrozen() else { return nil }
+        let wakeup = nextWakeupAlarm()
         // Finder would wait on a disk whose server can't answer.
         AndroidFiles.eject()
         EngineControl.pause()
         AppLog.write("Android is resting")
+        return wakeup
+    }
+
+    /// Seconds to Android's next wake-up alarm, from "Next wakeup alarm: +4m12s345ms = ...".
+    private func nextWakeupAlarm() -> TimeInterval? {
+        guard let line = try? shell("dumpsys alarm | grep 'Next wakeup alarm:'"),
+              let start = line.range(of: ": +")?.upperBound
+        else { return nil }
+        let text = line[start...].prefix { $0 != " " }
+        var total = 0.0, number = ""
+        var index = text.startIndex
+        while index < text.endIndex {
+            let character = text[index]
+            if character.isNumber {
+                number.append(character)
+            } else {
+                let unit = text[index...].hasPrefix("ms") ? "ms" : String(character)
+                let value = Double(number) ?? 0
+                switch unit {
+                case "d": total += value * 86400
+                case "h": total += value * 3600
+                case "m": total += value * 60
+                case "s": total += value
+                case "ms": total += value / 1000; index = text.index(after: index)
+                default: break
+                }
+                number = ""
+            }
+            index = text.index(after: index)
+        }
+        return total
     }
 
     /// Wakes a resting Android; Inquiline's app windows can do it too, as each runs on its own.

@@ -581,7 +581,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, SPUSta
             // Android stays awake while an app still works, as a download, music or a mail
             // being fetched after a notification, and is looked at again on the next round.
             guard !runtime.isInstalling(), !runtime.hasForegroundWork(), !runtime.holdsWakeLock() else { return }
-            runtime.freeze()
+            guard let wakeup = runtime.freeze() else { return }
+            // Android's own alarm clock, as a phone's wakes it from sleep. At most once a minute,
+            // as phones gather alarms; the next round puts it back to rest.
+            DispatchQueue.main.asyncAfter(deadline: .now() + max(wakeup, 60)) {
+                AndroidRuntime.wake()
+            }
         }
     }
 
