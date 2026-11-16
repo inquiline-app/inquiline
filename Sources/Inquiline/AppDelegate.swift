@@ -583,31 +583,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, SPUSta
 
     private var lastResume = Date.distantPast
 
-    private func stopResting(_ reason: String) {
-        launchQueue.async {
-            AppLog.write("Stopping Android: \(reason)")
-            AndroidRuntime.shared.shutdown()
-        }
-    }
-
-    private var stoppedForMemory = false
-
-    /// The Mac is short of memory: a resting Android gives its own back, and starts again once
-    /// memory is back.
+    /// The Mac is short of memory: as a phone's low-memory killer does, Android closes the
+    /// apps no window shows and drops its caches, which go back to the Mac. It isn't shut
+    /// down, which would stop its notifications.
     private lazy var memoryPressure: DispatchSourceMemoryPressure = {
-        let source = DispatchSource.makeMemoryPressureSource(eventMask: [.normal, .warning, .critical], queue: .main)
-        source.setEventHandler { [weak self, weak source] in
-            guard let self, let source else { return }
-            if source.data.contains(.normal) {
-                // Memory is back: Android starts again, so notifications come again.
-                guard stoppedForMemory else { return }
-                stoppedForMemory = false
-                startAndroidInBackground()
-                return
+        let source = DispatchSource.makeMemoryPressureSource(eventMask: [.warning, .critical], queue: .main)
+        source.setEventHandler { [weak self] in
+            guard let self, AndroidRuntime.shared.isRunning else { return }
+            AppLog.write("The Mac is short of memory: Android closes its background apps")
+            launchQueue.async {
+                AndroidRuntime.wake()
+                AndroidRuntime.shared.releaseMemory()
             }
-            guard AndroidRuntime.isFrozen() else { return }
-            stoppedForMemory = true
-            stopResting("the Mac is short of memory")
         }
         return source
     }()
