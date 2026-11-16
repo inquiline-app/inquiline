@@ -69,6 +69,7 @@ final class AndroidRuntime {
         if vm?.isRunning == true {
             if isReady() {
                 watchPackages()
+                watchSleep()
                 NotificationBridge.shared.start()
                 return
             }
@@ -98,6 +99,7 @@ final class AndroidRuntime {
         turnOffBluetooth()
         nameDevice()
         watchPackages()
+        watchSleep()
         NotificationBridge.shared.start()
     }
 
@@ -199,10 +201,10 @@ final class AndroidRuntime {
 
     // MARK: - Resting
 
-    /// Shortly after the last app closes, Android rests as a phone does with its screen off:
-    /// its processors stop, so it takes no CPU, and an app opens again in about a second
-    /// instead of waiting for Android to start. Its network stays awake, so a notification
-    /// wakes it (EngineControl), and it keeps its memory until the Mac runs short of it.
+    /// Android asleep, as a phone with its screen off: its processors stop, so it takes no
+    /// CPU, and an app opens again in about a second. Its network stays awake, so a
+    /// notification wakes it (EngineControl), and it keeps its memory until the Mac runs
+    /// short of it.
     /// Returns when Android next wants to be woken, as a phone's alarm clock chip wakes it:
     /// Google's notification service keeps its connection alive this way.
     @discardableResult
@@ -303,34 +305,43 @@ final class AndroidRuntime {
         return false
     }
 
-    /// Work an app keeps going after its screen closes, such as a Play Store download or
-    /// music, runs as a foreground service, which a phone never stops. Android's own
-    /// services don't count: only those of installed apps and the Play Store do.
-    /// As a phone's processor sleeps only when nothing holds it awake: an app that got a
-    /// notification, or syncs mail, holds a wake lock until it's done.
-    func holdsWakeLock() -> Bool {
-        (try? shell("dumpsys power | grep mHoldingWakeLockSuspendBlocker"))?.contains("=true") == true
+    /// Android's own screen, the one no window shows: off, as a phone's screen with nobody
+    /// using it, so Android sleeps when nothing holds it awake. Windows have screens of their
+    /// own, which keep Android awake while they're open.
+    func setScreenOn(_ on: Bool) {
+        guard isRunning else { return }
+        _ = try? shell("input keyevent \(on ? "KEYCODE_WAKEUP" : "KEYCODE_SLEEP")")
     }
 
-    func hasForegroundWork() -> Bool {
-        guard let output = try? shell("dumpsys activity services | grep -E '^  \\* ServiceRecord|isForeground=true'"),
-              let apps = try? installedPackages()
-        else { return false }
-        var package = ""
-        for line in output.split(whereSeparator: \.isNewline) {
-            if line.contains("ServiceRecord{") {
-                package = line.split(separator: " ").first { $0.contains("/") }?.split(separator: "/").first.map(String.init) ?? ""
-            } else if apps.contains(package) {
-                return true
+    /// After the last window closes, as pressing a phone's power button: Android lets itself
+    /// sleep again only as its screen turns off, so the screen turns on and off.
+    func pressPowerButton() {
+        guard isRunning else { return }
+        _ = try? shell("input keyevent KEYCODE_WAKEUP; input keyevent KEYCODE_SLEEP")
+    }
+
+    /// Called on a background thread each time Android's sleep service decides to sleep.
+    var onSleep: (() -> Void)?
+    private var sleepWatch: Int32 = -1
+
+    /// Android's sleep service puts the processor to sleep by writing "mem" to
+    /// /sys/power/state, which redroid binds to /data/.empty so it can't suspend the VM.
+    /// Each write is Android deciding to sleep, as it does only when nothing holds it awake.
+    private func watchSleep() {
+        guard sleepWatch < 0, let socket = try? AdbClient.open("shell,raw:su 0 inotifyd - /data/.empty:c") else { return }
+        sleepWatch = socket
+        let thread = Thread { [self] in
+            var buffer = [UInt8](repeating: 0, count: 256)
+            while recv(socket, &buffer, buffer.count, 0) > 0 {
+                onSleep?()
             }
+            close(socket)
+            sleepWatch = -1
         }
-        return false
+        thread.name = "inquiline.sleep-watch"
+        thread.start()
     }
 
-    /// Play Store downloads end in an install session; stopping Android would cut them off.
-    func isInstalling() -> Bool {
-        (try? shell("dumpsys package | grep -m1 'Active Session'"))?.contains("Active Session") ?? false
-    }
 
     /// Goes up with each release that changes what Android runs on, as in its disk's
     /// disk-update.tar, which holds everything since revision 1. 2: gfxstream and ANGLE
@@ -351,7 +362,8 @@ final class AndroidRuntime {
     /// lists only with one.
     /// 18: Android's own settings changed by an overlay in /vendor/overlay: no frame around the
     /// whole screen of a game once a key is pressed.
-    private static let diskRevision = 18
+    /// 19: Android's sleep service may write its decisions to sleep, which Inquiline follows.
+    private static let diskRevision = 19
     /// The VM's memory map fits the 36-bit (64 GB) address space Apple's M1 and M2 give a VM:
     /// above the RAM, the window for 64-bit device memory, such as the GPU's 2 GB, is 16 GB,
     /// not QEMU's 512 GB, which only M3 and later have room for (see the QEMU patch 0102).
@@ -440,6 +452,8 @@ final class AndroidRuntime {
             "-netdev", "user,id=n,hostfwd=tcp:127.0.0.1:5556-:5555,hostfwd=tcp:127.0.0.1:\(Self.powerOffPort)-:5000,hostfwd=tcp:127.0.0.1:\(Self.filesPort)-:445",
             "-display", "none", "-serial", "none", "-monitor", "none",
             "-qmp", "unix:\(EngineControl.socket.path),server=on,wait=off",
+            // A second one, which Inquiline keeps open for the engine's events.
+            "-qmp", "unix:\(EngineControl.eventsSocket.path),server=on,wait=off",
         ]
         let contents = qemu.deletingLastPathComponent().deletingLastPathComponent()
         var env = ProcessInfo.processInfo.environment

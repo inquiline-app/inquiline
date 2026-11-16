@@ -8,9 +8,6 @@ import UniformTypeIdentifiers
 /// app opens and stops a while after the last one quits, so it holds no memory unused.
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, SPUStandardUserDriverDelegate {
     private static let appPrefix = "io.github.inquiline-app.app."
-    /// How long Android stays awake after its last app closes: long enough for the app to
-    /// save its state, as resting makes the next start take a second.
-    private static let idleLimit: TimeInterval = 10
 
     private var statusItem: NSStatusItem!
     /// Sparkle: checks GitHub for a new version once a day, and on "Check for Updates…".
@@ -92,7 +89,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, SPUSta
 
         let center = NSWorkspace.shared.notificationCenter
         center.addObserver(self, selector: #selector(appTerminated(_:)), name: NSWorkspace.didTerminateApplicationNotification, object: nil)
-        Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in self?.stopAndroidIfIdle() }
+        AndroidRuntime.shared.onSleep = { [weak self] in DispatchQueue.main.async { self?.androidWantsToSleep() } }
+        EngineControl.onResume = { [weak self] in DispatchQueue.main.async { self?.lastResume = Date() } }
         memoryPressure.resume()
         // A game loading for the first time reads gigabytes within a minute, so the cache is
         // looked at often; it costs a few milliseconds when there's nothing to drop.
@@ -357,6 +355,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, SPUSta
         }
         status = message
         launchQueue.async { [self] in
+            // Like someone using the phone: its screen is on while Inquiline works in it.
+            AndroidRuntime.wake()
+            AndroidRuntime.shared.setScreenOn(true)
             var failed: Error?
             do { try work() } catch { failed = error }
             let seconds = Int(Date().timeIntervalSince(start))
@@ -367,7 +368,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, SPUSta
             }
             DispatchQueue.main.async { [self] in
                 busy -= 1
-                if busy == 0 { status = nil }
+                if busy == 0 {
+                    status = nil
+                    // Its screen goes off, and Android sleeps when nothing holds it awake.
+                    launchQueue.async { AndroidRuntime.shared.setScreenOn(false) }
+                }
                 if detail != nil {
                     progress?.close()
                     progress = nil
@@ -551,60 +556,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, SPUSta
         updateShortcuts()
         DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [self] in
             guard runningApps.isEmpty, busy == 0, AndroidRuntime.shared.isRunning else { return }
-            launchQueue.async { AndroidRuntime.shared.releaseMemory() }
+            launchQueue.async {
+                AndroidRuntime.shared.releaseMemory()
+                AndroidRuntime.shared.pressPowerButton()
+            }
         }
-        // Once the closed app has saved its state and its memory is given back, Android rests.
-        DispatchQueue.main.asyncAfter(deadline: .now() + Self.idleLimit) { [self] in stopAndroidIfIdle() }
     }
 
-    /// As on a phone, nothing runs once its apps are closed: Android rests shortly after the
-    /// last one, unless an app is still at work, as a download or music. A notification wakes
-    /// it for a moment, and this puts it back to rest on the next round.
-    private func stopAndroidIfIdle() {
+    /// As a phone sleeps: when no window shows Android and nothing holds it awake, Android's
+    /// own sleep service decides to sleep (AndroidRuntime.onSleep), and its processors stop.
+    /// Its network and its alarms wake it, as a phone's modem and alarm clock chip do.
+    private func androidWantsToSleep() {
         let runtime = AndroidRuntime.shared
-        guard runtime.isRunning, runningApps.isEmpty, busy == 0 else {
-            restingSince = nil
-            return
-        }
-        // A resting Android stays, so notifications keep coming; it stops only when the Mac
-        // runs short of memory. As a phone in its sleep does, it wakes now and then for a
-        // moment, so the connections notifications come over stay open.
-        if AndroidRuntime.isFrozen() {
-            let since = restingSince ?? Date()
-            restingSince = since
-            if Date().timeIntervalSince(since) > Self.maintenanceInterval {
-                restingSince = nil
-                AndroidRuntime.wake()
-            }
-            return
-        }
-        // Found awake after resting: something woke it, a notification or its alarm. As a
-        // phone stays awake a few seconds after its network wakes it, it stays this round,
-        // so it can tell Google it got the notification; without that, Google holds the
-        // next ones back until Android next wakes.
-        if restingSince != nil {
-            restingSince = nil
-            return
-        }
+        // Inquiline itself at work in Android, as installing, is someone using the phone.
+        guard busy == 0, runtime.isRunning, !AndroidRuntime.isFrozen() else { return }
+        // A phone's network driver keeps it awake a moment after a packet, so the app the
+        // packet is for can take it; Android here has no such driver.
+        guard Date().timeIntervalSince(lastResume) > 1 else { return }
         launchQueue.async {
-            // Android stays awake while an app still works, as a download, music or a mail
-            // being fetched after a notification, and is looked at again on the next round.
-            guard !runtime.isInstalling(), !runtime.hasForegroundWork(), !runtime.holdsWakeLock() else { return }
             guard let wakeup = runtime.freeze() else { return }
-            // Android's own alarm clock, as a phone's wakes it from sleep. At most once a minute,
-            // as phones gather alarms; the next round puts it back to rest.
-            DispatchQueue.main.asyncAfter(deadline: .now() + max(wakeup, 60)) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + max(wakeup, 1)) {
                 AndroidRuntime.wake()
             }
         }
     }
 
-
-    private static let maintenanceInterval: TimeInterval = 15 * 60
-    private var restingSince: Date?
+    private var lastResume = Date.distantPast
 
     private func stopResting(_ reason: String) {
-        restingSince = nil
         launchQueue.async {
             AppLog.write("Stopping Android: \(reason)")
             AndroidRuntime.shared.shutdown()

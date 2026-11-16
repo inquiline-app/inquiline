@@ -238,9 +238,18 @@ exec podman run --rm $EXTRA --name redroid --ip 10.88.0.2 --privileged --pull=ne
   -v $A/touchscreen.xml:/vendor/etc/permissions/android.hardware.touchscreen.xml:ro \
   -v $A/gyroscope.xml:/vendor/etc/permissions/android.hardware.sensor.gyroscope.xml:ro \
   -v $A/inquiline-framework-overlay.apk:/vendor/overlay/InquilineFramework.apk:ro \
+  -v $A/inquiline.rc:/vendor/etc/init/inquiline.rc:ro \
   -v $A/product-build.prop:/system/product/etc/build.prop:ro \
   docker.io/redroid/redroid:15.0.0_64only-latest androidboot.redroid_gpu_mode=host androidboot.use_memfd=1 \
   androidboot.redroid_width=810 androidboot.redroid_height=1440 androidboot.redroid_dpi=320 androidboot.redroid_fps=60
+EOF
+# Android's sleep service decides to sleep by writing "mem" to /sys/power/state, which redroid
+# binds to /data/.empty so Android can't suspend the VM. Made the service's own before it starts
+# (late-fs), the file takes each decision, and Inquiline pauses Android's processors on it.
+cat > "$ROOT/var/inquiline/inquiline.rc" <<'EOF'
+on post-fs
+    chown system system /data/.empty
+    chmod 0660 /data/.empty
 EOF
 cat > "$ROOT/usr/local/bin/inquiline-input" <<'EOF'
 #!/bin/sh

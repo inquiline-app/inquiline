@@ -2,8 +2,8 @@ import Foundation
 
 /// Talks to the engine over QEMU's control socket (QMP), from Inquiline or an app's own process.
 ///
-/// Resting pauses only Android's processors. The engine's network stays awake, and a packet for
-/// Android resumes them on its own (Scripts/vm/patches/qemu/0103-wake-on-network.patch), as a
+/// When Android sleeps, only its processors pause. The engine's network stays awake, and a packet
+/// for Android resumes them on its own (Scripts/vm/patches/qemu/0103-wake-on-network.patch), as a
 /// phone's modem wakes its processor when a notification arrives.
 enum EngineControl {
     static var socket: URL {
@@ -12,8 +12,38 @@ enum EngineControl {
             .appendingPathComponent("vm/control.sock")
     }
 
+    /// The engine's events, as Android starting again, come on a socket of their own, as each
+    /// takes one connection at a time.
+    static var eventsSocket: URL { socket.deletingLastPathComponent().appendingPathComponent("events.sock") }
+
     static func pause() { _ = run("stop") }
     static func resume() { _ = run("cont") }
+
+    /// Called on a background thread whenever Android's processors start again, by
+    /// Inquiline or by the engine for a packet.
+    static var onResume: (() -> Void)? {
+        didSet { if onResume != nil { watchEvents() } }
+    }
+
+    /// Keeps a connection open for the engine's events, again after it restarts.
+    private static func watchEvents() {
+        Thread.detachNewThread {
+            while true {
+                if let fd = connect(to: eventsSocket) {
+                    var reader = LineReader(fd: fd)
+                    var timeout = timeval(tv_sec: 0, tv_usec: 0)
+                    setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
+                    if reader.next()?.contains("QMP") == true, send("{\"execute\":\"qmp_capabilities\"}", to: fd) {
+                        while let line = reader.next() {
+                            if line.contains("\"event\": \"RESUME\"") { onResume?() }
+                        }
+                    }
+                    close(fd)
+                }
+                Thread.sleep(forTimeInterval: 2)
+            }
+        }
+    }
 
     /// True while Android rests; false when it runs, or when there is no engine.
     static var isPaused: Bool {
@@ -22,31 +52,36 @@ enum EngineControl {
 
     /// Sends one command and returns its reply, or nil when the engine can't be reached.
     private static func run(_ command: String) -> String? {
-        let fd = Darwin.socket(AF_UNIX, SOCK_STREAM, 0)
-        guard fd >= 0 else { return nil }
+        guard let fd = connect(to: socket) else { return nil }
         defer { close(fd) }
-        var timeout = timeval(tv_sec: 2, tv_usec: 0)
-        setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
-        setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
-        var address = sockaddr_un()
-        address.sun_family = sa_family_t(AF_UNIX)
-        let path = socket.path.utf8CString
-        guard path.count <= MemoryLayout.size(ofValue: address.sun_path) else { return nil }
-        withUnsafeMutableBytes(of: &address.sun_path) { bytes in
-            path.withUnsafeBytes { bytes.copyMemory(from: $0) }
-        }
-        let connected = withUnsafePointer(to: &address) {
-            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
-                connect(fd, $0, socklen_t(MemoryLayout<sockaddr_un>.size))
-            }
-        }
-        guard connected == 0 else { return nil }
         var reader = LineReader(fd: fd)
         guard reader.next()?.contains("QMP") == true,
               send("{\"execute\":\"qmp_capabilities\"}", to: fd), reply(&reader) != nil,
               send("{\"execute\":\"\(command)\"}", to: fd)
         else { return nil }
         return reply(&reader)
+    }
+
+    private static func connect(to socket: URL) -> Int32? {
+        let fd = Darwin.socket(AF_UNIX, SOCK_STREAM, 0)
+        guard fd >= 0 else { return nil }
+        var timeout = timeval(tv_sec: 2, tv_usec: 0)
+        setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
+        setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
+        var address = sockaddr_un()
+        address.sun_family = sa_family_t(AF_UNIX)
+        let path = socket.path.utf8CString
+        guard path.count <= MemoryLayout.size(ofValue: address.sun_path) else { close(fd); return nil }
+        withUnsafeMutableBytes(of: &address.sun_path) { bytes in
+            path.withUnsafeBytes { bytes.copyMemory(from: $0) }
+        }
+        let connected = withUnsafePointer(to: &address) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                Darwin.connect(fd, $0, socklen_t(MemoryLayout<sockaddr_un>.size))
+            }
+        }
+        guard connected == 0 else { close(fd); return nil }
+        return fd
     }
 
     private static func send(_ line: String, to fd: Int32) -> Bool {
