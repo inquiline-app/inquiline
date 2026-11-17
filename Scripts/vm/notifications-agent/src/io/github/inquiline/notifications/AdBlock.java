@@ -104,6 +104,9 @@ public final class AdBlock extends VpnService {
         InetAddress upstream = upstreamDns();
         Builder builder = new Builder().setSession("Ad blocking").setBlocking(true)
                 .addAddress(ADDRESS, 32).addDnsServer(DNS).addRoute(DNS, 32);
+        // With this Mac's authority, the apps' web traffic goes through the proxy too, which
+        // looks into each request.
+        if (startProxy()) builder.setHttpProxy(android.net.ProxyInfo.buildDirectProxy(ADDRESS, Proxy.PORT));
         int allowed = 0;
         for (String pkg : packages) {
             try {
@@ -123,6 +126,24 @@ public final class AdBlock extends VpnService {
         ParcelFileDescriptor current = tun;
         reader = new Thread(() -> serve(current, upstream), "adblock");
         reader.start();
+    }
+
+    private static Proxy proxy;
+
+    /** The proxy, once there is an authority to open connections with (files/ca.pem, ca.key). */
+    private boolean startProxy() {
+        if (proxy != null) return true;
+        try {
+            byte[] pem = Files.readAllBytes(new File(getFilesDir(), "ca.pem").toPath());
+            byte[] key = Files.readAllBytes(new File(getFilesDir(), "ca.key").toPath());
+            Proxy started = new Proxy(new Certs(pem, key), (url, host, headers) -> isBlocked(host));
+            started.start();
+            proxy = started;
+            return true;
+        } catch (Exception e) {
+            android.util.Log.w("InquilineAdBlock", "The proxy could not start", e);
+            return false;
+        }
     }
 
     private void close() {
