@@ -170,7 +170,7 @@ The ad blocking rules in Scripts/vm/notifications-agent/assets/easylist.txt and 
 
 ## uBlock filters
 
-The rules in Scripts/vm/notifications-agent/assets/ublock-filters.txt, ublock-quick-fixes.txt, ublock-unbreak.txt and ublock-privacy.txt are uBlock Origin's own filter lists (https://github.com/uBlockOrigin/uAssets), by Raymond Hill and contributors, under the GNU General Public License version 3 (https://www.gnu.org/licenses/gpl-3.0.html). It is included unchanged, as data the helper reads; its source is the file itself.
+The rules in Scripts/vm/notifications-agent/assets/ublock-filters.txt, ublock-quick-fixes.txt, ublock-unbreak.txt, ublock-privacy.txt, ublock-badware.txt, ublock-cookies.txt and ublock-annoyances.txt are uBlock Origin's own filter lists (https://github.com/uBlockOrigin/uAssets), by Raymond Hill and contributors, under the GNU General Public License version 3 (https://www.gnu.org/licenses/gpl-3.0.html). It is included unchanged, as data the helper reads; its source is the file itself.
 
 ## AdGuard Turkish filter and AdGuard Mobile Ads filter
 
@@ -179,3 +179,11 @@ The rules in Scripts/vm/notifications-agent/assets/adguard-turkish.txt and adgua
 ## uBlock Origin scriptlets
 
 Scripts/vm/notifications-agent/assets/scriptlets.json holds uBlock Origin's scriptlets (https://github.com/gorhill/uBlock, src/js/resources), Copyright (C) Raymond Hill, under the GNU General Public License version 3, taken from its source unchanged by Scripts/vm/build-scriptlets.mjs. The ad blocker adds them to web pages, as uBlock Origin does; their source is the file itself and uBlock Origin's repository.
+
+## EasyList Cookie, Social and Newsletters lists (Fanboy)
+
+The rules in Scripts/vm/notifications-agent/assets/easylist-cookies.txt, easylist-social.txt and easylist-newsletters.txt are Fanboy's lists of the EasyList project (https://easylist.to, https://secure.fanboy.co.nz), used under the Creative Commons Attribution 3.0 license (https://creativecommons.org/licenses/by/3.0/) and EasyList's licence (https://easylist.to/pages/licence.html). They are included unchanged.
+
+## uBlock Origin stand-in resources
+
+The files in Scripts/vm/notifications-agent/assets/redirects are uBlock Origin's web accessible resources (https://github.com/gorhill/uBlock, src/web_accessible_resources), under the GNU General Public License version 3, copied unchanged by Scripts/vm/build-scriptlets.mjs.

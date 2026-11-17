@@ -53,30 +53,47 @@ public final class AdBlock extends VpnService {
         return new File(context.getFilesDir(), "adblock");
     }
 
-    static Set<String> chosen(Context context) {
-        Set<String> packages = new TreeSet<>();
+    /** The apps whose ads are blocked, each with the categories on for it (Lists bits). */
+    static java.util.Map<String, Integer> chosen(Context context) {
+        java.util.Map<String, Integer> apps = new java.util.TreeMap<>();
         try {
             for (String line : Files.readAllLines(listFile(context).toPath())) {
-                if (!line.isBlank()) packages.add(line.trim());
+                String[] parts = line.trim().split("\\s+");
+                if (parts[0].isEmpty()) continue;
+                apps.put(parts[0], parts.length > 1 ? Lists.mask(parts[1]) : Lists.DEFAULT);
             }
         } catch (Exception ignored) {
         }
-        return packages;
+        return apps;
     }
+
+    private static volatile java.util.Map<String, Integer> masks = java.util.Map.of();
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
         startForeground(1, notification(), ServiceInfo.FOREGROUND_SERVICE_TYPE_SYSTEM_EXEMPTED);
-        Set<String> packages = chosen(this);
+        java.util.Map<String, Integer> apps = chosen(this);
+        java.util.Set<String> before = new java.util.TreeSet<>(apps.keySet());
         if (intent != null) {
-            if (intent.getStringExtra("add") != null) packages.add(intent.getStringExtra("add"));
-            if (intent.getStringExtra("remove") != null) packages.remove(intent.getStringExtra("remove"));
+            String add = intent.getStringExtra("add"), remove = intent.getStringExtra("remove");
+            // "package=ads,privacy": that app's categories.
+            String set = intent.getStringExtra("set");
+            if (add != null) apps.putIfAbsent(add, Lists.DEFAULT);
+            if (remove != null) apps.remove(remove);
+            if (set != null && set.contains("=")) {
+                String pkg = set.substring(0, set.indexOf('='));
+                if (apps.containsKey(pkg)) apps.put(pkg, Lists.mask(set.substring(set.indexOf('=') + 1)) | Lists.ADS);
+            }
         }
+        java.util.List<String> lines = new java.util.ArrayList<>();
+        for (java.util.Map.Entry<String, Integer> app : apps.entrySet()) lines.add(app.getKey() + " " + Lists.names(app.getValue()));
         try {
-            Files.write(listFile(this).toPath(), packages);
+            Files.write(listFile(this).toPath(), lines);
         } catch (Exception ignored) {
         }
-        restart(packages);
+        masks = apps;
+        // Only a change of apps needs the VPN made again; categories apply from the next request.
+        if (!before.equals(apps.keySet()) || tun == null) restart(apps.keySet());
         return START_STICKY;
     }
 
@@ -87,7 +104,7 @@ public final class AdBlock extends VpnService {
                 .setContentTitle("Ad blocking").build();
     }
 
-    private synchronized void restart(Set<String> packages) {
+    private synchronized void restart(java.util.Set<String> packages) {
         close();
         if (packages.isEmpty()) {
             stopForeground(STOP_FOREGROUND_REMOVE);
@@ -170,19 +187,26 @@ public final class AdBlock extends VpnService {
         for (Lists.List list : Lists.ALL) {
             for (int pass = 0; pass < 3; pass++) {
                 try (BufferedReader in = Lists.open(this, list)) {
-                    if (pass == 0) rules.load(in);
-                    else if (pass == 1) hiding.load(in);
-                    else scripts.load(in, list.trusted);
+                    if (pass == 0) rules.load(in, list.category);
+                    else if (pass == 1) hiding.load(in, list.category);
+                    else scripts.load(in, list.trusted, list.category);
                 }
             }
         }
         android.util.Log.i("InquilineAdBlock", "Ad blocking rules: " + rules.count);
         return new Proxy.Filter() {
             @Override
-            public Proxy.Answer decide(String url, String host, String headers) {
+            public int maskOf(java.net.Socket app) {
+                return categoriesOf(app);
+            }
+
+            @Override
+            public Proxy.Answer decide(String url, String host, String headers, int mask) {
                 // uBlock's lists alone: the address list, for apps' own name lookups, would also cut
                 // services uBlock leaves alone on purpose, as sites' cookie consent.
-                String decision = rules.decide(request(url, host, headers));
+                Filters.Request request = request(url, host, headers);
+                request.mask = mask;
+                String decision = rules.decide(request);
                 if (decision == null) return null;
                 // How many, never which: what an app asks for is the user's own business.
                 if (blockedCount.incrementAndGet() % 25 == 0) {
@@ -192,15 +216,33 @@ public final class AdBlock extends VpnService {
             }
 
             @Override
-            public String css(String host) {
-                return hiding.css(host);
+            public String css(String host, int mask) {
+                return hiding.css(host, mask);
             }
 
             @Override
-            public String script(String host) {
-                return scripts.script(host);
+            public String script(String host, int mask) {
+                return scripts.script(host, mask);
             }
         };
+    }
+
+    /**
+     * The categories on for the app on the other end of a proxy connection: Android tells a VPN
+     * app which app owns a connection, and the user chose them for that app.
+     */
+    private int categoriesOf(java.net.Socket app) {
+        try {
+            android.net.ConnectivityManager connectivity = getSystemService(android.net.ConnectivityManager.class);
+            int uid = connectivity.getConnectionOwnerUid(android.system.OsConstants.IPPROTO_TCP,
+                    (java.net.InetSocketAddress) app.getRemoteSocketAddress(), (java.net.InetSocketAddress) app.getLocalSocketAddress());
+            String[] packages = getPackageManager().getPackagesForUid(uid);
+            int mask = 0;
+            if (packages != null) for (String pkg : packages) mask |= masks.getOrDefault(pkg, 0);
+            if (mask != 0) return mask;
+        } catch (Exception ignored) {
+        }
+        return Lists.DEFAULT;
     }
 
     private static org.json.JSONObject standIns;

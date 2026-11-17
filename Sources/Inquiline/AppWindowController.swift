@@ -868,59 +868,84 @@ private final class AppSettingsView: NSView {
     private let package: String
     private let notifications = NSSwitch()
     private let ads = NSSwitch()
+    private let permissionRows = NSStackView()
+    private let adRows = NSStackView()
+    private var groups: [AndroidRuntime.PermissionGroup] = []
+    private var categorySwitches: [String: NSSwitch] = [:]
+
+    /// What the ad blocker can block besides ads, as uBlock's optional lists: its id with the helper, and its name.
+    private static let categories = [
+        ("privacy", "Trackers"),
+        ("malware", "Malicious Sites"),
+        ("cookies", "Cookie Notices"),
+        ("social", "Social Widgets"),
+        ("annoyances", "Annoyances"),
+    ]
 
     init(package: String) {
         self.package = package
         super.init(frame: .zero)
-        let label = NSTextField(labelWithString: "Notifications")
+        // Until Android answers, nothing to switch.
         notifications.target = self
         notifications.action = #selector(notificationsChanged)
-        // Until Android answers, nothing to switch.
         notifications.isEnabled = false
-        let row = NSStackView(views: [label, NSView(), notifications])
-        row.orientation = .horizontal
-        // Ads the app shows, which a game may also give rewards for watching.
         ads.target = self
         ads.action = #selector(adsChanged)
         ads.isEnabled = false
-        let adsRow = NSStackView(views: [NSTextField(labelWithString: "Block Ads"), NSView(), ads])
-        adsRow.orientation = .horizontal
-        // The app's other permissions, as Android's Settings lists them, once Android answers.
-        permissionRows.orientation = .vertical
-        permissionRows.alignment = .leading
-        permissionRows.spacing = 12
-        permissionRows.isHidden = true
+
+        // Permissions, notifications first: the one most often changed.
+        for rows in [permissionRows, adRows] {
+            rows.orientation = .vertical
+            rows.alignment = .leading
+            rows.spacing = 10
+            rows.isHidden = true
+            rows.edgeInsets = NSEdgeInsets(top: 0, left: 18, bottom: 0, right: 0)
+        }
+        permissionRows.addArrangedSubview(Self.row("Notifications", notifications))
+        // What blocking takes away besides ads, for this app.
+        for (id, name) in Self.categories {
+            let toggle = NSSwitch()
+            toggle.controlSize = .small
+            toggle.identifier = NSUserInterfaceItemIdentifier(id)
+            toggle.target = self
+            toggle.action = #selector(categoryChanged(_:))
+            toggle.isEnabled = false
+            categorySwitches[id] = toggle
+            adRows.addArrangedSubview(Self.row(name, toggle))
+        }
+        let permissionsHeader = Self.header("Permissions", rows: permissionRows, trailing: nil)
+        let adsHeader = Self.header("Block Ads", rows: adRows, trailing: ads)
+
         let cache = NSButton(title: "Clear Cache", target: self, action: #selector(clearCacheClicked))
         let data = NSButton(title: "Clear Data…", target: self, action: #selector(clearDataClicked))
         data.hasDestructiveAction = true
-        for button in [cache, data] { button.controlSize = .regular }
         let buttons = NSStackView(views: [cache, data])
         buttons.orientation = .horizontal
         buttons.distribution = .fillEqually
         let separator = NSBox()
         separator.boxType = .separator
-        let stack = NSStackView(views: [row, adsRow, permissionRows, separator, buttons])
+        let stack = NSStackView(views: [permissionsHeader, permissionRows, adsHeader, adRows, separator, buttons])
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 12
         stack.edgeInsets = NSEdgeInsets(top: 14, left: 16, bottom: 14, right: 16)
         stack.translatesAutoresizingMaskIntoConstraints = false
         addSubview(stack)
-        NSLayoutConstraint.activate([
+        var constraints = [
             stack.leadingAnchor.constraint(equalTo: leadingAnchor),
             stack.trailingAnchor.constraint(equalTo: trailingAnchor),
             stack.topAnchor.constraint(equalTo: topAnchor),
             stack.bottomAnchor.constraint(equalTo: bottomAnchor),
-            row.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -32),
-            permissionRows.widthAnchor.constraint(equalTo: row.widthAnchor),
-            adsRow.widthAnchor.constraint(equalTo: row.widthAnchor),
-            buttons.widthAnchor.constraint(equalTo: row.widthAnchor),
-            separator.widthAnchor.constraint(equalTo: row.widthAnchor),
-            widthAnchor.constraint(equalToConstant: 260),
-        ])
+            widthAnchor.constraint(equalToConstant: 270),
+        ]
+        for view in [permissionsHeader, permissionRows, adsHeader, adRows, separator, buttons] {
+            constraints.append(view.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -32))
+        }
+        NSLayoutConstraint.activate(constraints)
+
         DispatchQueue.global().async { [weak self] in
             let allowed = AndroidRuntime.shared.notificationsAllowed(package: package)
-            let blocked = AndroidRuntime.shared.adsBlocked(package: package)
+            let blocking = AndroidRuntime.shared.adBlocking(package: package)
             let groups = AndroidRuntime.shared.permissions(package: package) ?? []
             DispatchQueue.main.async {
                 guard let self else { return }
@@ -928,32 +953,62 @@ private final class AppSettingsView: NSView {
                     self.notifications.state = allowed ? .on : .off
                     self.notifications.isEnabled = true
                 }
-                if let blocked {
-                    self.ads.state = blocked ? .on : .off
+                if let blocking {
+                    self.ads.state = blocking.isEmpty ? .off : .on
                     self.ads.isEnabled = true
+                    self.showCategories(blocking)
                 }
                 self.show(groups)
             }
         }
     }
 
-    private var groups: [AndroidRuntime.PermissionGroup] = []
-    private let permissionRows = NSStackView()
+    required init?(coder: NSCoder) { fatalError() }
+
+    /// A name on the left, its switch on the right.
+    private static func row(_ name: String, _ control: NSView) -> NSStackView {
+        let row = NSStackView(views: [NSTextField(labelWithString: name), NSView(), control])
+        row.orientation = .horizontal
+        return row
+    }
+
+    /// A section's title with the triangle that shows or hides its rows, as in a Mac's own lists.
+    private static func header(_ title: String, rows: NSStackView, trailing: NSView?) -> NSStackView {
+        let triangle = NSButton(title: "", target: nil, action: nil)
+        triangle.bezelStyle = .disclosure
+        triangle.setButtonType(.pushOnPushOff)
+        triangle.state = .off
+        let toggle = SectionToggle(rows: rows, triangle: triangle)
+        triangle.target = toggle
+        triangle.action = #selector(SectionToggle.toggle)
+        let label = NSTextField(labelWithString: title)
+        label.font = .boldSystemFont(ofSize: NSFont.systemFontSize)
+        let click = NSClickGestureRecognizer(target: toggle, action: #selector(SectionToggle.labelClicked))
+        label.addGestureRecognizer(click)
+        objc_setAssociatedObject(triangle, "toggle", toggle, .OBJC_ASSOCIATION_RETAIN)
+        let row = NSStackView(views: [triangle, label, NSView()] + (trailing.map { [$0] } ?? []))
+        row.orientation = .horizontal
+        row.spacing = 4
+        return row
+    }
 
     private func show(_ groups: [AndroidRuntime.PermissionGroup]) {
         self.groups = groups
         for (index, group) in groups.enumerated() {
             let toggle = NSSwitch()
-            toggle.state = group.allowed ? .on : .off
             toggle.tag = index
+            toggle.state = group.allowed ? .on : .off
             toggle.target = self
             toggle.action = #selector(permissionChanged(_:))
-            let row = NSStackView(views: [NSTextField(labelWithString: group.name), NSView(), toggle])
-            row.orientation = .horizontal
-            permissionRows.addArrangedSubview(row)
-            row.widthAnchor.constraint(equalTo: permissionRows.widthAnchor).isActive = true
+            permissionRows.addArrangedSubview(Self.row(group.name, toggle))
         }
-        permissionRows.isHidden = groups.isEmpty
+    }
+
+    private func showCategories(_ on: Set<String>) {
+        for (id, toggle) in categorySwitches {
+            toggle.state = on.contains(id) || on.isEmpty && ["privacy", "malware"].contains(id) ? .on : .off
+            toggle.isEnabled = !on.isEmpty
+        }
     }
 
     @objc private func permissionChanged(_ sender: NSSwitch) {
@@ -961,8 +1016,6 @@ private final class AppSettingsView: NSView {
         let group = groups[sender.tag], allowed = sender.state == .on, package = package
         DispatchQueue.global().async { AndroidRuntime.shared.setPermissions(group, allowed: allowed, package: package) }
     }
-
-    required init?(coder: NSCoder) { fatalError() }
 
     @objc private func notificationsChanged() {
         let allowed = notifications.state == .on
@@ -972,9 +1025,39 @@ private final class AppSettingsView: NSView {
 
     @objc private func adsChanged() {
         let blocked = ads.state == .on, package = package
-        DispatchQueue.global().async { AndroidRuntime.shared.setAdsBlocked(blocked, package: package) }
+        for toggle in categorySwitches.values { toggle.isEnabled = blocked }
+        let chosen = Set(categorySwitches.filter { $0.value.state == .on }.map(\.key))
+        DispatchQueue.global().async {
+            AndroidRuntime.shared.setAdsBlocked(blocked, package: package)
+            if blocked { AndroidRuntime.shared.setAdCategories(chosen, package: package) }
+        }
+    }
+
+    @objc private func categoryChanged(_ sender: NSSwitch) {
+        let chosen = Set(categorySwitches.filter { $0.value.state == .on }.map(\.key)), package = package
+        DispatchQueue.global().async { AndroidRuntime.shared.setAdCategories(chosen, package: package) }
     }
 
     @objc private func clearCacheClicked() { clearCache?() }
     @objc private func clearDataClicked() { clearData?() }
+}
+
+/// Shows or hides a section's rows from its triangle or its title.
+private final class SectionToggle: NSObject {
+    let rows: NSStackView
+    let triangle: NSButton
+
+    init(rows: NSStackView, triangle: NSButton) {
+        self.rows = rows
+        self.triangle = triangle
+    }
+
+    @objc func toggle() {
+        rows.isHidden = triangle.state == .off
+    }
+
+    @objc func labelClicked() {
+        triangle.state = triangle.state == .on ? .off : .on
+        toggle()
+    }
 }

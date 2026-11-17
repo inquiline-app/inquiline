@@ -770,12 +770,28 @@ final class AndroidRuntime {
         _ = try? shell(commands.joined(separator: "; "))
     }
 
-    /// Whether the helper blocks the app's ads (its AdBlock class), or nil when Android can't say.
-    func adsBlocked(package: String) -> Bool? {
+    /// What the helper blocks in the app (its AdBlock class): nil when Android can't say, empty
+    /// when its ads aren't blocked, else the categories on for it ("ads", "privacy"...).
+    func adBlocking(package: String) -> Set<String>? {
         guard package.range(of: "^[A-Za-z0-9_.]+$", options: .regularExpression) != nil,
               let output = try? shell("su 0 cat /data/data/\(NotificationBridge.agent)/files/adblock 2>/dev/null; echo end")
         else { return nil }
-        return output.split(whereSeparator: \.isNewline).contains { $0 == package }
+        for line in output.split(whereSeparator: \.isNewline) {
+            let parts = line.split(separator: " ")
+            guard parts.first.map(String.init) == package else { continue }
+            let names = parts.count > 1 ? parts[1].split(separator: ",").map(String.init) : ["ads", "privacy", "malware"]
+            return Set(names)
+        }
+        return []
+    }
+
+    /// The categories blocked in the app, besides its ads, which are always on while blocking is.
+    func setAdCategories(_ categories: Set<String>, package: String) {
+        guard package.range(of: "^[A-Za-z0-9_.]+$", options: .regularExpression) != nil,
+              categories.allSatisfy({ $0.range(of: "^[a-z]+$", options: .regularExpression) != nil })
+        else { return }
+        let names = (categories.union(["ads"])).sorted().joined(separator: ",")
+        _ = try? shell("su 0 am start-foreground-service -n \(NotificationBridge.agent)/.AdBlock --es set \(package)=\(names)")
     }
 
     /// Blocks or lets through the app's ads, as a phone's ad blocker does, with a VPN for its name

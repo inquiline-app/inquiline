@@ -16,12 +16,13 @@ import java.util.Set;
  * (procedural ones such as :has-text, and scriptlets) are left out.
  */
 final class Cosmetics {
-    private final List<String> generic = new ArrayList<>();
-    private final Map<String, List<String>> byDomain = new HashMap<>();
+    /** Selectors by the category of their list (Lists bits). */
+    private final Map<Integer, List<String>> generic = new HashMap<>();
+    private final Map<String, List<String[]>> byDomain = new HashMap<>();
     private final Map<String, Set<String>> exceptions = new HashMap<>();
-    private String genericCss;
+    private final Map<Integer, String> genericCss = new HashMap<>();
 
-    void load(BufferedReader in) throws IOException {
+    void load(BufferedReader in, int category) throws IOException {
         String line;
         while ((line = in.readLine()) != null) {
             line = line.trim();
@@ -34,7 +35,7 @@ final class Cosmetics {
             if (selector.isEmpty() || selector.startsWith("+js") || selector.startsWith("^") || !standard(selector)) continue;
             String domains = line.substring(0, at);
             if (domains.isEmpty()) {
-                if (!exception) generic.add(selector);
+                if (!exception) generic.computeIfAbsent(category, k -> new ArrayList<>()).add(selector);
                 continue;
             }
             for (String domain : domains.split(",")) {
@@ -43,11 +44,13 @@ final class Cosmetics {
                 if (exception) {
                     exceptions.computeIfAbsent(domain, k -> new HashSet<>()).add(selector);
                 } else {
-                    byDomain.computeIfAbsent(domain, k -> new ArrayList<>()).add(selector);
+                    byDomain.computeIfAbsent(domain, k -> new ArrayList<>()).add(new String[] {selector, String.valueOf(category)});
                 }
             }
         }
-        genericCss = null;
+        synchronized (genericCss) {
+            genericCss.clear();
+        }
     }
 
     /** Selectors a browser applies itself: none of uBlock's own procedural ones. */
@@ -61,32 +64,46 @@ final class Cosmetics {
     }
 
     /** The style for a page on `host`: its own rules and the generic ones, less its exceptions. */
-    String css(String host) {
+    String css(String host, int mask) {
         Set<String> excepted = new HashSet<>();
         Set<String> own = new LinkedHashSet<>();
         for (String h : Hosts.domainsOf(host)) {
-            List<String> rules = byDomain.get(h);
-            if (rules != null) own.addAll(rules);
+            List<String[]> rules = byDomain.get(h);
+            if (rules != null) {
+                for (String[] rule : rules) if ((Integer.parseInt(rule[1]) & mask) != 0) own.add(rule[0]);
+            }
             Set<String> not = exceptions.get(h);
             if (not != null) excepted.addAll(not);
         }
         StringBuilder css = new StringBuilder();
         if (excepted.isEmpty()) {
-            css.append(genericCss());
+            css.append(genericCss(mask));
         } else {
-            appendRules(css, generic, excepted);
+            appendRules(css, genericFor(mask), excepted);
         }
         appendRules(css, own, excepted);
         return css.toString();
     }
 
-    private synchronized String genericCss() {
-        if (genericCss == null) {
-            StringBuilder css = new StringBuilder();
-            appendRules(css, generic, Set.of());
-            genericCss = css.toString();
+    private List<String> genericFor(int mask) {
+        List<String> out = new ArrayList<>();
+        for (Map.Entry<Integer, List<String>> entry : generic.entrySet()) {
+            if ((entry.getKey() & mask) != 0) out.addAll(entry.getValue());
         }
-        return genericCss;
+        return out;
+    }
+
+    private String genericCss(int mask) {
+        synchronized (genericCss) {
+            String css = genericCss.get(mask);
+            if (css == null) {
+                StringBuilder out = new StringBuilder();
+                appendRules(out, genericFor(mask), Set.of());
+                css = out.toString();
+                genericCss.put(mask, css);
+            }
+            return css;
+        }
     }
 
     /**

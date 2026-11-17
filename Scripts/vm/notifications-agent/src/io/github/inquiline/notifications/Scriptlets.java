@@ -40,7 +40,7 @@ final class Scriptlets {
     }
 
     /** Rules from one list; only uBlock's own lists may use its "trusted" scriptlets, as in uBlock. */
-    void load(BufferedReader in, boolean trusted) throws IOException {
+    void load(BufferedReader in, boolean trusted, int category) throws IOException {
         String line;
         while ((line = in.readLine()) != null) {
             line = line.trim();
@@ -65,7 +65,9 @@ final class Scriptlets {
                 if (exception) {
                     exceptions.computeIfAbsent(domain, k -> new HashSet<>()).add(key == null ? "" : key);
                 } else if (key != null) {
-                    byDomain.computeIfAbsent(domain, k -> new ArrayList<>()).add(args);
+                    List<String> tagged = new ArrayList<>(args);
+                    tagged.add(String.valueOf(category));
+                    byDomain.computeIfAbsent(domain, k -> new ArrayList<>()).add(tagged);
                 }
             }
         }
@@ -109,12 +111,18 @@ final class Scriptlets {
     }
 
     /** The script for a page on `host`, or empty when no rule applies there. */
-    String script(String host) {
+    String script(String host, int mask) {
         Map<String, List<String>> calls = new LinkedHashMap<>();
         Set<String> excepted = new HashSet<>();
         for (String domain : Hosts.domainsOf(host)) {
             List<List<String>> rules = byDomain.get(domain);
-            if (rules != null) for (List<String> args : rules) calls.putIfAbsent(String.join("\u0000", args), args);
+            if (rules != null) {
+                for (List<String> tagged : rules) {
+                    if ((Integer.parseInt(tagged.get(tagged.size() - 1)) & mask) == 0) continue;
+                    List<String> args = tagged.subList(0, tagged.size() - 1);
+                    calls.putIfAbsent(String.join("\u0000", args), args);
+                }
+            }
             Set<String> not = exceptions.get(domain);
             if (not != null) excepted.addAll(not);
         }

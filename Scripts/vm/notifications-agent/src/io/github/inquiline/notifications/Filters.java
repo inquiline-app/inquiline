@@ -23,6 +23,8 @@ final class Filters {
         final String type;     // script, image, stylesheet, subdocument, xmlhttprequest, media, font, document, other
         final String pageHost; // empty when not known
         final boolean thirdParty;
+        /** The categories on for the app asking (Lists bits). */
+        int mask = -1;
 
         Request(String url, String host, String type, String pageHost, boolean thirdParty) {
             this.url = url;
@@ -50,6 +52,8 @@ final class Filters {
         String redirect;
         /** $redirect-rule=: names the stand-in, without blocking by itself. */
         boolean redirectOnly;
+        /** The category of the list it came from. */
+        int category;
     }
 
     private final Map<String, List<Rule>> byHost = new HashMap<>();
@@ -57,7 +61,7 @@ final class Filters {
     private final List<Rule> unindexed = new ArrayList<>();
     int count;
 
-    void load(BufferedReader in) throws IOException {
+    void load(BufferedReader in, int category) throws IOException {
         String line;
         while ((line = in.readLine()) != null) {
             line = line.trim();
@@ -66,6 +70,7 @@ final class Filters {
                     || line.contains("#%#") || line.contains("#+js")) continue;
             Rule rule = parse(line);
             if (rule == null) continue;
+            rule.category = category;
             add(rule);
             count++;
         }
@@ -208,7 +213,8 @@ final class Filters {
         String redirect = null;
         for (List<Rule> rules : candidates(url, host)) {
             for (Rule rule : rules) {
-                if (rule.redirect == null || rule.exception || !applies(rule, r) || !matches(rule, url, host)) continue;
+                if (rule.redirect == null || rule.exception || (rule.category & r.mask) == 0 || !applies(rule, r)
+                        || !matches(rule, url, host)) continue;
                 redirect = rule.redirect;
             }
         }
@@ -277,7 +283,7 @@ final class Filters {
     private Rule check(List<Rule> rules, Request r, String url, String host, Rule current) {
         if (rules == null) return current;
         for (Rule rule : rules) {
-            if (rule.redirectOnly) continue;
+            if (rule.redirectOnly || (rule.category & r.mask) == 0) continue;
             if (current != null && current.exception && !rule.important) continue;
             if (!applies(rule, r) || !matches(rule, url, host)) continue;
             if (rule.exception) {

@@ -34,17 +34,20 @@ final class Proxy {
     static final int PORT = 8899;
 
     interface Filter {
+        /** The categories on for the app on the other end of `app` (Lists bits). */
+        int maskOf(Socket app);
+
         /**
          * What becomes of the request for `url` (`headers` are its own): null to pass it on, an
          * empty answer to block it, or a stand-in to answer it with.
          */
-        Answer decide(String url, String host, String headers);
+        Answer decide(String url, String host, String headers, int mask);
 
         /** The style that hides ad boxes on a page from `host`, or empty for none. */
-        String css(String host);
+        String css(String host, int mask);
 
         /** The script uBlock runs first on a page from `host` (its +js rules), or empty for none. */
-        String script(String host);
+        String script(String host, int mask);
     }
 
     /** A blocked request's answer: what uBlock gives in place of what was asked for. */
@@ -97,6 +100,7 @@ final class Proxy {
 
     private void handle(Socket client) {
         try (Socket c = client) {
+            int mask = filter.maskOf(c);
             InputStream in = c.getInputStream();
             byte[] head = readHead(in);
             if (head == null) return;
@@ -108,7 +112,7 @@ final class Proxy {
                 int colon = target.lastIndexOf(':');
                 String host = colon > 0 ? target.substring(0, colon) : target;
                 int port = colon > 0 ? Integer.parseInt(target.substring(colon + 1)) : 443;
-                if (filter.decide("https://" + host + "/", host, "") != null) {
+                if (filter.decide("https://" + host + "/", host, "", mask) != null) {
                     c.getOutputStream().write("HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n".getBytes(StandardCharsets.ISO_8859_1));
                     return;
                 }
@@ -116,17 +120,17 @@ final class Proxy {
                 if (port != 443 || pinned.contains(host)) {
                     tunnel(c, host, port);
                 } else {
-                    open(c, host, port);
+                    open(c, host, port, mask);
                 }
             } else {
-                plain(c, head, text, line);
+                plain(c, head, text, line, mask);
             }
         } catch (Exception ignored) {
         }
     }
 
     /** An HTTPS connection the proxy opens and looks into. */
-    private void open(Socket client, String host, int port) throws Exception {
+    private void open(Socket client, String host, int port, int mask) throws Exception {
         SSLSocket app;
         try {
             SSLSocket wrapped = (SSLSocket) context(host).getSocketFactory().createSocket(client, host, port, false);
@@ -147,7 +151,7 @@ final class Proxy {
             parameters.setApplicationProtocols(new String[] {"http/1.1"});
             site.setSSLParameters(parameters);
             site.startHandshake();
-            exchange(app, site, "https://" + host);
+            exchange(app, site, "https://" + host, mask);
         } finally {
             app.close();
         }
@@ -179,7 +183,7 @@ final class Proxy {
     }
 
     /** Requests and answers on one connection, each request looked at first. */
-    private void exchange(Socket app, Socket site, String origin) throws IOException {
+    private void exchange(Socket app, Socket site, String origin, int mask) throws IOException {
         InputStream fromApp = app.getInputStream(), fromSite = site.getInputStream();
         OutputStream toApp = app.getOutputStream(), toSite = site.getOutputStream();
         while (true) {
@@ -189,7 +193,7 @@ final class Proxy {
             String[] line = head.substring(0, head.indexOf("\r\n")).split(" ");
             String method = line[0];
             String host = origin.substring(origin.indexOf("//") + 2);
-            Answer blocked = filter.decide(origin + line[1], host, head);
+            Answer blocked = filter.decide(origin + line[1], host, head, mask);
             if (blocked != null) {
                 skipBody(fromApp, head, true, method);
                 toApp.write(answerHead(blocked).getBytes(StandardCharsets.ISO_8859_1));
@@ -218,7 +222,7 @@ final class Proxy {
             } while (status == 100);
             if (page && status == 200 && !method.equals("HEAD")
                     && header(answer, "content-type").toLowerCase(Locale.ROOT).contains("text/html")) {
-                String css = filter.css(host), script = filter.script(host);
+                String css = filter.css(host, mask), script = filter.script(host, mask);
                 byte[] body = readBody(fromSite, answer);
                 if (body == null) return;
                 byte[] shown = css.isEmpty() && script.isEmpty() ? body : withInjection(body, script, css);
@@ -243,7 +247,7 @@ final class Proxy {
     }
 
     /** Plain HTTP, sent to the proxy with the whole address. */
-    private void plain(Socket client, byte[] request, String head, String[] line) throws Exception {
+    private void plain(Socket client, byte[] request, String head, String[] line, int mask) throws Exception {
         String url = line[1];
         if (!url.startsWith("http://")) return;
         String rest = url.substring(7);
@@ -254,7 +258,7 @@ final class Proxy {
         String host = colon > 0 ? hostPort.substring(0, colon) : hostPort;
         int port = colon > 0 ? Integer.parseInt(hostPort.substring(colon + 1)) : 80;
         OutputStream toApp = client.getOutputStream();
-        Answer blocked = filter.decide(url, host, head);
+        Answer blocked = filter.decide(url, host, head, mask);
         if (blocked != null) {
             skipBody(client.getInputStream(), head, true, line[0]);
             toApp.write(answerHead(blocked).getBytes(StandardCharsets.ISO_8859_1));
