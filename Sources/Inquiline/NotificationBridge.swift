@@ -33,6 +33,9 @@ final class NotificationBridge: NSObject, UNUserNotificationCenterDelegate {
     private var groupOf: [String: String] = [:]
 
     private static let replyCategory = "reply"
+    /// The last answer written on the Mac, by app: the chat then adds it to its notification,
+    /// which is nothing new for the user.
+    private var sentReplies: [String: String] = [:]
 
     private override init() {
         super.init()
@@ -149,8 +152,11 @@ final class NotificationBridge: NSObject, UNUserNotificationCenterDelegate {
             return
         }
         // A chat adding the user's own reply to the conversation, as after answering from the Mac:
-        // nothing new for the user, as on a phone.
-        if message["fromMe"] as? Bool == true {
+        // nothing new for the user, as on a phone. Android marks such messages as the user's, and
+        // apps that don't still show the very words just written.
+        if message["fromMe"] as? Bool == true
+            || sentReplies[package].map({ !$0.isEmpty && text.hasSuffix($0) }) == true {
+            sentReplies[package] = nil
             shown[key] = said
             AppLog.write("Notification from \(package): the user's own message, not shown")
             return
@@ -168,7 +174,8 @@ final class NotificationBridge: NSObject, UNUserNotificationCenterDelegate {
         content.userInfo = ["key": key, "package": package, "group": message["group"] as? String ?? ""]
         // A chat's notification can be answered, as from a phone's notification shade.
         if message["replies"] as? Bool == true { content.categoryIdentifier = Self.replyCategory }
-        if let icon = info?.icon, let file = iconFile(package: package, icon: icon),
+        // The app's icon beside the words; not on a chat's, where it would fill the answer box.
+        if message["replies"] as? Bool != true, let icon = info?.icon, let file = iconFile(package: package, icon: icon),
            let attachment = try? UNNotificationAttachment(identifier: "icon", url: file) {
             content.attachments = [attachment]
         }
@@ -293,6 +300,7 @@ final class NotificationBridge: NSObject, UNUserNotificationCenterDelegate {
             return
         }
         if let reply = response as? UNTextInputNotificationResponse, !reply.userText.isEmpty {
+            DispatchQueue.main.async { self.sentReplies[package] = reply.userText }
             send(["reply": key, "text": reply.userText])
         } else if response.actionIdentifier == UNNotificationDefaultActionIdentifier {
             AppLog.write("Opening \(package) from its notification")
