@@ -846,6 +846,33 @@ final class AndroidRuntime {
         return versions
     }
 
+    /// Whether Android itself ended the app since `since`, when it was started, as when one of its permissions is
+    /// taken away, memory runs short or it's updated: on a phone it then starts again when
+    /// it's next shown. Not when the user closed it, it closed itself, or it crashed.
+    func wasEndedBySystem(package: String, since: Date) -> Bool {
+        guard package.range(of: "^[A-Za-z0-9_.]+$", options: .regularExpression) != nil,
+              let output = try? shell("dumpsys activity exit-info \(package) | grep -E 'timestamp=|process='")
+        else { return false }
+        // ApplicationExitInfo reasons: low memory, permission change, dependency died, other
+        // kills by system, freezer, package state change, package updated.
+        let bySystem: Set<Int> = [3, 8, 12, 13, 14, 15, 16]
+        let format = DateFormatter()
+        format.dateFormat = "yyyy-MM-dd HH:mm:ss.SSS"
+        var time: Date?
+        for line in output.split(whereSeparator: \.isNewline) {
+            if let range = line.range(of: "timestamp=") {
+                time = format.date(from: String(line[range.upperBound...].prefix(23)))
+            } else if line.contains("process=\(package) "), let time {
+                // The newest exit of the app's own process.
+                guard time > since,
+                      let reason = line.range(of: "reason=").flatMap({ Int(line[$0.upperBound...].prefix(while: \.isNumber)) })
+                else { return false }
+                return bySystem.contains(reason)
+            }
+        }
+        return false
+    }
+
     /// The apps the user has in Android: Inquiline's own helper isn't one.
     func installedPackages() throws -> [String] {
         try shell("cmd package list packages -3; cmd package list packages \(Self.playStorePackage)")

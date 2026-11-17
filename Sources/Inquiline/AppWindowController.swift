@@ -28,6 +28,8 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate {
     private var watchedDisplay: String?
     /// The app's task on that screen.
     private var watchedTask: Int?
+    /// When the app was started in this window, last.
+    private var appStarted = Date()
     /// Screens of sessions before a restart: a slow app can stay on one a while as it ends.
     private var oldDisplays: Set<String> = []
     /// Plugged in once the session can take input, with the app's first picture.
@@ -266,6 +268,7 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate {
     /// Starts the app again on a screen turned the way it now wants.
     private func restartApp() {
         restarted = true
+        appStarted = Date()
         resizing = false
         gamepads?.stop()
         gamepads = nil
@@ -331,8 +334,26 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate {
                         self.watchedTask = task
                     }
                     // A restart for a new screen shape leaves it empty for a moment.
-                    missing = screens.contains { $0.display == display } ? 0 : missing + 1
-                    if missing >= 2 { self.window.close() }
+                    if screens.contains(where: { $0.display == display }) {
+                        missing = 0
+                        return
+                    }
+                    missing += 1
+                    guard missing == 2 else { return }
+                    let since = self.appStarted
+                    DispatchQueue.global().async {
+                        let restart = AndroidRuntime.shared.wasEndedBySystem(package: package, since: since)
+                        DispatchQueue.main.async {
+                            if restart {
+                                AppLog.write("Android ended the app, so it starts again in its window")
+                                missing = 0
+                                self.restartApp()
+                            } else {
+                                AppLog.write("The app's screen is gone, so its window closes")
+                                self.window.close()
+                            }
+                        }
+                    }
                 }
             }
         }
