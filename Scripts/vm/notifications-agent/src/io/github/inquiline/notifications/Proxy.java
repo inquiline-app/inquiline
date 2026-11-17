@@ -34,14 +34,29 @@ final class Proxy {
     static final int PORT = 8899;
 
     interface Filter {
-        /** Whether the request for `url` is an ad; `headers` are the request's own. */
-        boolean blocks(String url, String host, String headers);
+        /**
+         * What becomes of the request for `url` (`headers` are its own): null to pass it on, an
+         * empty answer to block it, or a stand-in to answer it with.
+         */
+        Answer decide(String url, String host, String headers);
 
         /** The style that hides ad boxes on a page from `host`, or empty for none. */
         String css(String host);
 
         /** The script uBlock runs first on a page from `host` (its +js rules), or empty for none. */
         String script(String host);
+    }
+
+    /** A blocked request's answer: what uBlock gives in place of what was asked for. */
+    static final class Answer {
+        static final Answer EMPTY = new Answer(new byte[0], null);
+        final byte[] body;
+        final String type;
+
+        Answer(byte[] body, String type) {
+            this.body = body;
+            this.type = type;
+        }
     }
 
     private final Certs certs;
@@ -93,7 +108,7 @@ final class Proxy {
                 int colon = target.lastIndexOf(':');
                 String host = colon > 0 ? target.substring(0, colon) : target;
                 int port = colon > 0 ? Integer.parseInt(target.substring(colon + 1)) : 443;
-                if (filter.blocks("https://" + host + "/", host, "")) {
+                if (filter.decide("https://" + host + "/", host, "") != null) {
                     c.getOutputStream().write("HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n".getBytes(StandardCharsets.ISO_8859_1));
                     return;
                 }
@@ -174,9 +189,11 @@ final class Proxy {
             String[] line = head.substring(0, head.indexOf("\r\n")).split(" ");
             String method = line[0];
             String host = origin.substring(origin.indexOf("//") + 2);
-            if (filter.blocks(origin + line[1], host, head)) {
+            Answer blocked = filter.decide(origin + line[1], host, head);
+            if (blocked != null) {
                 skipBody(fromApp, head, true, method);
-                toApp.write("HTTP/1.1 204 No Content\r\nContent-Length: 0\r\n\r\n".getBytes(StandardCharsets.ISO_8859_1));
+                toApp.write(answerHead(blocked).getBytes(StandardCharsets.ISO_8859_1));
+                toApp.write(blocked.body);
                 toApp.flush();
                 continue;
             }
@@ -237,9 +254,11 @@ final class Proxy {
         String host = colon > 0 ? hostPort.substring(0, colon) : hostPort;
         int port = colon > 0 ? Integer.parseInt(hostPort.substring(colon + 1)) : 80;
         OutputStream toApp = client.getOutputStream();
-        if (filter.blocks(url, host, head)) {
+        Answer blocked = filter.decide(url, host, head);
+        if (blocked != null) {
             skipBody(client.getInputStream(), head, true, line[0]);
-            toApp.write("HTTP/1.1 204 No Content\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".getBytes(StandardCharsets.ISO_8859_1));
+            toApp.write(answerHead(blocked).getBytes(StandardCharsets.ISO_8859_1));
+            toApp.write(blocked.body);
             return;
         }
         try (Socket site = new Socket(host, port)) {
@@ -285,6 +304,13 @@ final class Proxy {
         try (Socket site = new Socket(host, port)) {
             pipe(client, site);
         }
+    }
+
+    /** The head of a blocked request's answer: nothing, or a stand-in of its type. */
+    private static String answerHead(Answer answer) {
+        if (answer.type == null) return "HTTP/1.1 204 No Content\r\nContent-Length: 0\r\n\r\n";
+        return "HTTP/1.1 200 OK\r\nContent-Type: " + answer.type + "\r\nContent-Length: " + answer.body.length
+                + "\r\nAccess-Control-Allow-Origin: *\r\nCache-Control: no-store\r\n\r\n";
     }
 
     /** A request for a page: what a browser asks for when it shows one. */

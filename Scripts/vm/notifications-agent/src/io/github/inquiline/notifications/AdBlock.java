@@ -179,13 +179,16 @@ public final class AdBlock extends VpnService {
         android.util.Log.i("InquilineAdBlock", "Ad blocking rules: " + rules.count);
         return new Proxy.Filter() {
             @Override
-            public boolean blocks(String url, String host, String headers) {
-                boolean blocked = isBlocked(host) || rules.blocks(request(url, host, headers));
+            public Proxy.Answer decide(String url, String host, String headers) {
+                // uBlock's lists alone: the address list, for apps' own name lookups, would also cut
+                // services uBlock leaves alone on purpose, as sites' cookie consent.
+                String decision = rules.decide(request(url, host, headers));
+                if (decision == null) return null;
                 // How many, never which: what an app asks for is the user's own business.
-                if (blocked && blockedCount.incrementAndGet() % 25 == 0) {
+                if (blockedCount.incrementAndGet() % 25 == 0) {
                     android.util.Log.i("InquilineAdBlock", "Ads blocked so far: " + blockedCount.get());
                 }
-                return blocked;
+                return decision.isEmpty() || decision.equals("empty") ? Proxy.Answer.EMPTY : standIn(decision);
             }
 
             @Override
@@ -198,6 +201,34 @@ public final class AdBlock extends VpnService {
                 return scripts.script(host);
             }
         };
+    }
+
+    private static org.json.JSONObject standIns;
+
+    /** uBlock's stand-in resource of that name (assets/redirects), or an empty answer without one. */
+    private Proxy.Answer standIn(String name) {
+        try {
+            synchronized (AdBlock.class) {
+                if (standIns == null) {
+                    try (java.io.InputStream in = getAssets().open("redirects.json")) {
+                        standIns = new org.json.JSONObject(new String(in.readAllBytes(), StandardCharsets.UTF_8));
+                    }
+                }
+            }
+            String file = standIns.optString(name, standIns.optString(name + ".js", ""));
+            if (file.isEmpty()) return Proxy.Answer.EMPTY;
+            byte[] body;
+            try (java.io.InputStream in = getAssets().open("redirects/" + file)) {
+                body = in.readAllBytes();
+            }
+            String type = file.endsWith(".js") ? "application/javascript" : file.endsWith(".css") ? "text/css"
+                    : file.endsWith(".json") ? "application/json" : file.endsWith(".gif") ? "image/gif"
+                    : file.endsWith(".png") ? "image/png" : file.endsWith(".mp4") ? "video/mp4"
+                    : file.endsWith(".mp3") ? "audio/mpeg" : file.endsWith(".xml") ? "text/xml" : "text/plain";
+            return new Proxy.Answer(body, type);
+        } catch (Exception e) {
+            return Proxy.Answer.EMPTY;
+        }
     }
 
     /** A request as the rules see it, from what a browser says in its headers about it. */
@@ -213,7 +244,9 @@ public final class AdBlock extends VpnService {
             case "audio": case "video": case "track": type = "media"; break;
             case "document": type = "document"; break;
             case "empty": type = "xmlhttprequest"; break;
-            default: type = headers.isEmpty() ? "document" : "other";
+            // Also a whole connection to a host (CONNECT), whose requests aren't seen yet: a host only
+            // ads come from is blocked there, as for an app that won't let its connections be opened.
+            default: type = "other";
         }
         String page = Proxy.header(headers, "origin");
         if (page.isEmpty() || page.equals("null")) page = Proxy.header(headers, "referer");

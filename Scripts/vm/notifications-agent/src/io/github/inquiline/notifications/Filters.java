@@ -46,6 +46,10 @@ final class Filters {
         String[] notTypes;
         String[] domains;        // page domains it applies on
         String[] notDomains;
+        /** The stand-in resource a blocked request gets, from $redirect= and its kin. */
+        String redirect;
+        /** $redirect-rule=: names the stand-in, without blocking by itself. */
+        boolean redirectOnly;
     }
 
     private final Map<String, List<Rule>> byHost = new HashMap<>();
@@ -108,10 +112,16 @@ final class Filters {
                             }
                             rule.domains = yes.isEmpty() ? null : yes.toArray(new String[0]);
                             rule.notDomains = no.isEmpty() ? null : no.toArray(new String[0]);
-                        } else if (name.startsWith("redirect=") || name.startsWith("redirect-rule=")
-                                || name.equals("empty") || name.equals("mp4")) {
-                            // uBlock answers these with a harmless stand-in; an empty answer does the same here.
-                            if (name.startsWith("redirect-rule=")) return null;
+                        } else if (name.startsWith("redirect=") || name.startsWith("redirect-rule=")) {
+                            String resource = option.trim().substring(option.indexOf('=') + 1);
+                            int priority = resource.indexOf(':');
+                            rule.redirect = priority > 0 ? resource.substring(0, priority) : resource;
+                            rule.redirectOnly = name.startsWith("redirect-rule=");
+                        } else if (name.equals("empty")) {
+                            rule.redirect = "empty";
+                        } else if (name.equals("mp4") || name.equals("media")) {
+                            if (name.equals("mp4")) rule.redirect = "noop-1s.mp4";
+                            else (not ? notTypes : types).add("media");
                         } else {
                             // Options this proxy can't honour (csp, removeparam, header, popup...): the rule is left out.
                             return null;
@@ -188,6 +198,50 @@ final class Filters {
         return best;
     }
 
+    /**
+     * What becomes of the request: null to let it through, "" to block it, or the name of the
+     * stand-in resource to answer it with, as uBlock answers some blocked scripts.
+     */
+    String decide(Request r) {
+        if (!blocks(r)) return null;
+        String url = r.url.toLowerCase(Locale.ROOT), host = r.host.toLowerCase(Locale.ROOT);
+        String redirect = null;
+        for (List<Rule> rules : candidates(url, host)) {
+            for (Rule rule : rules) {
+                if (rule.redirect == null || rule.exception || !applies(rule, r) || !matches(rule, url, host)) continue;
+                redirect = rule.redirect;
+            }
+        }
+        return redirect == null ? "" : redirect;
+    }
+
+    /** The rule lists a request's address can match: by its host and its domains, by its words. */
+    private List<List<Rule>> candidates(String url, String host) {
+        List<List<Rule>> out = new ArrayList<>();
+        for (String h = host; ; ) {
+            List<Rule> rules = byHost.get(h);
+            if (rules != null) out.add(rules);
+            int dot = h.indexOf('.');
+            if (dot < 0) break;
+            h = h.substring(dot + 1);
+        }
+        int i = 0;
+        while (i < url.length()) {
+            if (!Character.isLetterOrDigit(url.charAt(i))) {
+                i++;
+                continue;
+            }
+            int start = i;
+            while (i < url.length() && Character.isLetterOrDigit(url.charAt(i))) i++;
+            if (i - start >= 3) {
+                List<Rule> rules = byWord.get(url.substring(start, i));
+                if (rules != null) out.add(rules);
+            }
+        }
+        out.add(unindexed);
+        return out;
+    }
+
     /** Whether the request is to be blocked. */
     boolean blocks(Request r) {
         String url = r.url.toLowerCase(Locale.ROOT);
@@ -223,6 +277,7 @@ final class Filters {
     private Rule check(List<Rule> rules, Request r, String url, String host, Rule current) {
         if (rules == null) return current;
         for (Rule rule : rules) {
+            if (rule.redirectOnly) continue;
             if (current != null && current.exception && !rule.important) continue;
             if (!applies(rule, r) || !matches(rule, url, host)) continue;
             if (rule.exception) {
