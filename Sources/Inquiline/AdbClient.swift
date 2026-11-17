@@ -103,7 +103,12 @@ enum AdbClient {
 
         private var fd: Int32 = -1
         private let writeLock = NSLock()
-        private let writable = DispatchSemaphore(value: 1)
+        /// adb lets one write be on its way at a time: the next waits for Android's OKAY. A
+        /// condition, not a semaphore: a connection that ends while a write waits, or after
+        /// one took its turn, would leave a semaphore below its start, which ends the app.
+        private let turn = NSCondition()
+        private var mayWrite = true
+        private var ended = false
         private var remoteID: UInt32 = 0
         private var payloadLimit = AdbClient.maxPayload
 
@@ -144,8 +149,12 @@ enum AdbClient {
             }
         }
 
+        /// Ends the stream; the receiving side then closes the socket. Only while it's open, as
+        /// its number may otherwise be another connection's by now.
         func close() {
-            Darwin.shutdown(fd, SHUT_RDWR)
+            writeLock.lock()
+            if fd >= 0 { Darwin.shutdown(fd, SHUT_RDWR) }
+            writeLock.unlock()
         }
 
         /// Blocks until the other side has taken the data.
@@ -153,7 +162,12 @@ enum AdbClient {
             var offset = 0
             while offset < data.count {
                 let end = min(offset + payloadLimit, data.count)
-                writable.wait()
+                turn.lock()
+                while !mayWrite && !ended { turn.wait() }
+                let open = !ended
+                mayWrite = false
+                turn.unlock()
+                guard open else { throw Unavailable() }
                 try sendPacket(.write, Self.localID, remoteID, data.subdata(in: offset..<end))
                 offset = end
             }
@@ -161,23 +175,45 @@ enum AdbClient {
 
         /// Delivers data until the stream ends, then closes the socket.
         func receive(_ deliver: (Data) -> Void) {
-            defer { Darwin.close(fd) }
+            // However it ends, a write waiting gives up.
+            defer {
+                end()
+                // Under the write lock, so a write on its way can't reach the number after
+                // it's closed, when it may already be another connection's.
+                writeLock.lock()
+                Darwin.close(fd)
+                fd = -1
+                writeLock.unlock()
+            }
             while let packet = try? readPacket() {
                 switch packet.command {
                 case Command.write.rawValue:
                     deliver(packet.payload)
                     guard (try? sendPacket(.okay, Self.localID, remoteID, Data())) != nil else { return }
                 case Command.okay.rawValue:
-                    writable.signal()
+                    letWrite()
                 case Command.close.rawValue:
                     _ = try? sendPacket(.close, Self.localID, remoteID, Data())
-                    writable.signal()
                     return
                 default:
                     break
                 }
             }
-            writable.signal()
+        }
+
+        private func letWrite() {
+            turn.lock()
+            mayWrite = true
+            turn.broadcast()
+            turn.unlock()
+        }
+
+        /// No more writes: one waiting gives up.
+        private func end() {
+            turn.lock()
+            ended = true
+            turn.broadcast()
+            turn.unlock()
         }
 
         func setReceiveTimeout(seconds: Int) {
@@ -193,6 +229,7 @@ enum AdbClient {
             packet.append(payload)
             writeLock.lock()
             defer { writeLock.unlock() }
+            guard fd >= 0 else { throw Unavailable() }
             try packet.withUnsafeBytes { (bytes: UnsafeRawBufferPointer) in
                 var offset = 0
                 while offset < bytes.count {
