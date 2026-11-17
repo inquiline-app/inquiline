@@ -43,6 +43,10 @@ final class FrameRenderer {
     /// Set when Android's screen is given a new size: until the app draws on it, Android shows
     /// nothing there, and the last picture stays instead.
     private var waitingForContent = false
+    /// The size of the last picture shown, and how many pictures were held back since a new size.
+    private var shownWidth = 0
+    private var shownHeight = 0
+    private var heldBack = 0
     private var background: (UInt8, UInt8, UInt8) = (0, 0, 0)
 
     init?() {
@@ -168,19 +172,34 @@ final class FrameRenderer {
         let waiting = waitingForContent
         outputLock.unlock()
         if waiting {
-            // A grid of points: an app's screen, even a dark one, has something on it that isn't black.
-            var empty = true
-            for row in 0..<16 where empty {
-                for column in 0..<16 where pixel(width * (2 * column + 1) / 32, height * (2 * row + 1) / 32) != (0, 0, 0) {
-                    empty = false
-                    break
-                }
+            // Until the app draws for the new size, Android shows its last picture on the bigger
+            // screen and leaves the new part black, or shows nothing. Such pictures aren't shown,
+            // as a Mac keeps a window's old picture until its app draws. Android holds at most
+            // its few queued pictures before the app's own; a picture that is still black after
+            // those is the app's, as a video's black bars.
+            func black(_ xs: [Int], _ ys: [Int]) -> Bool {
+                !xs.contains { x in ys.contains { y in pixel(x, y) != (0, 0, 0) } }
             }
-            if empty { return false }
+            let grid = (0..<16).map { (2 * $0 + 1) }
+            let columns = grid.map { width * $0 / 32 }, rows = grid.map { height * $0 / 32 }
+            var unfinished = black(columns, rows)
+            if !unfinished, shownWidth > 0, width > shownWidth + 8 {
+                unfinished = black(grid.map { shownWidth + (width - shownWidth) * $0 / 32 }, rows)
+            }
+            if !unfinished, shownHeight > 0, height > shownHeight + 8 {
+                unfinished = black(columns, grid.map { shownHeight + (height - shownHeight) * $0 / 32 })
+            }
+            if unfinished, heldBack < Self.slots {
+                heldBack += 1
+                return false
+            }
             outputLock.lock()
             waitingForContent = false
             outputLock.unlock()
         }
+        heldBack = 0
+        shownWidth = width
+        shownHeight = height
         let corner = pixel(width - 4, height - 4)
         if corner != background {
             background = corner
