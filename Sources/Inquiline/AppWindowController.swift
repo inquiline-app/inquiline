@@ -903,11 +903,17 @@ private final class AppSettingsView: NSView {
         didSet { fitToContent() }
     }
 
-    /// Tells the popover or window holding the settings their size.
+    /// Tells the popover or window holding the settings their size, when it changes: resizing
+    /// as the popover opens, with what loaded hidden in a closed section, made it flicker.
     func fitToContent() {
         layoutSubtreeIfNeeded()
-        onResize?(fittingSize)
+        let size = fittingSize
+        guard size != fittedSize else { return }
+        fittedSize = size
+        onResize?(size)
     }
+
+    private var fittedSize: NSSize?
     private let package: String
     private let label: String
     private let notifications = NSSwitch()
