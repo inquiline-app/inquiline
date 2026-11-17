@@ -77,8 +77,11 @@ final class Library {
         changed()
     }
 
+    /// Whether the app has its full icon, 1024 pixels: icons taken from Android's launcher
+    /// before were a tenth of that, and are taken again.
     func hasIcon(package: String) -> Bool {
-        FileManager.default.fileExists(atPath: iconURL(package).path)
+        guard let rep = NSImageRep(contentsOf: iconURL(package)) else { return false }
+        return rep.pixelsWide >= 1024
     }
 
     func setIcon(_ png: Data, package: String) {

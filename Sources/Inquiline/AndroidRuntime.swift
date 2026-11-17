@@ -846,6 +846,7 @@ final class AndroidRuntime {
         return versions
     }
 
+    /// The apps the user has in Android: Inquiline's own helper isn't one.
     func installedPackages() throws -> [String] {
         try shell("cmd package list packages -3; cmd package list packages \(Self.playStorePackage)")
             .split(whereSeparator: \.isNewline)
@@ -853,11 +854,27 @@ final class AndroidRuntime {
                 let text = line.trimmingCharacters(in: .whitespaces)
                 return text.hasPrefix("package:") ? String(text.dropFirst("package:".count)) : nil
             }
+            .filter { $0 != NotificationBridge.agent }
     }
 
     /// The launcher already renders each app's icon, adaptive ones included, and
     /// caches the result. Reading it needs root, which this Android allows.
+    /// The app's icon as its Mac app's: 1024 pixels, filled to its edges (the helper's Icon
+    /// class), or else the launcher's small one.
     func iconPNG(package: String) -> Data? {
+        guard package.range(of: "^[A-Za-z0-9_.]+$", options: .regularExpression) != nil else { return nil }
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent("icon-\(package).png")
+        defer { try? FileManager.default.removeItem(at: file) }
+        let agent = NotificationBridge.agent
+        if (try? AdbClient.download("su 0 sh -c 'CLASSPATH=$(pm path \(agent) | cut -d: -f2) app_process / \(agent).Icon \(package)'",
+                                    to: file)) != nil,
+           let png = try? Data(contentsOf: file), png.starts(with: [0x89, 0x50, 0x4E, 0x47]) {
+            return png
+        }
+        return launcherIcon(package: package)
+    }
+
+    private func launcherIcon(package: String) -> Data? {
         guard let hex = launcherCache(column: "hex(icon)", package: package) else { return nil }
         var bytes = Data(capacity: hex.count / 2)
         var index = hex.startIndex
