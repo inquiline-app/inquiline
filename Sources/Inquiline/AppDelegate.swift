@@ -185,6 +185,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, SPUSta
             if url.scheme == "inquiline", url.host == "open",
                let package = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first(where: { $0.name == "package" })?.value {
                 reopenUpdated(package: package)
+            } else if url.scheme == "inquiline", url.host == "files" {
+                // An app's own folder on Android's disk, asked for from its window: Inquiline
+                // mounts the disk, as an app's own process would need the user's leave to.
+                let label = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first(where: { $0.name == "label" })?.value
+                run("Starting Android…") {
+                    try self.prepareAndroid()
+                    AndroidFiles.show(label: label)
+                }
             } else if url.scheme == "inquiline" {
                 run("Starting Android…") { try self.prepareAndroid() }
             } else {
