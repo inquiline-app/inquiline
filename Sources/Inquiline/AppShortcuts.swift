@@ -139,7 +139,7 @@ enum AppShortcuts {
             let existing = FileManager.default.fileExists(atPath: bundle.path)
             guard let icon = icon ?? (existing ? nil : NSImage(systemSymbolName: "gearshape.fill", accessibilityDescription: nil))
             else { return DispatchQueue.main.async { done(bundle) } }
-            let app = App(package: settingsPackage, label: "Android Settings", orientation: .portrait, isGame: false, icon: icon)
+            let app = App(package: settingsPackage, label: "Android Settings", orientation: .both, isGame: false, icon: icon)
             let written = write(app, to: bundle, program: program, server: server, frames: frames, fingerprint: fingerprint)
             DispatchQueue.main.async { done(written ? bundle : nil) }
         }

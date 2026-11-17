@@ -92,10 +92,15 @@ final class ScrcpySession {
     var onClipboard: ((String) -> Void)?
 
     /// `restartsApp` stops the app first, so it starts again on this session's screen.
-    init(package: String, screen: Screen, restartsApp: Bool = false) {
+    /// Android's screen takes the window's size when it changes (sendResize), as on a desktop
+    /// Android: the app lays out again instead of being scaled.
+    let isFlexible: Bool
+
+    init(package: String, screen: Screen, restartsApp: Bool = false, flexible: Bool = false) {
         self.package = package
         self.screen = screen
         self.restartsApp = restartsApp
+        isFlexible = flexible
     }
 
     func start() {
@@ -151,6 +156,7 @@ final class ScrcpySession {
             "tunnel_forward=true",
             "frames=true",
             "new_display=\(screen.width)x\(screen.height)/\(screen.density)",
+            "flex_display=\(isFlexible)",
             "vd_system_decorations=false",
             "display_ime_policy=hide",
             "power_on=false",
@@ -323,6 +329,16 @@ final class ScrcpySession {
             send(Data([17])) // reset video
             askForPictureIfNone(tries: tries - 1)
         }
+    }
+
+    /// Gives a flexible Android screen a new size in pixels; its density stays, so the app gets
+    /// more or less room, not bigger or smaller. Android takes the last of a quick series.
+    func sendResize(width: Int, height: Int) {
+        guard isFlexible else { return }
+        var message = Data([21])
+        message.appendBigEndian(UInt16(clamping: width))
+        message.appendBigEndian(UInt16(clamping: height))
+        send(message)
     }
 
     /// Turns the Android screen, as when turning a phone. Apps locked to one way ignore it.

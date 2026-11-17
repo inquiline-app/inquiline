@@ -27,9 +27,17 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate {
     /// Plugged in once the session can take input, with the app's first picture.
     private var gamepads: GamepadBridge?
 
-    init(package: String, label: String, orientation: AppOrientation, landscape: Bool, fromNotification: Bool = false) {
+    /// The app's Android screen follows the window, as on a desktop Android or a Mac app: a
+    /// bigger window shows more of the app, at the same size, not a bigger picture. For apps
+    /// that turn freely and aren't games; games and apps held one way are scaled, as their
+    /// screens are drawn for a phone's.
+    private let isFlexible: Bool
+
+    init(package: String, label: String, orientation: AppOrientation, landscape: Bool, flexible: Bool = false,
+         fromNotification: Bool = false) {
         self.package = package
         self.orientation = orientation
+        isFlexible = flexible
         isLandscape = landscape
         resolution = ScrcpySession.Resolution.forThisMac
         let androidScreen = resolution.screen(landscape: landscape)
@@ -70,7 +78,18 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate {
         addToolbar()
         window.setContentSize(points)
         window.center()
+        if flexible {
+            // Any shape, and Android's screen starts as the window is, where it was left.
+            window.contentResizeIncrements = NSSize(width: 1, height: 1)
+            window.contentMinSize = Self.smallestFlexible
+        }
         window.setFrameAutosaveName("Window")
+        if flexible {
+            let screen = flexibleScreen()
+            session = ScrcpySession(package: package, screen: screen, flexible: true)
+            session.startsApp = !fromNotification
+            displaySize = NSSize(width: screen.width, height: screen.height)
+        }
         AppLog.write("Screen of \(Int(displaySize.width)) by \(Int(displaySize.height)) pixels")
         connect(session)
     }
@@ -174,6 +193,11 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate {
             self?.displayView.setDisplaySize(width: width, height: height)
             DispatchQueue.main.async {
                 guard let self else { return }
+                // A flexible screen follows the window, not the window it.
+                guard !self.isFlexible else {
+                    self.displaySize = NSSize(width: width, height: height)
+                    return
+                }
                 self.followAndroid(landscape: width > height)
                 self.displaySize = NSSize(width: width, height: height)
                 self.fitWindow()
@@ -222,7 +246,8 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate {
         displayView.keyboard?.stop()
         displayView.keyboard = nil
         session.stop()
-        session = ScrcpySession(package: package, screen: resolution.screen(landscape: isLandscape), restartsApp: true)
+        session = isFlexible ? ScrcpySession(package: package, screen: flexibleScreen(), restartsApp: true, flexible: true)
+            : ScrcpySession(package: package, screen: resolution.screen(landscape: isLandscape), restartsApp: true)
         if let old = watchedDisplay { oldDisplays.insert(old) }
         watchedDisplay = nil // the new session brings a new Android screen
         connect(session)
@@ -287,6 +312,7 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate {
     /// A window already of this shape keeps the size it was given.
     /// When the app turns, the window turns with it, as large as it was.
     private func fitWindow() {
+        guard !isFlexible else { return }
         let size = displaySize
         let landscape = size.width > size.height
         window.contentAspectRatio = size
@@ -302,6 +328,27 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate {
         }
         let smallest = Self.smallest(landscape: landscape)
         window.setContentSize(turned.width < smallest.width ? smallest : turned)
+    }
+
+    /// The smallest a flexible app's window gets: a small phone's screen, which every app lays out for.
+    private static let smallestFlexible = NSSize(width: 360, height: 400)
+
+    /// A flexible app's Android screen: the window's pixels, at a density that makes one point of
+    /// the window one dp of Android's, as Mac apps lay out in points.
+    private func flexibleScreen() -> ScrcpySession.Screen {
+        let scale = max(window.backingScaleFactor, NSScreen.main?.backingScaleFactor ?? Self.pixelsPerPoint)
+        let size = screen.bounds.size
+        func even(_ value: CGFloat) -> Int { max(2, Int((value * scale / 2).rounded()) * 2) }
+        return ScrcpySession.Screen(width: even(size.width), height: even(size.height), density: Int(160 * scale))
+    }
+
+    /// As the window takes a new size, Android's screen does; Android lays the app out again once
+    /// the sizes stop changing, and the picture is scaled meanwhile.
+    func windowDidResize(_ notification: Notification) {
+        guard isFlexible else { return }
+        let screen = flexibleScreen()
+        guard CGFloat(screen.width) != displaySize.width || CGFloat(screen.height) != displaySize.height else { return }
+        session.sendResize(width: screen.width, height: screen.height)
     }
 
     /// A phone's size, in the screen's shape: the smallest a window gets.
@@ -586,6 +633,14 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate {
 
     @objc private func rotate() {
         guard orientation == .both else { return }
+        // A flexible app's screen is the window's: turning it turns the window.
+        if isFlexible {
+            guard !isFullScreen else { return }
+            let size = screen.bounds.size
+            window.setContentSize(NSSize(width: max(size.height, Self.smallestFlexible.width),
+                                         height: max(size.width, Self.smallestFlexible.height)))
+            return
+        }
         userTurned = true
         session.sendRotate()
     }

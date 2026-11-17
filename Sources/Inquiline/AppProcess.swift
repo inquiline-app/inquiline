@@ -26,7 +26,10 @@ final class AppProcess: NSObject, NSApplicationDelegate {
         // A Mac screen is wide, so every app that can run in landscape starts that way.
         // Only portrait-only apps start upright.
         let landscape = orientation != .portrait
+        // Apps that turn freely lay out for the window's size; games and apps held one way are scaled.
+        let isGame = info["LSApplicationCategoryType"] as? String == "public.app-category.games"
         let controller = AppWindowController(package: package, label: label, orientation: orientation, landscape: landscape,
+                                             flexible: !isGame && orientation == .both,
                                              fromNotification: CommandLine.arguments.contains(NotificationBridge.fromNotification))
         self.controller = controller
         buildMenu(label: label, controller: controller)
