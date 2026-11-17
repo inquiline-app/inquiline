@@ -4,7 +4,6 @@ import Foundation
 /// A small client for Android's adb protocol, talking directly to adbd in the VM.
 /// Each stream gets its own connection, so a slow stream can't hold up another.
 enum AdbClient {
-    private static let port = 5556
     private static let maxPayload = 1 << 20
 
     /// Runs a command and returns its output. Android's exit status isn't reported.
@@ -132,7 +131,7 @@ enum AdbClient {
             var attempts = 10
             while true {
                 do {
-                    fd = try ScrcpyServer.openSocket(port: AdbClient.port)
+                    fd = try ScrcpyServer.openSocket(path: AndroidRuntime.shared.adbSocket.path)
                     setReceiveTimeout(seconds: 5)
                     try sendPacket(.connect, Self.version, UInt32(AdbClient.maxPayload), Data("host::\0".utf8))
                     let hello = try readPacket()

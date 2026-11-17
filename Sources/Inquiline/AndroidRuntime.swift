@@ -18,9 +18,12 @@ struct ApkInfo {
 final class AndroidRuntime {
     static let shared = AndroidRuntime()
 
-    /// Connecting to this Mac port makes the VM shut down cleanly. It must stay
-    /// outside 5555-5585, where any adb server on the Mac probes for emulators.
-    private static let powerOffPort = 15557
+    /// adb and the clean shutdown are Unix sockets in the VM's own folder, which only this
+    /// Mac user reaches: a port on 127.0.0.1 any app could connect to, sandboxed ones and
+    /// other users' too, and adb on it is root in Android, Google sign-in included.
+    var adbSocket: URL { vmHome.appendingPathComponent("adb.sock") }
+    /// Connecting to it makes the VM shut down cleanly.
+    private var powerOffSocket: URL { vmHome.appendingPathComponent("power.sock") }
     /// Samba in the VM, for AndroidFiles.
     static let filesPort = 15445
     private static let googlePlayFolder = "/data/inquiline-gapps"
@@ -76,6 +79,9 @@ final class AndroidRuntime {
             }
         } else {
             try FileManager.default.createDirectory(at: vmHome, withIntermediateDirectories: true)
+            // Android's disk and sockets are this Mac user's alone, as a phone's storage is its
+            // owner's: other users of the Mac can't read the folder.
+            try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: home.path)
             let firstLaunch = !FileManager.default.fileExists(atPath: disk.path)
             AppLog.write(firstLaunch ? "Setting up Android for the first time" : "Starting Android")
             status(firstLaunch ? "Setting up Android, the first launch takes longer…" : "Starting Android…")
@@ -238,7 +244,7 @@ final class AndroidRuntime {
     }
 
     private func powerDownVM() {
-        if let socket = try? ScrcpyServer.openSocket(port: Self.powerOffPort) { close(socket) }
+        if let socket = try? ScrcpyServer.openSocket(path: powerOffSocket.path) { close(socket) }
     }
 
     private func isDeviceAttached() -> Bool {
@@ -535,7 +541,7 @@ final class AndroidRuntime {
             // which gives it back to the Mac through memory-release.c.
             "-device", "virtio-balloon-pci,free-page-reporting=on",
             "-device", "virtio-net-pci,netdev=n,romfile=",
-            "-netdev", "user,id=n,hostfwd=tcp:127.0.0.1:5556-:5555,hostfwd=tcp:127.0.0.1:\(Self.powerOffPort)-:5000,hostfwd=tcp:127.0.0.1:\(Self.filesPort)-:445",
+            "-netdev", "user,id=n,hostfwd=unix:\(adbSocket.path)-:5555,hostfwd=unix:\(powerOffSocket.path)-:5000,hostfwd=tcp:127.0.0.1:\(Self.filesPort)-:445",
             "-display", "none", "-serial", "none", "-monitor", "none",
             "-qmp", "unix:\(EngineControl.socket.path),server=on,wait=off",
             // A second one, which Inquiline keeps open for the engine's events.
