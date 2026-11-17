@@ -347,6 +347,14 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate {
         return ScrcpySession.Screen(width: even(size.width), height: even(size.height), density: Int(160 * scale))
     }
 
+    func windowWillStartLiveResize(_ notification: Notification) {
+        displayView.renderer?.setLiveResize(true)
+    }
+
+    func windowDidEndLiveResize(_ notification: Notification) {
+        displayView.renderer?.setLiveResize(false)
+    }
+
     /// As the window takes a new size, Android's screen does, live: one size at a time, the
     /// window's newest as soon as Android has taken the last, so requests never pile up.
     func windowDidResize(_ notification: Notification) {

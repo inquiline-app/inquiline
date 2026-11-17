@@ -36,6 +36,19 @@ final class FrameRenderer {
     private var scaler: MTLFXSpatialScaler?
     private var scaled: MTLTexture?
 
+    /// While its window is resized, macOS shows a layer's new pictures only with the main
+    /// thread's own updates; ones presented from this thread wait for the resize to end. So
+    /// meanwhile each picture is presented on the main thread, as Apple's Metal views do.
+    private var presentsOnMain = false
+
+    /// Called on the main thread as the window's live resize starts and ends.
+    func setLiveResize(_ live: Bool) {
+        layer.presentsWithTransaction = live
+        outputLock.lock()
+        presentsOnMain = live
+        outputLock.unlock()
+    }
+
     init?() {
         guard let device = MTLCreateSystemDefaultDevice(), let queue = device.makeCommandQueue(),
               let library = try? device.makeLibrary(source: Self.shaders, options: nil)
@@ -123,9 +136,18 @@ final class FrameRenderer {
             encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
             encoder.endEncoding()
         }
-        commands.present(drawable)
         commands.addCompletedHandler { [freeSlots] _ in freeSlots.signal() }
-        commands.commit()
+        outputLock.lock()
+        let onMain = presentsOnMain
+        outputLock.unlock()
+        if onMain {
+            commands.commit()
+            commands.waitUntilScheduled()
+            DispatchQueue.main.async { drawable.present() }
+        } else {
+            commands.present(drawable)
+            commands.commit()
+        }
     }
 
     /// Called on the main thread when the window's size or screen changes.
