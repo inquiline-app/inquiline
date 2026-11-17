@@ -922,7 +922,9 @@ private final class AppSettingsView: NSView {
         // Red, as the Mac shows what can't be undone; it asks first. Clearing the cache loses
         // nothing the app can't fetch again, so it neither asks nor warns, as on Android.
         data.hasDestructiveAction = true
-        data.contentTintColor = .systemRed
+        data.attributedTitle = NSAttributedString(string: data.title, attributes: [
+            .foregroundColor: NSColor.systemRed, .font: data.font ?? NSFont.systemFont(ofSize: NSFont.systemFontSize),
+        ])
         let clearing = NSStackView(views: [cache, data])
         clearing.orientation = .horizontal
         clearing.distribution = .fillEqually
