@@ -330,16 +330,17 @@ index 20532c0..6f20ac5 100644
          return buf.array();
      }
 diff --git a/server/src/main/java/com/genymobile/scrcpy/display/DisplayResizeDebouncer.java b/server/src/main/java/com/genymobile/scrcpy/display/DisplayResizeDebouncer.java
-index 0b961c6..259c5a3 100644
+index 0b961c6..471d068 100644
 --- a/server/src/main/java/com/genymobile/scrcpy/display/DisplayResizeDebouncer.java
 +++ b/server/src/main/java/com/genymobile/scrcpy/display/DisplayResizeDebouncer.java
-@@ -7,7 +7,8 @@ import android.os.SystemClock;
+@@ -7,7 +7,9 @@ import android.os.SystemClock;
  
  public final class DisplayResizeDebouncer {
  
 -    private static final long DEBOUNCE_DELAY_MS = 300;
-+    // Inquiline: 100 ms, not 300, so an app answers sooner once its window stops changing.
-+    private static final long DEBOUNCE_DELAY_MS = 100;
++    // Inquiline: at once. The Mac sends a size only when the window is let go (or at once, as
++    // for full screen), and covers the app meanwhile, so there is nothing to wait for.
++    private static final long DEBOUNCE_DELAY_MS = 0;
  
      public interface Callback {
          void trigger(Size size);

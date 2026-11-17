@@ -36,6 +36,21 @@ final class FrameRenderer {
     private var scaler: MTLFXSpatialScaler?
     private var scaled: MTLTexture?
 
+    /// An app laid out for its window's size (AppWindowController's flexible apps): its picture is
+    /// the window's own pixels, never upscaled; while the window is resized it's scaled to fit,
+    /// and what it doesn't cover has the app's own background colour, not black.
+    private(set) var keepsPixelSize = false
+    /// Set when Android's screen has a new size (setSize): until the app draws for it, Android
+    /// shows half-drawn pictures, which aren't shown.
+    private var waitingForContent = false
+    /// The size of the last picture shown, and how many pictures were held back since a new size.
+    private var shownWidth = 0
+    private var shownHeight = 0
+    private var heldBack = 0
+    private var background: (UInt8, UInt8, UInt8) = (0, 0, 0)
+    /// Called on the main thread when the app has drawn for its new size (after awaitContent).
+    var onContent: (() -> Void)?
+
     init?() {
         guard let device = MTLCreateSystemDefaultDevice(), let queue = device.makeCommandQueue(),
               let library = try? device.makeLibrary(source: Self.shaders, options: nil)
@@ -57,6 +72,11 @@ final class FrameRenderer {
         layer.displaySyncEnabled = true
     }
 
+    /// Called on the main thread, once, for an app that lays out for its window.
+    func keepPixelSize() {
+        keepsPixelSize = true
+    }
+
     deinit {
         if server >= 0 { close(server) }
         unmapMemory()
@@ -71,6 +91,11 @@ final class FrameRenderer {
         defer { for _ in 0..<Self.slots { freeSlots.signal() } }
         self.width = width
         self.height = height
+        if keepsPixelSize {
+            outputLock.lock()
+            waitingForContent = true
+            outputLock.unlock()
+        }
         layer.drawableSize = CGSize(width: width, height: height)
         scaler = nil
         textures = []
@@ -101,6 +126,10 @@ final class FrameRenderer {
             freeSlots.signal()
             return
         }
+        if keepsPixelSize, !takeContent(slot: slot) {
+            freeSlots.signal()
+            return
+        }
         var frame = textures[slot]
         if let scaler = upscaler() {
             scaler.colorTexture = frame
@@ -128,6 +157,59 @@ final class FrameRenderer {
         commands.commit()
     }
 
+    /// Whether the frame in `slot` is shown: after a new size, an empty screen isn't, as Android
+    /// draws one while the app lays out again. Also takes the app's background colour from the
+    /// frame's bottom right corner, for the part of the window the picture doesn't cover.
+    private func takeContent(slot: Int) -> Bool {
+        guard let memory else { return true }
+        let pixels = memory.advanced(by: slot * slotSize).assumingMemoryBound(to: UInt8.self)
+        func pixel(_ x: Int, _ y: Int) -> (UInt8, UInt8, UInt8) {
+            let offset = (min(max(y, 0), height - 1) * width + min(max(x, 0), width - 1)) * 4
+            return (pixels[offset], pixels[offset + 1], pixels[offset + 2])
+        }
+        outputLock.lock()
+        let waiting = waitingForContent
+        outputLock.unlock()
+        if waiting {
+            // Until the app draws for the new size, Android shows its last picture on the bigger
+            // screen and leaves the new part black, or shows nothing. Such pictures aren't shown,
+            // as a Mac keeps a window's old picture until its app draws. Android holds at most
+            // its few queued pictures before the app's own; a picture that is still black after
+            // those is the app's, as a video's black bars.
+            func black(_ xs: [Int], _ ys: [Int]) -> Bool {
+                !xs.contains { x in ys.contains { y in pixel(x, y) != (0, 0, 0) } }
+            }
+            let grid = (0..<16).map { (2 * $0 + 1) }
+            let columns = grid.map { width * $0 / 32 }, rows = grid.map { height * $0 / 32 }
+            var unfinished = black(columns, rows)
+            if !unfinished, shownWidth > 0, width > shownWidth + 8 {
+                unfinished = black(grid.map { shownWidth + (width - shownWidth) * $0 / 32 }, rows)
+            }
+            if !unfinished, shownHeight > 0, height > shownHeight + 8 {
+                unfinished = black(columns, grid.map { shownHeight + (height - shownHeight) * $0 / 32 })
+            }
+            if unfinished, heldBack < Self.slots {
+                heldBack += 1
+                return false
+            }
+            outputLock.lock()
+            waitingForContent = false
+            outputLock.unlock()
+            DispatchQueue.main.async { [weak self] in self?.onContent?() }
+        }
+        heldBack = 0
+        shownWidth = width
+        shownHeight = height
+        let corner = pixel(width - 4, height - 4)
+        if corner != background {
+            background = corner
+            let color = CGColor(srgbRed: CGFloat(corner.0) / 255, green: CGFloat(corner.1) / 255,
+                                blue: CGFloat(corner.2) / 255, alpha: 1)
+            DispatchQueue.main.async { [layer] in layer.backgroundColor = color }
+        }
+        return true
+    }
+
     /// Called on the main thread when the window's size or screen changes.
     func setWindowPixels(_ size: CGSize) {
         outputLock.lock()
@@ -141,6 +223,8 @@ final class FrameRenderer {
     /// The upscaler for the window's current size, made again when it changes. None when the
     /// window shows the frame at its own size or smaller, where the layer's scaling is enough.
     private func upscaler() -> MTLFXSpatialScaler? {
+        // Its picture is the window's own pixels, never scaled up.
+        if keepsPixelSize { return nil }
         outputLock.lock()
         let window = windowPixels, changed = windowChanged
         outputLock.unlock()
