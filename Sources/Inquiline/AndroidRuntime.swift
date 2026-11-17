@@ -830,6 +830,22 @@ final class AndroidRuntime {
         return ApkManifest(manifest: data)
     }
 
+    /// Every app's version, by package, from one look at Android's package list.
+    func versions() -> [String: String] {
+        guard let output = try? shell("dumpsys package packages | grep -E '^  Package \\[|^    versionName='") else { return [:] }
+        var versions: [String: String] = [:]
+        var package: String?
+        for line in output.split(whereSeparator: \.isNewline) {
+            if line.hasPrefix("  Package [") {
+                package = line.dropFirst("  Package [".count).split(separator: "]").first.map(String.init)
+            } else if let current = package, let value = line.split(separator: "=", maxSplits: 1).last {
+                versions[current] = String(value)
+                package = nil
+            }
+        }
+        return versions
+    }
+
     func installedPackages() throws -> [String] {
         try shell("cmd package list packages -3; cmd package list packages \(Self.playStorePackage)")
             .split(whereSeparator: \.isNewline)

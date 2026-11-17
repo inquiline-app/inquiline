@@ -19,6 +19,8 @@ struct LibraryApp: Codable {
     var label: String
     var orientation: AppOrientation?
     var isGame: Bool?
+    /// The app's own version, as Android's Settings shows it.
+    var version: String?
 }
 
 /// The apps installed in the VM, kept on the Mac so the list and its icons are
@@ -38,6 +40,18 @@ final class Library {
            let saved = try? JSONDecoder().decode([LibraryApp].self, from: data) {
             apps = saved
         }
+    }
+
+    /// Each app's version as Android has it now; an update from Google Play changes it.
+    func setVersions(_ versions: [String: String]) {
+        var updated = false
+        for index in apps.indices {
+            if let version = versions[apps[index].package], apps[index].version != version {
+                apps[index].version = version
+                updated = true
+            }
+        }
+        if updated { changed() }
     }
 
     func add(_ info: ApkInfo) {

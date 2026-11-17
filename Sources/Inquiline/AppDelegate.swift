@@ -480,11 +480,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, SPUSta
                            isGame: runtime.isGame(package: package, manifest: manifest))
         }
         let icons = missingIcons.compactMap { package in runtime.iconPNG(package: package).map { (package, $0) } }
+        let versions = runtime.versions()
 
         DispatchQueue.main.sync {
             known.filter { !installed.contains($0.package) }.forEach { library.remove(package: $0.package) }
             added.forEach { library.add($0) }
             icons.forEach { library.setIcon($0.1, package: $0.0) }
+            library.setVersions(versions)
         }
         updateFiles()
     }
@@ -537,7 +539,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, SPUSta
         // An app is only given a shortcut once its name is known.
         let apps = library.apps.filter { $0.label != $0.package }.map {
             AppShortcuts.App(package: $0.package, label: $0.label, orientation: $0.orientation ?? .both,
-                             isGame: $0.isGame ?? false, icon: library.icon(package: $0.package))
+                             isGame: $0.isGame ?? false, icon: library.icon(package: $0.package), version: $0.version)
         }
         AppShortcuts.sync(apps, done: done)
     }

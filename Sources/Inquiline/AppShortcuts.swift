@@ -11,6 +11,8 @@ enum AppShortcuts {
         let orientation: AppOrientation
         let isGame: Bool
         let icon: NSImage
+        /// The app's own version, shown in Finder's Get Info as a Mac app's is.
+        var version: String?
     }
 
     static let packageKey = "InquilinePackage"
@@ -271,7 +273,7 @@ enum AppShortcuts {
             "CFBundleName": app.label,
             "CFBundleIconFile": "AppIcon",
             "CFBundlePackageType": "APPL",
-            "CFBundleShortVersionString": "1.0",
+            "CFBundleShortVersionString": app.version ?? "1.0",
             "LSMinimumSystemVersion": "14.0",
             "NSHighResolutionCapable": true,
             packageKey: app.package,
