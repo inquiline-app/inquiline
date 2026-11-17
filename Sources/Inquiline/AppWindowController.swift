@@ -26,6 +26,8 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate {
     private let veil = NSView()
     /// The Android screen this window shows, once the app has appeared on it.
     private var watchedDisplay: String?
+    /// The app's task on that screen.
+    private var watchedTask: Int?
     /// Screens of sessions before a restart: a slow app can stay on one a while as it ends.
     private var oldDisplays: Set<String> = []
     /// Plugged in once the session can take input, with the app's first picture.
@@ -322,6 +324,12 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate {
                         $0.activity.contains(" \(package)/") && !self.oldDisplays.contains($0.display)
                     }?.display
                     guard let display = self.watchedDisplay else { return }
+                    // The app's task there, which closing the window removes.
+                    if let top = screens.first(where: { $0.display == display && $0.activity.contains(" \(package)/") }),
+                       let word = top.activity.split(separator: " ").last(where: { $0.hasPrefix("t") }),
+                       let task = Int(word.dropFirst().prefix(while: \.isNumber)) {
+                        self.watchedTask = task
+                    }
                     // A restart for a new screen shape leaves it empty for a moment.
                     missing = screens.contains { $0.display == display } ? 0 : missing + 1
                     if missing >= 2 { self.window.close() }
@@ -703,6 +711,12 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate {
     }
 
     func windowWillClose(_ notification: Notification) {
+        // Closing the window is quitting the app, as swiping it away from a phone's recent apps:
+        // its task is removed, so Android tells the app, which stops what it was doing (a video
+        // playing on, say). Only removing its screen would leave its services running.
+        if let task = watchedTask {
+            _ = try? AdbClient.shell("am stack remove \(task)", timeout: 3)
+        }
         displayView.controls.releaseAll()
         watch?.invalidate()
         fpsTimer?.invalidate()
