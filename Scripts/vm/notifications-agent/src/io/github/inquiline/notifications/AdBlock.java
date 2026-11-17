@@ -137,20 +137,32 @@ public final class AdBlock extends VpnService {
             byte[] pem = Files.readAllBytes(new File(getFilesDir(), "ca.pem").toPath());
             byte[] key = Files.readAllBytes(new File(getFilesDir(), "ca.key").toPath());
             Filters rules = new Filters();
-            for (String list : new String[] {"easylist.txt", "easyprivacy.txt", "ublock-filters.txt"}) {
+            Cosmetics hiding = new Cosmetics();
+            for (String list : new String[] {"easylist.txt", "easyprivacy.txt", "ublock-filters.txt", "adguard-turkish.txt"}) {
                 try (BufferedReader in = new BufferedReader(new InputStreamReader(getAssets().open(list), StandardCharsets.UTF_8))) {
                     rules.load(in);
+                }
+                try (BufferedReader in = new BufferedReader(new InputStreamReader(getAssets().open(list), StandardCharsets.UTF_8))) {
+                    hiding.load(in);
                 }
             }
             android.util.Log.i("InquilineAdBlock", "Ad blocking rules: " + rules.count);
             java.util.concurrent.atomic.AtomicInteger blockedCount = new java.util.concurrent.atomic.AtomicInteger();
-            Proxy started = new Proxy(new Certs(pem, key), (url, host, headers) -> {
-                boolean blocked = isBlocked(host) || rules.blocks(request(url, host, headers));
-                // How many, never which: what an app asks for is the user's own business.
-                if (blocked && blockedCount.incrementAndGet() % 25 == 0) {
-                    android.util.Log.i("InquilineAdBlock", "Ads blocked so far: " + blockedCount.get());
+            Proxy started = new Proxy(new Certs(pem, key), new Proxy.Filter() {
+                @Override
+                public boolean blocks(String url, String host, String headers) {
+                    boolean blocked = isBlocked(host) || rules.blocks(request(url, host, headers));
+                    // How many, never which: what an app asks for is the user's own business.
+                    if (blocked && blockedCount.incrementAndGet() % 25 == 0) {
+                        android.util.Log.i("InquilineAdBlock", "Ads blocked so far: " + blockedCount.get());
+                    }
+                    return blocked;
                 }
-                return blocked;
+
+                @Override
+                public String css(String host) {
+                    return hiding.css(host);
+                }
             });
             started.start();
             proxy = started;

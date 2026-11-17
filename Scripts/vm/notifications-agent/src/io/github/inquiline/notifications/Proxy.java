@@ -36,6 +36,9 @@ final class Proxy {
     interface Filter {
         /** Whether the request for `url` is an ad; `headers` are the request's own. */
         boolean blocks(String url, String host, String headers);
+
+        /** The style that hides ad boxes on a page from `host`, or empty for none. */
+        String css(String host);
     }
 
     private final Certs certs;
@@ -158,6 +161,9 @@ final class Proxy {
                 toApp.flush();
                 continue;
             }
+            // A page, which gets the style that hides ad boxes: asked for in an encoding this proxy reads.
+            boolean page = isPage(head);
+            if (page) request = withHeader(head, "Accept-Encoding", "gzip, deflate").getBytes(StandardCharsets.ISO_8859_1);
             toSite.write(request);
             copyBody(fromApp, toSite, head, true, method);
             toSite.flush();
@@ -169,9 +175,26 @@ final class Proxy {
                 if (response == null) return;
                 answer = new String(response, StandardCharsets.ISO_8859_1);
                 status = Integer.parseInt(answer.substring(9, 12));
-                toApp.write(response);
-                toApp.flush();
+                if (status == 100) {
+                    toApp.write(response);
+                    toApp.flush();
+                }
             } while (status == 100);
+            if (page && status == 200 && !method.equals("HEAD")
+                    && header(answer, "content-type").toLowerCase(Locale.ROOT).contains("text/html")) {
+                String css = filter.css(host);
+                byte[] body = readBody(fromSite, answer);
+                if (body == null) return;
+                byte[] shown = css.isEmpty() ? body : withStyle(body, css);
+                String out = rebuilt(answer, shown.length, css);
+                toApp.write(out.getBytes(StandardCharsets.ISO_8859_1));
+                toApp.write(shown);
+                toApp.flush();
+                if (header(answer, "connection").equalsIgnoreCase("close")) return;
+                continue;
+            }
+            toApp.write(response);
+            toApp.flush();
             if (status == 101) {
                 pipe(app, site);
                 return;
@@ -243,6 +266,137 @@ final class Proxy {
         try (Socket site = new Socket(host, port)) {
             pipe(client, site);
         }
+    }
+
+    /** A request for a page: what a browser asks for when it shows one. */
+    private static boolean isPage(String head) {
+        String dest = header(head, "sec-fetch-dest");
+        if (!dest.isEmpty()) return dest.equalsIgnoreCase("document") || dest.equalsIgnoreCase("iframe");
+        return header(head, "accept").startsWith("text/html");
+    }
+
+    /** The head with `name` set to `value`. */
+    private static String withHeader(String head, String name, String value) {
+        StringBuilder out = new StringBuilder();
+        boolean set = false;
+        String[] lines = head.split("\r\n");
+        for (int i = 0; i < lines.length; i++) {
+            String line = lines[i];
+            if (i > 0 && line.isEmpty()) continue;
+            int colon = line.indexOf(':');
+            if (i > 0 && colon > 0 && line.substring(0, colon).trim().equalsIgnoreCase(name)) {
+                if (set) continue;
+                line = name + ": " + value;
+                set = true;
+            }
+            out.append(line).append("\r\n");
+        }
+        if (!set) out.append(name).append(": ").append(value).append("\r\n");
+        return out.append("\r\n").toString();
+    }
+
+    /** A page's answer head for its new body: its own length, no encoding, and our style allowed. */
+    private static String rebuilt(String head, int length, String css) throws IOException {
+        StringBuilder out = new StringBuilder();
+        String hash = css.isEmpty() ? null : "'sha256-" + java.util.Base64.getEncoder().encodeToString(sha256(css)) + "'";
+        String[] lines = head.split("\r\n");
+        for (int i = 0; i < lines.length; i++) {
+            String line = lines[i];
+            if (line.isEmpty()) continue;
+            int colon = line.indexOf(':');
+            String name = colon > 0 ? line.substring(0, colon).trim().toLowerCase(Locale.ROOT) : "";
+            if (i > 0 && (name.equals("content-length") || name.equals("transfer-encoding") || name.equals("content-encoding"))) continue;
+            if (hash != null && name.equals("content-security-policy")) line = "Content-Security-Policy: " + allowStyle(line.substring(colon + 1).trim(), hash);
+            out.append(line).append("\r\n");
+        }
+        out.append("Content-Length: ").append(length).append("\r\n\r\n");
+        return out.toString();
+    }
+
+    /**
+     * A page's content security policy, also allowing our one style by its hash. A policy that
+     * already allows inline styles is left as it is: a hash in it would end that.
+     */
+    private static String allowStyle(String policy, String hash) {
+        String[] directives = policy.split(";");
+        int style = -1, fallback = -1;
+        for (int i = 0; i < directives.length; i++) {
+            String d = directives[i].trim().toLowerCase(Locale.ROOT);
+            if (d.startsWith("style-src-elem ") || d.equals("style-src-elem")) style = i;
+            else if ((d.startsWith("style-src ") || d.equals("style-src")) && style < 0) style = i;
+            else if (d.startsWith("default-src ")) fallback = i;
+        }
+        int at = style >= 0 ? style : fallback;
+        if (at < 0 || directives[at].contains("'unsafe-inline'") && !directives[at].contains("'nonce-")
+                && !directives[at].contains("'sha")) return policy;
+        directives[at] = directives[at] + " " + hash;
+        return String.join(";", directives);
+    }
+
+    private static byte[] sha256(String text) throws IOException {
+        try {
+            return java.security.MessageDigest.getInstance("SHA-256").digest(text.getBytes(StandardCharsets.UTF_8));
+        } catch (java.security.NoSuchAlgorithmException e) {
+            throw new IOException(e);
+        }
+    }
+
+    /** The page with our style first in its head. */
+    private static byte[] withStyle(byte[] body, String css) {
+        String text = new String(body, StandardCharsets.ISO_8859_1);
+        String lower = text.length() > 65536 ? text.substring(0, 65536).toLowerCase(Locale.ROOT) : text.toLowerCase(Locale.ROOT);
+        int at = 0;
+        int head = lower.indexOf("<head");
+        if (head >= 0 && lower.indexOf('>', head) > 0) {
+            at = lower.indexOf('>', head) + 1;
+        } else {
+            int html = lower.indexOf("<html");
+            if (html >= 0 && lower.indexOf('>', html) > 0) at = lower.indexOf('>', html) + 1;
+        }
+        byte[] style = ("<style>" + css + "</style>").getBytes(StandardCharsets.UTF_8);
+        byte[] out = new byte[body.length + style.length];
+        System.arraycopy(body, 0, out, 0, at);
+        System.arraycopy(style, 0, out, at, style.length);
+        System.arraycopy(body, at, out, at + style.length, body.length - at);
+        return out;
+    }
+
+    /** A whole answer's body, its framing and encoding undone; null when the site stops early. */
+    private static byte[] readBody(InputStream in, String head) throws IOException {
+        ByteArrayOutputStream body = new ByteArrayOutputStream();
+        if (header(head, "transfer-encoding").toLowerCase(Locale.ROOT).contains("chunked")) {
+            while (true) {
+                String size = readLine(in, OutputStream.nullOutputStream());
+                if (size == null) return null;
+                int semi = size.indexOf(';');
+                long length = Long.parseLong((semi >= 0 ? size.substring(0, semi) : size).trim(), 16);
+                if (length == 0) {
+                    while (true) {
+                        String trailer = readLine(in, OutputStream.nullOutputStream());
+                        if (trailer == null || trailer.isEmpty()) break;
+                    }
+                    break;
+                }
+                copyExactly(in, body, length);
+                copyExactly(in, OutputStream.nullOutputStream(), 2);
+            }
+        } else if (!header(head, "content-length").isEmpty()) {
+            copyExactly(in, body, Long.parseLong(header(head, "content-length")));
+        } else {
+            byte[] buffer = new byte[16384];
+            int n;
+            while ((n = in.read(buffer)) > 0) body.write(buffer, 0, n);
+        }
+        String encoding = header(head, "content-encoding").toLowerCase(Locale.ROOT);
+        InputStream decoded;
+        if (encoding.contains("gzip")) decoded = new java.util.zip.GZIPInputStream(new java.io.ByteArrayInputStream(body.toByteArray()));
+        else if (encoding.contains("deflate")) decoded = new java.util.zip.InflaterInputStream(new java.io.ByteArrayInputStream(body.toByteArray()));
+        else return body.toByteArray();
+        ByteArrayOutputStream plain = new ByteArrayOutputStream();
+        byte[] buffer = new byte[16384];
+        int n;
+        while ((n = decoded.read(buffer)) > 0) plain.write(buffer, 0, n);
+        return plain.toByteArray();
     }
 
     static String header(String head, String name) {
