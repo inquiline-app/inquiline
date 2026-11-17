@@ -672,7 +672,8 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate, 
             popover.contentSize = size
             popover.animates = animates
         }
-        popover.show(relativeTo: sender.bounds, of: sender, preferredEdge: .minY)
+        // Below the button: in a flipped view, as a button is, its bottom is maxY.
+        popover.show(relativeTo: sender.bounds, of: sender, preferredEdge: sender.isFlipped ? .maxY : .minY)
     }
 
     /// The app's settings, sized to what is open in them as sections open and close.
