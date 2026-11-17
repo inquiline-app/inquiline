@@ -608,8 +608,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, SPUSta
     /// Its network and its alarms wake it, as a phone's modem and alarm clock chip do.
     private func androidWantsToSleep() {
         let runtime = AndroidRuntime.shared
-        // Inquiline itself at work in Android, as installing, is someone using the phone.
-        guard busy == 0, runtime.isRunning, !AndroidRuntime.isFrozen() else { return }
+        // Inquiline itself at work in Android, as installing, is someone using the phone; so is
+        // Android's disk in Finder.
+        guard busy == 0, runtime.isRunning, !AndroidRuntime.isFrozen(), !AndroidFiles.isMounted else { return }
         // A phone's network driver keeps it awake a moment after a packet, so the app the
         // packet is for can take it; Android here has no such driver.
         guard Date().timeIntervalSince(lastResume) > 1 else { return }

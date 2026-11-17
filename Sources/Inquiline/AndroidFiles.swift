@@ -100,6 +100,10 @@ enum AndroidFiles {
     }
 
     /// Where Android's disk is mounted now, found from the system, not remembered.
+    /// Whether the disk is in Finder: Android stays awake meanwhile, as a phone does while a
+    /// computer has its files open, until the user ejects it.
+    static var isMounted: Bool { !mounted().isEmpty }
+
     private static func mounted() -> [URL] {
         var list: UnsafeMutablePointer<statfs>?
         let count = getmntinfo(&list, MNT_NOWAIT)
@@ -126,15 +130,14 @@ enum AndroidFiles {
     }
 
     /// Mounts the disk and shows it in Finder: an app's own folder when `label` names one.
+    /// Blocks until the disk is there, so call it off the main thread.
     static func show(label: String? = nil) {
-        DispatchQueue.global().async {
-            guard let volume = mount() else { return }
-            var target = volume
-            if let label {
-                let folder = volume.appendingPathComponent("Apps").appendingPathComponent(label.replacingOccurrences(of: "/", with: "-"))
-                if FileManager.default.fileExists(atPath: folder.path) { target = folder }
-            }
-            DispatchQueue.main.async { NSWorkspace.shared.open(target) }
+        guard let volume = mount() else { return }
+        var target = volume
+        if let label {
+            let folder = volume.appendingPathComponent("Apps").appendingPathComponent(label.replacingOccurrences(of: "/", with: "-"))
+            if FileManager.default.fileExists(atPath: folder.path) { target = folder }
         }
+        DispatchQueue.main.async { NSWorkspace.shared.open(target) }
     }
 }
