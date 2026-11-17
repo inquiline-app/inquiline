@@ -1,0 +1,91 @@
+diff -ru a/host/vulkan/device_op_tracker.cpp b/host/vulkan/device_op_tracker.cpp
+--- a/host/vulkan/device_op_tracker.cpp	2026-11-18 02:21:55
++++ b/host/vulkan/device_op_tracker.cpp	2026-11-18 02:22:20
+@@ -182,8 +182,14 @@
+ DeviceOpBuilder::DeviceOpBuilder(DeviceOpTracker& tracker) : mTracker(tracker) {}
+ 
+ DeviceOpBuilder::~DeviceOpBuilder() {
++    // Inquiline: a submission that failed, as when the app's VkDevice was lost, returns its
++    // error to the app before the fence is handed over. Its own fence, never submitted, goes
++    // now; ending the engine for it would end every app.
+     if (!mSubmittedFence) {
+-        GFXSTREAM_FATAL("Invalid usage: failed to call OnQueueSubmittedWithFence().");
++        GFXSTREAM_ERROR("A queue submission failed before its fence was submitted.");
++        if (mCreatedFence.has_value() && *mCreatedFence != VK_NULL_HANDLE) {
++            mTracker.mDeviceDispatch->vkDestroyFence(mTracker.mDevice, *mCreatedFence, nullptr);
++        }
+     }
+ }
+ 
+diff -ru a/host/vulkan/vk_android_native_buffer_operations.cpp b/host/vulkan/vk_android_native_buffer_operations.cpp
+--- a/host/vulkan/vk_android_native_buffer_operations.cpp	2026-11-18 02:21:55
++++ b/host/vulkan/vk_android_native_buffer_operations.cpp	2026-11-18 02:22:20
+@@ -63,7 +63,8 @@
+         mAvailableFences.pop_back();
+         VkResult res = mVk->vkResetFences(mDevice, 1, &fence);
+         if (res != VK_SUCCESS) {
+-            GFXSTREAM_FATAL("Failed to reset QSRI VkFence: %s", string_VkResult(res));
++            // Inquiline: as when the app's device was lost; the app learns it from its own calls.
++            GFXSTREAM_ERROR("Failed to reset QSRI VkFence: %s", string_VkResult(res));
+         }
+         VK_ANB_DEBUG("existing fence in pool: %p. also reset the fence", fence);
+     }
+@@ -569,8 +570,8 @@
+             semaphore == VK_NULL_HANDLE ? nullptr : &semaphore,
+         };
+         std::lock_guard<std::mutex> qlock(*defaultQueueMutex);
+-        VK_CHECK(vk->vkQueueSubmit(defaultQueue, 1, &submitInfo, fence));
+-        return VK_SUCCESS;
++        // Inquiline: a lost device is the app's to hear of, as on a phone, not the engine's end.
++        return vk->vkQueueSubmit(defaultQueue, 1, &submitInfo, fence);
+     }
+ 
+     if (mLastUsedQueueFamilyIndex == INVALID_QUEUE_FAMILY_INDEX) {
+@@ -644,7 +645,8 @@
+ 
+         std::lock_guard<std::mutex> queueLock(*queueState.queueMutex);
+         // TODO(kaiyili): initiate ownership transfer from DisplayVk here
+-        VK_CHECK(vk->vkQueueSubmit(queueState.queue, 1, &submitInfo, fence));
++        VkResult result = vk->vkQueueSubmit(queueState.queue, 1, &submitInfo, fence);
++        if (result != VK_SUCCESS) return result;
+     } else {
+         const VkSubmitInfo submitInfo = {
+             VK_STRUCTURE_TYPE_SUBMIT_INFO,
+@@ -658,7 +660,8 @@
+             semaphore == VK_NULL_HANDLE ? nullptr : &semaphore,
+         };
+         std::lock_guard<std::mutex> queueLock(*queueState.queueMutex);
+-        VK_CHECK(vk->vkQueueSubmit(queueState.queue, 1, &submitInfo, fence));
++        VkResult result = vk->vkQueueSubmit(queueState.queue, 1, &submitInfo, fence);
++        if (result != VK_SUCCESS) return result;
+     }
+ 
+     return VK_SUCCESS;
+@@ -826,7 +829,16 @@
+     // TODO(kaiyili): initiate ownership transfer to DisplayVk here.
+     VkFence qsriFence = mQsriWaitFencePool->getFenceFromPool();
+     std::lock_guard<std::mutex> qLock(*queueMutex);
+-    VK_CHECK(vk->vkQueueSubmit(queueState.queue, 1, &submitInfo, qsriFence));
++    // Inquiline: when the app's device was lost, the frame is let go as presented and the app
++    // hears of the loss, as on a phone; the other apps keep running.
++    if (VkResult submitted = vk->vkQueueSubmit(queueState.queue, 1, &submitInfo, qsriFence);
++        submitted != VK_SUCCESS) {
++        GFXSTREAM_ERROR("Failed to submit the QSRI work: %s", string_VkResult(submitted));
++        mQsriWaitFencePool->returnFence(qsriFence);
++        emu->getGlobalState()->unlockGlobalState();
++        mQsriTimeline->signalNextPresentAndPoll();
++        return submitted;
++    }
+     auto waitForQsriFenceTask = [this, vk, device = mDevice, qsriFence, traceId] {
+         (void)traceId;
+         GFXSTREAM_TRACE_EVENT(GFXSTREAM_TRACE_DEFAULT_CATEGORY, "Wait for QSRI fence",
+@@ -842,8 +854,8 @@
+                 VK_ANB_ERR("Timeout when waiting for the Qsri fence.");
+                 break;
+             default:
++                // Inquiline: as when the app's device was lost; the frame is let go regardless.
+                 GFXSTREAM_ERROR("Failed to wait for QSRI fence: %s\n", string_VkResult(res));
+-                VK_CHECK(res);
+         }
+         VK_ANB_DEBUG_OBJ(this, "wait callback: wait for fence %p...(done)", qsriFence);
+         mQsriWaitFencePool->returnFence(qsriFence);
