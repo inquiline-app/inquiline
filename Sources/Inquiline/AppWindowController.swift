@@ -1,7 +1,7 @@
 import AppKit
 
 /// The window of one running Android app.
-final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate {
+final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate, NSPopoverDelegate {
     /// A Retina Mac shows two pixels a point; the app's screen has the window's pixels.
     private static let pixelsPerPoint: CGFloat = 2
 
@@ -663,13 +663,38 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate {
     @objc private func showSettings(_ sender: NSButton) {
         let popover = NSPopover()
         popover.behavior = .transient
+        popover.delegate = self
+        popover.contentViewController = settingsController { [weak popover] size in popover?.contentSize = size }
+        popover.show(relativeTo: sender.bounds, of: sender, preferredEdge: .minY)
+    }
+
+    /// The app's settings, sized to what is open in them as sections open and close.
+    private func settingsController(resize: @escaping (NSSize) -> Void) -> NSViewController {
         let settings = AppSettingsView(package: package, label: window.title)
-        settings.clearCache = { [weak self, weak popover] in popover?.close(); self?.clearCache() }
-        settings.clearData = { [weak self, weak popover] in popover?.close(); self?.clearData() }
+        settings.clearCache = { [weak self] in self?.settingsPanel?.close(); self?.clearCache() }
+        settings.clearData = { [weak self] in self?.settingsPanel?.close(); self?.clearData() }
+        settings.onResize = resize
         let controller = NSViewController()
         controller.view = settings
-        popover.contentViewController = controller
-        popover.show(relativeTo: sender.bounds, of: sender, preferredEdge: .minY)
+        return controller
+    }
+
+    /// Dragged away from its button, as a Mac's own popovers can be, the settings stay as a small
+    /// window of their own, in front of the app.
+    private var settingsPanel: NSPanel?
+
+    func popoverShouldDetach(_ popover: NSPopover) -> Bool { true }
+
+    func detachableWindow(for popover: NSPopover) -> NSWindow? {
+        let panel = NSPanel(contentRect: .zero, styleMask: [.titled, .closable, .utilityWindow], backing: .buffered, defer: true)
+        panel.title = window.title
+        panel.level = .floating
+        panel.hidesOnDeactivate = false
+        panel.isReleasedWhenClosed = false
+        panel.contentViewController = settingsController { [weak panel] size in panel?.setContentSize(size) }
+        settingsPanel?.close()
+        settingsPanel = panel
+        return panel
     }
 
     @objc func clearCache() {
@@ -865,6 +890,16 @@ extension AppWindowController: NSMenuItemValidation {
 private final class AppSettingsView: NSView {
     var clearCache: (() -> Void)?
     var clearData: (() -> Void)?
+    /// Called with the size the settings now need, as sections open and close.
+    var onResize: ((NSSize) -> Void)? {
+        didSet { fitToContent() }
+    }
+
+    /// Tells the popover or window holding the settings their size.
+    func fitToContent() {
+        layoutSubtreeIfNeeded()
+        onResize?(fittingSize)
+    }
     private let package: String
     private let label: String
     private let notifications = NSSwitch()
@@ -1034,6 +1069,7 @@ private final class AppSettingsView: NSView {
         triangle.setButtonType(.pushOnPushOff)
         triangle.state = .off
         let toggle = SectionToggle(rows: rows, triangle: triangle)
+        toggle.changed = { [weak rows] in (rows?.superview?.superview as? AppSettingsView)?.fitToContent() }
         triangle.target = toggle
         triangle.action = #selector(SectionToggle.toggle)
         let label = NSTextField(labelWithString: title)
@@ -1057,6 +1093,7 @@ private final class AppSettingsView: NSView {
             toggle.action = #selector(permissionChanged(_:))
             permissionRows.addArrangedSubview(Self.row(group.name, toggle))
         }
+        fitToContent()
     }
 
     /// The counts, while the settings show: each newly blocked one appears as it's blocked.
@@ -1100,6 +1137,7 @@ private final class AppSettingsView: NSView {
         }
         countRows.isHidden = countRows.arrangedSubviews.isEmpty
         resetCounts.isHidden = countRows.isHidden
+        fitToContent()
     }
 
     @objc private func resetClicked() {
@@ -1157,8 +1195,11 @@ private final class SectionToggle: NSObject {
         self.triangle = triangle
     }
 
+    var changed: (() -> Void)?
+
     @objc func toggle() {
         rows.isHidden = triangle.state == .off
+        changed?()
     }
 
     @objc func labelClicked() {
