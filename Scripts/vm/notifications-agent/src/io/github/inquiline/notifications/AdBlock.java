@@ -148,6 +148,14 @@ public final class AdBlock extends VpnService {
     }
 
     private static Proxy proxy;
+    private static Thread updates;
+
+    /** Android's languages follow the Mac's; the regional lists follow them. */
+    @Override
+    public void onConfigurationChanged(android.content.res.Configuration config) {
+        super.onConfigurationChanged(config);
+        if (updates != null) updates.interrupt();
+    }
 
     /** The proxy, with this installation's authority to open connections with (Certs.ofInstallation). */
     private boolean startProxy() {
@@ -157,13 +165,18 @@ public final class AdBlock extends VpnService {
             started.start();
             proxy = started;
             // The lists, fetched again from their sources once a day; the rules change with them.
-            Thread updates = new Thread(() -> {
+            // A change of language wakes it early, for that language's regional list.
+            updates = new Thread(() -> {
                 while (true) {
                     try {
                         if (Lists.update(this)) proxy.setFilter(filter());
-                        Thread.sleep(6L * 60 * 60 * 1000);
                     } catch (Exception e) {
-                        return;
+                        android.util.Log.w("InquilineAdBlock", "The lists could not be updated", e);
+                    }
+                    try {
+                        Thread.sleep(6L * 60 * 60 * 1000);
+                    } catch (InterruptedException e) {
+                        // Looked at again now.
                     }
                 }
             }, "adblock-lists");
@@ -185,9 +198,10 @@ public final class AdBlock extends VpnService {
         try (java.io.InputStream in = getAssets().open("scriptlets.json")) {
             scripts = new Scriptlets(new String(in.readAllBytes(), StandardCharsets.UTF_8));
         }
-        for (Lists.List list : Lists.ALL) {
+        for (Lists.List list : Lists.active(this)) {
             for (int pass = 0; pass < 3; pass++) {
                 try (BufferedReader in = Lists.open(this, list)) {
+                    if (in == null) break;
                     if (pass == 0) rules.load(in, list.category);
                     else if (pass == 1) hiding.load(in, list.category);
                     else scripts.load(in, list.trusted, list.category);

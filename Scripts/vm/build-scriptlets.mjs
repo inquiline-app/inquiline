@@ -41,3 +41,17 @@ for (const [file, details] of resources) {
 }
 writeFileSync(new URL('notifications-agent/assets/redirects.json', import.meta.url), JSON.stringify(names));
 console.log(`${new Set(Object.values(names)).size} stand-in resources`);
+
+// uBlock's regional lists, from its catalog (assets/assets.json): uBlock turns on those for the
+// browser's languages, and the helper those for Android's, which follow the Mac's. They aren't
+// shipped; the helper fetches the ones it needs from their sources, as uBlock does.
+const { default: catalog } = await import(pathToFileURL(`${source}/assets/assets.json`).href, { with: { type: 'json' } });
+const regions = [];
+for (const [id, details] of Object.entries(catalog)) {
+    if (details.group !== 'regions' || !details.lang) { continue; }
+    const urls = [].concat(details.contentURL || []).filter(url => url.startsWith('https://'));
+    if (urls.length === 0) { continue; }
+    regions.push({ id, lang: details.lang.split(/\s+/).filter(code => /^[a-z]+$/.test(code)), url: urls[0] });
+}
+writeFileSync(new URL('notifications-agent/assets/regions.json', import.meta.url), JSON.stringify(regions));
+console.log(`${regions.length} regional lists`);

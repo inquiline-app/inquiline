@@ -172,9 +172,13 @@ The ad blocking rules in Scripts/vm/notifications-agent/assets/easylist.txt and 
 
 The rules in Scripts/vm/notifications-agent/assets/ublock-filters.txt, ublock-quick-fixes.txt, ublock-unbreak.txt, ublock-privacy.txt, ublock-badware.txt, ublock-cookies.txt and ublock-annoyances.txt are uBlock Origin's own filter lists (https://github.com/uBlockOrigin/uAssets), by Raymond Hill and contributors, under the GNU General Public License version 3 (https://www.gnu.org/licenses/gpl-3.0.html). It is included unchanged, as data the helper reads; its source is the file itself.
 
-## AdGuard Turkish filter and AdGuard Mobile Ads filter
+## AdGuard Mobile Ads filter
 
-The rules in Scripts/vm/notifications-agent/assets/adguard-turkish.txt and adguard-mobile.txt are AdGuard's Turkish and Mobile Ads filters (https://github.com/AdguardTeam/AdguardFilters), in the form AdGuard publishes for uBlock Origin, by AdGuard and contributors, under the GNU General Public License version 3. It is included unchanged, as data the helper reads.
+The rules in Scripts/vm/notifications-agent/assets/adguard-mobile.txt are AdGuard's Mobile Ads filter (https://github.com/AdguardTeam/AdguardFilters), in the form AdGuard publishes for uBlock Origin, by AdGuard and contributors, under the GNU General Public License version 3. It is included unchanged, as data the helper reads.
+
+## uBlock Origin's regional lists
+
+Scripts/vm/notifications-agent/assets/regions.json is taken from uBlock Origin's catalog of regional lists (assets/assets.json, https://github.com/gorhill/uBlock, GPL-3.0): each list's name, languages and source. The lists themselves are not included; the helper fetches those for Android's languages from their sources, under their own authors' licenses, as uBlock Origin does.
 
 ## uBlock Origin scriptlets
 
