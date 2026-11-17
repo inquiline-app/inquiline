@@ -664,7 +664,14 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate, 
         let popover = NSPopover()
         popover.behavior = .transient
         popover.delegate = self
-        popover.contentViewController = settingsController { [weak popover] size in popover?.contentSize = size }
+        // A new size at once: animated, the content slides inside the growing popover.
+        popover.contentViewController = settingsController { [weak popover] size in
+            guard let popover else { return }
+            let animates = popover.animates
+            popover.animates = false
+            popover.contentSize = size
+            popover.animates = animates
+        }
         popover.show(relativeTo: sender.bounds, of: sender, preferredEdge: .minY)
     }
 
