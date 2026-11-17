@@ -16,7 +16,9 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate, 
     private var userTurned = false
     private var restarted = false
     /// The app's screen in pixels.
-    private var displaySize: NSSize
+    private var displaySize: NSSize {
+        didSet { if displaySize != oldValue { shareScreen() } }
+    }
     private let resolution: ScrcpySession.Resolution
     private var watch: Timer?
     private let launchScreen = LaunchScreen()
@@ -116,6 +118,7 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate, 
         }
         AppLog.write("Screen of \(Int(displaySize.width)) by \(Int(displaySize.height)) pixels")
         connect(session)
+        shareScreen()
     }
 
     /// Holds the app's screen and, until its first picture, the launch screen.
@@ -773,6 +776,31 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate, 
         }
         userTurned = true
         session.sendRotate()
+    }
+
+    // MARK: - Android's main screen
+
+    private var activeObserver: NSObjectProtocol?
+
+    /// Android's main screen takes the size and density of the app in front, as a phone's one
+    /// screen is the app's own: code that asks Android for "the" screen, as ad libraries that
+    /// lay out with the app's context rather than its window do, then gets this app's, and an
+    /// ad fills the window instead of a corner of it. Only the main screen changes; no app is
+    /// on it, so none starts again.
+    private func shareScreen() {
+        if activeObserver == nil {
+            activeObserver = NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification,
+                                                                    object: nil, queue: .main) { [weak self] _ in
+                self?.shareScreen()
+            }
+        }
+        guard NSApp.isActive, displaySize.width > 0 else { return }
+        let size = "\(Int(displaySize.width))x\(Int(displaySize.height))", density = session.screen.density
+        DispatchQueue.global().async {
+            _ = try? AdbClient.shell("wm size -d 0 | grep -q 'Override size: \(size)$' || wm size \(size) -d 0; "
+                                     + "wm density -d 0 | grep -q 'Override density: \(density)$' || wm density \(density) -d 0",
+                                     timeout: 5)
+        }
     }
 
     func windowWillClose(_ notification: Notification) {
