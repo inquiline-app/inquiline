@@ -64,14 +64,11 @@ final class Cosmetics {
     String css(String host) {
         Set<String> excepted = new HashSet<>();
         Set<String> own = new LinkedHashSet<>();
-        for (String h = host; ; ) {
+        for (String h : Hosts.domainsOf(host)) {
             List<String> rules = byDomain.get(h);
             if (rules != null) own.addAll(rules);
             Set<String> not = exceptions.get(h);
             if (not != null) excepted.addAll(not);
-            int dot = h.indexOf('.');
-            if (dot < 0) break;
-            h = h.substring(dot + 1);
         }
         StringBuilder css = new StringBuilder();
         if (excepted.isEmpty()) {

@@ -39,10 +39,13 @@ final class Proxy {
 
         /** The style that hides ad boxes on a page from `host`, or empty for none. */
         String css(String host);
+
+        /** The script uBlock runs first on a page from `host` (its +js rules), or empty for none. */
+        String script(String host);
     }
 
     private final Certs certs;
-    private final Filter filter;
+    private volatile Filter filter;
     private final ExecutorService connections = Executors.newCachedThreadPool();
     private final Map<String, SSLContext> contexts = new ConcurrentHashMap<>();
     private final Set<String> pinned = ConcurrentHashMap.newKeySet();
@@ -50,6 +53,11 @@ final class Proxy {
 
     Proxy(Certs certs, Filter filter) {
         this.certs = certs;
+        this.filter = filter;
+    }
+
+    /** New rules, as the lists are updated; connections take them from their next request. */
+    void setFilter(Filter filter) {
         this.filter = filter;
     }
 
@@ -182,11 +190,11 @@ final class Proxy {
             } while (status == 100);
             if (page && status == 200 && !method.equals("HEAD")
                     && header(answer, "content-type").toLowerCase(Locale.ROOT).contains("text/html")) {
-                String css = filter.css(host);
+                String css = filter.css(host), script = filter.script(host);
                 byte[] body = readBody(fromSite, answer);
                 if (body == null) return;
-                byte[] shown = css.isEmpty() ? body : withStyle(body, css);
-                String out = rebuilt(answer, shown.length, css);
+                byte[] shown = css.isEmpty() && script.isEmpty() ? body : withInjection(body, script, css);
+                String out = rebuilt(answer, shown.length, css, script);
                 toApp.write(out.getBytes(StandardCharsets.ISO_8859_1));
                 toApp.write(shown);
                 toApp.flush();
@@ -296,9 +304,10 @@ final class Proxy {
     }
 
     /** A page's answer head for its new body: its own length, no encoding, and our style allowed. */
-    private static String rebuilt(String head, int length, String css) throws IOException {
+    private static String rebuilt(String head, int length, String css, String script) throws IOException {
         StringBuilder out = new StringBuilder();
-        String hash = css.isEmpty() ? null : "'sha256-" + java.util.Base64.getEncoder().encodeToString(sha256(css)) + "'";
+        String styleHash = css.isEmpty() ? null : "'sha256-" + java.util.Base64.getEncoder().encodeToString(sha256(css)) + "'";
+        String scriptHash = script.isEmpty() ? null : "'sha256-" + java.util.Base64.getEncoder().encodeToString(sha256(script)) + "'";
         String[] lines = head.split("\r\n");
         for (int i = 0; i < lines.length; i++) {
             String line = lines[i];
@@ -306,7 +315,12 @@ final class Proxy {
             int colon = line.indexOf(':');
             String name = colon > 0 ? line.substring(0, colon).trim().toLowerCase(Locale.ROOT) : "";
             if (i > 0 && (name.equals("content-length") || name.equals("transfer-encoding") || name.equals("content-encoding"))) continue;
-            if (hash != null && name.equals("content-security-policy")) line = "Content-Security-Policy: " + allowStyle(line.substring(colon + 1).trim(), hash);
+            if (name.equals("content-security-policy")) {
+                String policy = line.substring(colon + 1).trim();
+                if (styleHash != null) policy = allowInline(policy, "style", styleHash);
+                if (scriptHash != null) policy = allowInline(policy, "script", scriptHash);
+                line = "Content-Security-Policy: " + policy;
+            }
             out.append(line).append("\r\n");
         }
         out.append("Content-Length: ").append(length).append("\r\n\r\n");
@@ -314,16 +328,16 @@ final class Proxy {
     }
 
     /**
-     * A page's content security policy, also allowing our one style by its hash. A policy that
-     * already allows inline styles is left as it is: a hash in it would end that.
+     * A page's content security policy, also allowing our one style or script (`kind`) by its
+     * hash. A policy that already allows inline ones is left as it is: a hash in it would end that.
      */
-    private static String allowStyle(String policy, String hash) {
+    private static String allowInline(String policy, String kind, String hash) {
         String[] directives = policy.split(";");
         int style = -1, fallback = -1;
         for (int i = 0; i < directives.length; i++) {
             String d = directives[i].trim().toLowerCase(Locale.ROOT);
-            if (d.startsWith("style-src-elem ") || d.equals("style-src-elem")) style = i;
-            else if ((d.startsWith("style-src ") || d.equals("style-src")) && style < 0) style = i;
+            if (d.startsWith(kind + "-src-elem ") || d.equals(kind + "-src-elem")) style = i;
+            else if ((d.startsWith(kind + "-src ") || d.equals(kind + "-src")) && style < 0) style = i;
             else if (d.startsWith("default-src ")) fallback = i;
         }
         int at = style >= 0 ? style : fallback;
@@ -341,8 +355,8 @@ final class Proxy {
         }
     }
 
-    /** The page with our style first in its head. */
-    private static byte[] withStyle(byte[] body, String css) {
+    /** The page with our script and style first in its head, the script before any of the page's own. */
+    private static byte[] withInjection(byte[] body, String script, String css) {
         String text = new String(body, StandardCharsets.ISO_8859_1);
         String lower = text.length() > 65536 ? text.substring(0, 65536).toLowerCase(Locale.ROOT) : text.toLowerCase(Locale.ROOT);
         int at = 0;
@@ -353,7 +367,8 @@ final class Proxy {
             int html = lower.indexOf("<html");
             if (html >= 0 && lower.indexOf('>', html) > 0) at = lower.indexOf('>', html) + 1;
         }
-        byte[] style = ("<style>" + css + "</style>").getBytes(StandardCharsets.UTF_8);
+        byte[] style = ((script.isEmpty() ? "" : "<script>" + script + "</script>")
+                + (css.isEmpty() ? "" : "<style>" + css + "</style>")).getBytes(StandardCharsets.UTF_8);
         byte[] out = new byte[body.length + style.length];
         System.arraycopy(body, 0, out, 0, at);
         System.arraycopy(style, 0, out, at, style.length);

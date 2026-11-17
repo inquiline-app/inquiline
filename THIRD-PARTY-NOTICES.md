@@ -170,8 +170,12 @@ The ad blocking rules in Scripts/vm/notifications-agent/assets/easylist.txt and 
 
 ## uBlock filters
 
-The rules in Scripts/vm/notifications-agent/assets/ublock-filters.txt are uBlock Origin's own filter list (https://github.com/uBlockOrigin/uAssets), by Raymond Hill and contributors, under the GNU General Public License version 3 (https://www.gnu.org/licenses/gpl-3.0.html). It is included unchanged, as data the helper reads; its source is the file itself.
+The rules in Scripts/vm/notifications-agent/assets/ublock-filters.txt, ublock-quick-fixes.txt, ublock-unbreak.txt and ublock-privacy.txt are uBlock Origin's own filter lists (https://github.com/uBlockOrigin/uAssets), by Raymond Hill and contributors, under the GNU General Public License version 3 (https://www.gnu.org/licenses/gpl-3.0.html). It is included unchanged, as data the helper reads; its source is the file itself.
 
 ## AdGuard Turkish filter
 
 The rules in Scripts/vm/notifications-agent/assets/adguard-turkish.txt are AdGuard's Turkish filter (https://github.com/AdguardTeam/AdguardFilters), in the form AdGuard publishes for uBlock Origin, by AdGuard and contributors, under the GNU General Public License version 3. It is included unchanged, as data the helper reads.
+
+## uBlock Origin scriptlets
+
+Scripts/vm/notifications-agent/assets/scriptlets.json holds uBlock Origin's scriptlets (https://github.com/gorhill/uBlock, src/js/resources), Copyright (C) Raymond Hill, under the GNU General Public License version 3, taken from its source unchanged by Scripts/vm/build-scriptlets.mjs. The ad blocker adds them to web pages, as uBlock Origin does; their source is the file itself and uBlock Origin's repository.

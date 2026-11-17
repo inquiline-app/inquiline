@@ -134,41 +134,70 @@ public final class AdBlock extends VpnService {
     private boolean startProxy() {
         if (proxy != null) return true;
         try {
-            Filters rules = new Filters();
-            Cosmetics hiding = new Cosmetics();
-            for (String list : new String[] {"easylist.txt", "easyprivacy.txt", "ublock-filters.txt", "adguard-turkish.txt"}) {
-                try (BufferedReader in = new BufferedReader(new InputStreamReader(getAssets().open(list), StandardCharsets.UTF_8))) {
-                    rules.load(in);
-                }
-                try (BufferedReader in = new BufferedReader(new InputStreamReader(getAssets().open(list), StandardCharsets.UTF_8))) {
-                    hiding.load(in);
-                }
-            }
-            android.util.Log.i("InquilineAdBlock", "Ad blocking rules: " + rules.count);
-            java.util.concurrent.atomic.AtomicInteger blockedCount = new java.util.concurrent.atomic.AtomicInteger();
-            Proxy started = new Proxy(Certs.ofInstallation(getFilesDir()), new Proxy.Filter() {
-                @Override
-                public boolean blocks(String url, String host, String headers) {
-                    boolean blocked = isBlocked(host) || rules.blocks(request(url, host, headers));
-                    // How many, never which: what an app asks for is the user's own business.
-                    if (blocked && blockedCount.incrementAndGet() % 25 == 0) {
-                        android.util.Log.i("InquilineAdBlock", "Ads blocked so far: " + blockedCount.get());
-                    }
-                    return blocked;
-                }
-
-                @Override
-                public String css(String host) {
-                    return hiding.css(host);
-                }
-            });
+            Proxy started = new Proxy(Certs.ofInstallation(getFilesDir()), filter());
             started.start();
             proxy = started;
+            // The lists, fetched again from their sources once a day; the rules change with them.
+            Thread updates = new Thread(() -> {
+                while (true) {
+                    try {
+                        if (Lists.update(this)) proxy.setFilter(filter());
+                        Thread.sleep(6L * 60 * 60 * 1000);
+                    } catch (Exception e) {
+                        return;
+                    }
+                }
+            }, "adblock-lists");
+            updates.setDaemon(true);
+            updates.start();
             return true;
         } catch (Exception e) {
             android.util.Log.w("InquilineAdBlock", "The proxy could not start", e);
             return false;
         }
+    }
+
+    private final java.util.concurrent.atomic.AtomicInteger blockedCount = new java.util.concurrent.atomic.AtomicInteger();
+
+    /** The rules of every list as they are now. */
+    private Proxy.Filter filter() throws Exception {
+        Filters rules = new Filters();
+        Cosmetics hiding = new Cosmetics();
+        Scriptlets scripts;
+        try (java.io.InputStream in = getAssets().open("scriptlets.json")) {
+            scripts = new Scriptlets(new String(in.readAllBytes(), StandardCharsets.UTF_8));
+        }
+        for (Lists.List list : Lists.ALL) {
+            for (int pass = 0; pass < 3; pass++) {
+                try (BufferedReader in = Lists.open(this, list)) {
+                    if (pass == 0) rules.load(in);
+                    else if (pass == 1) hiding.load(in);
+                    else scripts.load(in, list.trusted);
+                }
+            }
+        }
+        android.util.Log.i("InquilineAdBlock", "Ad blocking rules: " + rules.count);
+        return new Proxy.Filter() {
+            @Override
+            public boolean blocks(String url, String host, String headers) {
+                boolean blocked = isBlocked(host) || rules.blocks(request(url, host, headers));
+                // How many, never which: what an app asks for is the user's own business.
+                if (blocked && blockedCount.incrementAndGet() % 25 == 0) {
+                    android.util.Log.i("InquilineAdBlock", "Ads blocked so far: " + blockedCount.get());
+                }
+                return blocked;
+            }
+
+            @Override
+            public String css(String host) {
+                return hiding.css(host);
+            }
+
+            @Override
+            public String script(String host) {
+                return scripts.script(host);
+            }
+        };
     }
 
     /** A request as the rules see it, from what a browser says in its headers about it. */
