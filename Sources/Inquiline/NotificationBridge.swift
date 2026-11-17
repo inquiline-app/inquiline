@@ -13,7 +13,7 @@ final class NotificationBridge: NSObject, UNUserNotificationCenterDelegate {
     static let shared = NotificationBridge()
 
     static let agent = "io.github.inquiline.notifications"
-    static let agentVersion = 6
+    static let agentVersion = 7
     private static let socket = "localabstract:inquiline-notifications"
 
     /// Opens an app's window, given its package; with true, without starting the app, whose
@@ -70,6 +70,14 @@ final class NotificationBridge: NSObject, UNUserNotificationCenterDelegate {
                     if AndroidRuntime.shared.isRunning { start() }
                 }
             }
+        }
+    }
+
+    /// Runs `body` once the helper inside Android is there, which it also uses for other work.
+    func withAgent(_ body: @escaping () -> Void) {
+        queue.async { [self] in
+            guard (try? installAgentIfNeeded()) != nil else { return }
+            body()
         }
     }
 

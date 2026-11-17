@@ -2,8 +2,8 @@
 <!-- Hands Android's notifications to Inquiline, which shows them in the Mac's Notification Center. -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="io.github.inquiline.notifications"
-    android:versionCode="6"
-    android:versionName="6">
+    android:versionCode="7"
+    android:versionName="7">
     <uses-sdk android:minSdkVersion="35" android:targetSdkVersion="35" />
     <application android:label="Mac Notifications" android:hasCode="true" android:allowBackup="false">
         <service

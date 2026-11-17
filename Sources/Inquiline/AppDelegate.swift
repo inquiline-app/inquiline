@@ -89,6 +89,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, SPUSta
 
         let center = NSWorkspace.shared.notificationCenter
         center.addObserver(self, selector: #selector(appTerminated(_:)), name: NSWorkspace.didTerminateApplicationNotification, object: nil)
+        // Android follows the Mac's languages, appearance, time zone and clock as they change.
+        let macSettings: [(NotificationCenter, Notification.Name)] = [
+            (DistributedNotificationCenter.default(), Notification.Name("AppleInterfaceThemeChangedNotification")),
+            (DistributedNotificationCenter.default(), Notification.Name("AppleLanguagePreferencesChangedNotification")),
+            (DistributedNotificationCenter.default(), Notification.Name("AppleTimePreferencesChangedNotification")),
+            (NotificationCenter.default, NSLocale.currentLocaleDidChangeNotification),
+            (NotificationCenter.default, .NSSystemTimeZoneDidChange),
+        ]
+        for (notifications, name) in macSettings {
+            notifications.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                self?.launchQueue.async { AndroidRuntime.shared.followMac() }
+            }
+        }
         AndroidRuntime.shared.onSleep = { [weak self] in DispatchQueue.main.async { self?.androidWantsToSleep() } }
         EngineControl.onResume = { [weak self] in DispatchQueue.main.async { self?.lastResume = Date() } }
         memoryPressure.resume()
@@ -258,7 +271,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, SPUSta
                      action: #selector(changeGooglePlay(_:)), keyEquivalent: "").target = self
         menu.addItem(.separator())
         menu.addItem(withTitle: "Show Files in Finder", action: #selector(showFiles(_:)), keyEquivalent: "").target = self
-        menu.addItem(withTitle: "Android Settings", action: #selector(openAndroidSettings(_:)), keyEquivalent: "").target = self
+        // For those who know to look, as the Mac's own menus keep their extra items: shown when
+        // Option is held as the menu opens. What most people would change there follows the Mac.
+        if NSEvent.modifierFlags.contains(.option) {
+            menu.addItem(withTitle: "Android Settings", action: #selector(openAndroidSettings(_:)), keyEquivalent: "").target = self
+        }
         menu.addItem(.separator())
         let login = menu.addItem(withTitle: "Open at Login", action: #selector(toggleOpenAtLogin(_:)), keyEquivalent: "")
         login.target = self

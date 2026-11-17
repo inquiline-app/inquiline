@@ -731,6 +731,11 @@ private final class AppSettingsView: NSView {
         notifications.isEnabled = false
         let row = NSStackView(views: [label, NSView(), notifications])
         row.orientation = .horizontal
+        // The app's other permissions, as Android's Settings lists them, once Android answers.
+        permissionRows.orientation = .vertical
+        permissionRows.alignment = .leading
+        permissionRows.spacing = 12
+        permissionRows.isHidden = true
         let cache = NSButton(title: "Clear Cache", target: self, action: #selector(clearCacheClicked))
         let data = NSButton(title: "Clear Data…", target: self, action: #selector(clearDataClicked))
         data.hasDestructiveAction = true
@@ -740,7 +745,7 @@ private final class AppSettingsView: NSView {
         buttons.distribution = .fillEqually
         let separator = NSBox()
         separator.boxType = .separator
-        let stack = NSStackView(views: [row, separator, buttons])
+        let stack = NSStackView(views: [row, permissionRows, separator, buttons])
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 12
@@ -753,18 +758,48 @@ private final class AppSettingsView: NSView {
             stack.topAnchor.constraint(equalTo: topAnchor),
             stack.bottomAnchor.constraint(equalTo: bottomAnchor),
             row.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -32),
+            permissionRows.widthAnchor.constraint(equalTo: row.widthAnchor),
             buttons.widthAnchor.constraint(equalTo: row.widthAnchor),
             separator.widthAnchor.constraint(equalTo: row.widthAnchor),
             widthAnchor.constraint(equalToConstant: 260),
         ])
         DispatchQueue.global().async { [weak self] in
             let allowed = AndroidRuntime.shared.notificationsAllowed(package: package)
+            let groups = AndroidRuntime.shared.permissions(package: package) ?? []
             DispatchQueue.main.async {
-                guard let self, let allowed else { return }
-                self.notifications.state = allowed ? .on : .off
-                self.notifications.isEnabled = true
+                guard let self else { return }
+                if let allowed {
+                    self.notifications.state = allowed ? .on : .off
+                    self.notifications.isEnabled = true
+                }
+                self.show(groups)
             }
         }
+    }
+
+    private var groups: [AndroidRuntime.PermissionGroup] = []
+    private let permissionRows = NSStackView()
+
+    private func show(_ groups: [AndroidRuntime.PermissionGroup]) {
+        self.groups = groups
+        for (index, group) in groups.enumerated() {
+            let toggle = NSSwitch()
+            toggle.state = group.allowed ? .on : .off
+            toggle.tag = index
+            toggle.target = self
+            toggle.action = #selector(permissionChanged(_:))
+            let row = NSStackView(views: [NSTextField(labelWithString: group.name), NSView(), toggle])
+            row.orientation = .horizontal
+            permissionRows.addArrangedSubview(row)
+            row.widthAnchor.constraint(equalTo: permissionRows.widthAnchor).isActive = true
+        }
+        permissionRows.isHidden = groups.isEmpty
+    }
+
+    @objc private func permissionChanged(_ sender: NSSwitch) {
+        guard groups.indices.contains(sender.tag) else { return }
+        let group = groups[sender.tag], allowed = sender.state == .on, package = package
+        DispatchQueue.global().async { AndroidRuntime.shared.setPermissions(group, allowed: allowed, package: package) }
     }
 
     required init?(coder: NSCoder) { fatalError() }

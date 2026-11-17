@@ -104,6 +104,44 @@ final class AndroidRuntime {
         watchPackages()
         watchSleep()
         NotificationBridge.shared.start()
+        followMac()
+    }
+
+    // MARK: - Following the Mac
+
+    /// Android takes the Mac's languages, appearance, time zone and clock, as an iPhone app on a
+    /// Mac does: they're set once, on the Mac, never again inside Android. Called when Android
+    /// starts and when one changes on the Mac; only what differs changes in Android.
+    func followMac() {
+        guard isRunning else { return }
+        // Read fresh each time: the process's own copies of these only change at its next launch.
+        func preference(_ key: String) -> Any? {
+            CFPreferencesCopyValue(key as CFString, kCFPreferencesAnyApplication, kCFPreferencesCurrentUser, kCFPreferencesAnyHost)
+        }
+        let languages = ((preference("AppleLanguages") as? [String]) ?? Locale.preferredLanguages)
+            .filter { $0.range(of: "^[A-Za-z0-9-]+$", options: .regularExpression) != nil }
+            .joined(separator: ",")
+        let dark = (preference("AppleInterfaceStyle") as? String) == "Dark"
+        NSTimeZone.resetSystemTimeZone()
+        let zone = TimeZone.current.identifier
+        let hours24 = (preference("AppleICUForce24HourTime") as? Bool)
+            ?? !(DateFormatter.dateFormat(fromTemplate: "j", options: 0, locale: Locale.autoupdatingCurrent) ?? "").contains("a")
+        guard zone.range(of: "^[A-Za-z0-9_+/-]+$", options: .regularExpression) != nil else { return }
+        let clock = hours24 ? "24" : "12"
+        let night = dark ? "yes" : "no"
+        // The time zone is the user's own choice in Android's terms, as Android here has no
+        // network or location to find it from.
+        _ = try? shell("""
+            [ "$(settings get system time_12_24)" = \(clock) ] || settings put system time_12_24 \(clock); \
+            cmd uimode night | grep -q ": \(night)$" || cmd uimode night \(night); \
+            [ "$(getprop persist.sys.timezone)" = \(zone) ] || { cmd time_zone_detector set_auto_detection_enabled false; \
+            su 1000 cmd time_zone_detector suggest_manual_time_zone --zone_id \(zone) >/dev/null; }
+            """)
+        guard !languages.isEmpty else { return }
+        NotificationBridge.shared.withAgent {
+            _ = try? AdbClient.shell("CLASSPATH=$(pm path \(NotificationBridge.agent) | cut -d: -f2) "
+                                     + "app_process / \(NotificationBridge.agent).Languages \(languages)")
+        }
     }
 
     /// The VM has no Bluetooth, and Android's Bluetooth crashes over and over at each start
@@ -673,6 +711,65 @@ final class AndroidRuntime {
         else { return }
         let agent = NotificationBridge.agent
         _ = try? shell("su 0 sh -c 'CLASSPATH=$(pm path \(agent) | cut -d: -f2) app_process / \(agent).Switch \(package) \(uid) \(allowed ? "on" : "off")'")
+    }
+
+    /// An app's permissions as Android's Settings > Apps > Permissions shows them: by group, each
+    /// allowed or not. Only the groups the app asks for.
+    struct PermissionGroup {
+        let name: String
+        let permissions: [String]
+        let allowed: Bool
+    }
+
+    /// Android's own groups of the permissions a user decides on. Notifications have their own switch.
+    private static let permissionGroups: [(name: String, permissions: [String])] = [
+        ("Location", ["ACCESS_FINE_LOCATION", "ACCESS_COARSE_LOCATION", "ACCESS_BACKGROUND_LOCATION"]),
+        ("Camera", ["CAMERA"]),
+        ("Microphone", ["RECORD_AUDIO"]),
+        ("Photos and Videos", ["READ_MEDIA_IMAGES", "READ_MEDIA_VIDEO", "READ_MEDIA_VISUAL_USER_SELECTED"]),
+        ("Music and Audio", ["READ_MEDIA_AUDIO"]),
+        ("Files", ["READ_EXTERNAL_STORAGE", "WRITE_EXTERNAL_STORAGE"]),
+        ("Contacts", ["READ_CONTACTS", "WRITE_CONTACTS", "GET_ACCOUNTS"]),
+        ("Calendar", ["READ_CALENDAR", "WRITE_CALENDAR"]),
+        ("Phone", ["READ_PHONE_STATE", "READ_PHONE_NUMBERS", "CALL_PHONE", "ANSWER_PHONE_CALLS", "ADD_VOICEMAIL",
+                   "USE_SIP", "ACCEPT_HANDOVER"]),
+        ("Call Logs", ["READ_CALL_LOG", "WRITE_CALL_LOG", "PROCESS_OUTGOING_CALLS"]),
+        ("SMS", ["SEND_SMS", "RECEIVE_SMS", "READ_SMS", "RECEIVE_WAP_PUSH", "RECEIVE_MMS"]),
+        ("Nearby Devices", ["BLUETOOTH_SCAN", "BLUETOOTH_CONNECT", "BLUETOOTH_ADVERTISE", "NEARBY_WIFI_DEVICES", "UWB_RANGING"]),
+        ("Physical Activity", ["ACTIVITY_RECOGNITION"]),
+        ("Body Sensors", ["BODY_SENSORS", "BODY_SENSORS_BACKGROUND"]),
+    ]
+
+    func permissions(package: String) -> [PermissionGroup]? {
+        guard package.range(of: "^[A-Za-z0-9_.]+$", options: .regularExpression) != nil,
+              let output = try? shell("dumpsys package \(package) | sed -n '/runtime permissions:/,$p' | grep 'android.permission.[A-Z_]*: granted='")
+        else { return nil }
+        var granted: [String: Bool] = [:]
+        for line in output.split(separator: "\n") {
+            let text = line.trimmingCharacters(in: .whitespaces)
+            guard let colon = text.firstIndex(of: ":") else { continue }
+            let name = text[..<colon].replacingOccurrences(of: "android.permission.", with: "")
+            if granted[name] == nil { granted[name] = text.contains("granted=true") }
+        }
+        return Self.permissionGroups.compactMap { group in
+            let asked = group.permissions.filter { granted[$0] != nil }
+            guard !asked.isEmpty else { return nil }
+            return PermissionGroup(name: group.name, permissions: asked, allowed: asked.contains { granted[$0] == true })
+        }
+    }
+
+    /// As the switch in Android's Settings does, marked as the user's choice so the app doesn't
+    /// ask again on its own. Allowing gives the permissions while the app is in use, as a phone's
+    /// "Allow" does, not in the background. Taking one away ends the app, as on a phone, which
+    /// then starts again.
+    func setPermissions(_ group: PermissionGroup, allowed: Bool, package: String) {
+        guard package.range(of: "^[A-Za-z0-9_.]+$", options: .regularExpression) != nil else { return }
+        let permissions = group.permissions.filter { !(allowed && $0.contains("BACKGROUND")) }
+        let commands = permissions.map {
+            "pm \(allowed ? "grant" : "revoke") \(package) android.permission.\($0) 2>/dev/null; "
+                + "pm set-permission-flags \(package) android.permission.\($0) user-set 2>/dev/null"
+        }
+        _ = try? shell(commands.joined(separator: "; "))
     }
 
     /// Mutes one app as Android itself does, by taking away its permission to play sound
