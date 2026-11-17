@@ -13,7 +13,7 @@ final class NotificationBridge: NSObject, UNUserNotificationCenterDelegate {
     static let shared = NotificationBridge()
 
     static let agent = "io.github.inquiline.notifications"
-    static let agentVersion = 8
+    static let agentVersion = 9
     private static let socket = "localabstract:inquiline-notifications"
 
     /// Opens an app's window, given its package; with true, without starting the app, whose
@@ -140,11 +140,19 @@ final class NotificationBridge: NSObject, UNUserNotificationCenterDelegate {
         guard let key = message["posted"] as? String, let package = message["package"] as? String else { return }
         let title = message["title"] as? String ?? ""
         let text = message["text"] as? String ?? ""
-        let said = title + "\n" + text
+        // The time the app gives the message too: the same words sent again are a new message.
+        let said = title + "\n" + text + "\n" + String(describing: message["when"] ?? "")
         // An app that updates a notification in place, as a chat adding a message, alerts
         // again unless it asked to alert once.
         if let before = shown[key], before == said || message["silent"] as? Bool == true {
             AppLog.write("Notification from \(package): an update, not shown again")
+            return
+        }
+        // A chat adding the user's own reply to the conversation, as after answering from the Mac:
+        // nothing new for the user, as on a phone.
+        if message["fromMe"] as? Bool == true {
+            shown[key] = said
+            AppLog.write("Notification from \(package): the user's own message, not shown")
             return
         }
         shown[key] = said

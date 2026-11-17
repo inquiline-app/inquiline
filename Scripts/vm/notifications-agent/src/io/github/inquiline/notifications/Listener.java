@@ -135,6 +135,24 @@ public final class Listener extends NotificationListenerService {
         }
     }
 
+    /**
+     * Whether a chat's newest message is the user's own, as when the app adds the user's reply
+     * to the conversation: Android's MessagingStyle gives the user's messages no sender.
+     */
+    private static boolean lastMessageIsMine(Notification n) {
+        Notification.MessagingStyle style = null;
+        try {
+            style = (Notification.MessagingStyle) Notification.MessagingStyle.class
+                    .getMethod("extractMessagingStyleFromNotification", Notification.class).invoke(null, n);
+        } catch (ReflectiveOperationException | ClassCastException ignored) {
+        }
+        if (style == null || style.getMessages().isEmpty()) return false;
+        Notification.MessagingStyle.Message last = style.getMessages().get(style.getMessages().size() - 1);
+        android.app.Person sender = last.getSenderPerson();
+        return sender == null || (style.getUser() != null && sender.getName() != null
+                && sender.getName().toString().equals(String.valueOf(style.getUser().getName())));
+    }
+
     @Override
     public void onNotificationPosted(StatusBarNotification sbn, RankingMap rankingMap) {
         if (clients.isEmpty() || !shouldShow(sbn, rankingMap)) return;
@@ -153,6 +171,10 @@ public final class Listener extends NotificationListenerService {
             message.put("text", text == null ? "" : text.toString());
             message.put("silent", (n.flags & Notification.FLAG_ONLY_ALERT_ONCE) != 0);
             message.put("replies", replyAction(n) != null);
+            // When the app says this message came: a new message with the same words as the
+            // last is new news, an update that keeps it isn't.
+            message.put("when", n.when);
+            message.put("fromMe", lastMessageIsMine(n));
             send(message);
         } catch (org.json.JSONException ignored) {
         }
