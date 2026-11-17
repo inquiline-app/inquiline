@@ -158,7 +158,7 @@ final class AndroidRuntime {
         if newRegion { sentRegion = region }
         NotificationBridge.shared.withAgent {
             if newRegion {
-                _ = try? AdbClient.shell("su 0 am start-foreground-service -n \(NotificationBridge.agent)/.AdBlock --es region \(region)")
+                _ = try? AdbClient.shell("su 0 am broadcast -n \(NotificationBridge.agent)/.Region --es region \(region)")
             }
             guard !languages.isEmpty else { return }
             _ = try? AdbClient.shell("CLASSPATH=$(pm path \(NotificationBridge.agent) | cut -d: -f2) "

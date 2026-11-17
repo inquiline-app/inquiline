@@ -77,9 +77,6 @@ public final class AdBlock extends VpnService {
         if (intent != null) {
             String add = intent.getStringExtra("add"), remove = intent.getStringExtra("remove");
             if (intent.getStringExtra("reset") != null) Counts.reset(this, intent.getStringExtra("reset"));
-            // The Mac's region ("TR"), which may differ from its languages; its list joins theirs.
-            String region = intent.getStringExtra("region");
-            if (region != null && Lists.setRegion(this, region) && updates != null) updates.interrupt();
             // "package=ads,privacy": that app's categories, each on its own; none leaves the app alone.
             String set = intent.getStringExtra("set");
             if (add != null) apps.putIfAbsent(add, Lists.DEFAULT);
@@ -157,7 +154,13 @@ public final class AdBlock extends VpnService {
     @Override
     public void onConfigurationChanged(android.content.res.Configuration config) {
         super.onConfigurationChanged(config);
-        if (updates != null) updates.interrupt();
+        listsChanged();
+    }
+
+    /** The lists in use changed (a language or the Mac's region): they're looked at now. */
+    static void listsChanged() {
+        Thread current = updates;
+        if (current != null) current.interrupt();
     }
 
     /** The proxy, with this installation's authority to open connections with (Certs.ofInstallation). */
