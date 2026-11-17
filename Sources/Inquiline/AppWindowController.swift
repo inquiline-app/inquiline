@@ -469,6 +469,17 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate, 
 
     private var fullScreenWaiter: NSObjectProtocol?
 
+    /// In full screen the app's screen takes the whole display and the toolbar comes down over
+    /// it with the menu bar, as Safari's does: pushed down for it instead, the picture was drawn
+    /// again at each reveal, flickered, and left the toolbar's place black once it went.
+    func windowWillEnterFullScreen(_ notification: Notification) {
+        window.styleMask.insert(.fullSizeContentView)
+    }
+
+    func windowWillExitFullScreen(_ notification: Notification) {
+        window.styleMask.remove(.fullSizeContentView)
+    }
+
     func windowDidEnterFullScreen(_ notification: Notification) {
         UserDefaults.standard.set(true, forKey: fullScreenKey)
     }
