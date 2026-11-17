@@ -189,9 +189,7 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate {
                 }
             }
         }
-        let sizeSent = self.sizeSent
         session.onSessionSize = { [weak self] width, height in
-            if sizeSent.take() { self?.pictureOfNewSize.set(true) }
             self?.displayView.setDisplaySize(width: width, height: height)
             DispatchQueue.main.async {
                 guard let self else { return }
@@ -214,19 +212,9 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate {
         let renderer = displayView.renderer
         let frames = frameCount
         var shown = false
-        let pictureOfNewSize = self.pictureOfNewSize
         session.onFrame = { [weak self] resource in
             renderer?.draw(resource: resource)
             frames.add()
-            // A new size goes once Android has shown a picture of the last: each new size starts
-            // Android's picture stream again, so sending sooner would let none through.
-            if pictureOfNewSize.take() {
-                DispatchQueue.main.async {
-                    guard let self else { return }
-                    self.resizing = false
-                    self.resizeAndroid()
-                }
-            }
             guard !shown else { return }
             shown = true
             AppLog.write(String(format: "First frame %.1f s after the app was started", frames.sinceStart()))
@@ -253,7 +241,6 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate {
     /// Starts the app again on a screen turned the way it now wants.
     private func restartApp() {
         restarted = true
-        resizing = false
         gamepads?.stop()
         gamepads = nil
         displayView.keyboard?.stop()
@@ -351,39 +338,16 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate {
     private func flexibleScreen() -> ScrcpySession.Screen {
         let scale = max(window.backingScaleFactor, NSScreen.main?.backingScaleFactor ?? Self.pixelsPerPoint)
         let size = screen.bounds.size
-        // Multiples of 4, as Android's display server takes them, so it takes exactly this size.
-        func even(_ value: CGFloat) -> Int { max(4, Int(value * scale / 4) * 4) }
+        func even(_ value: CGFloat) -> Int { max(2, Int((value * scale / 2).rounded()) * 2) }
         return ScrcpySession.Screen(width: even(size.width), height: even(size.height), density: Int(160 * scale))
     }
 
-    func windowWillStartLiveResize(_ notification: Notification) {
-        displayView.renderer?.setLiveResize(true)
-    }
-
-    func windowDidEndLiveResize(_ notification: Notification) {
-        displayView.renderer?.setLiveResize(false)
-    }
-
-    /// As the window takes a new size, Android's screen does, live: one size at a time, the
-    /// window's newest as soon as Android has taken the last, so requests never pile up.
+    /// As the window takes a new size, Android's screen does; Android lays the app out again once
+    /// the sizes stop changing, and the picture is scaled meanwhile.
     func windowDidResize(_ notification: Notification) {
-        if isFlexible { resizeAndroid() }
-    }
-
-    /// A size sent to Android that it hasn't shown a picture of yet.
-    private var resizing = false {
-        didSet { sizeSent.set(resizing) }
-    }
-    /// Set as a size is sent, then, on the receiving thread, as Android's stream comes with the
-    /// new size, so only a picture after it counts.
-    private let sizeSent = Flag()
-    private let pictureOfNewSize = Flag()
-
-    private func resizeAndroid() {
-        guard !resizing else { return }
+        guard isFlexible else { return }
         let screen = flexibleScreen()
         guard CGFloat(screen.width) != displaySize.width || CGFloat(screen.height) != displaySize.height else { return }
-        resizing = true
         session.sendResize(width: screen.width, height: screen.height)
     }
 
@@ -903,25 +867,4 @@ private final class AppSettingsView: NSView {
 
     @objc private func clearCacheClicked() { clearCache?() }
     @objc private func clearDataClicked() { clearData?() }
-}
-
-/// A flag set on one thread and taken once on another.
-final class Flag {
-    private let lock = NSLock()
-    private var value = false
-
-    func set(_ on: Bool) {
-        lock.lock()
-        value = on
-        lock.unlock()
-    }
-
-    /// True once after it's set.
-    func take() -> Bool {
-        lock.lock()
-        defer { lock.unlock() }
-        let was = value
-        value = false
-        return was
-    }
 }

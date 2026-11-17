@@ -329,21 +329,6 @@ index 20532c0..6f20ac5 100644
          buf.put(reportDesc);
          return buf.array();
      }
-diff --git a/server/src/main/java/com/genymobile/scrcpy/display/DisplayResizeDebouncer.java b/server/src/main/java/com/genymobile/scrcpy/display/DisplayResizeDebouncer.java
-index 0b961c6..a206450 100644
---- a/server/src/main/java/com/genymobile/scrcpy/display/DisplayResizeDebouncer.java
-+++ b/server/src/main/java/com/genymobile/scrcpy/display/DisplayResizeDebouncer.java
-@@ -7,7 +7,9 @@ import android.os.SystemClock;
- 
- public final class DisplayResizeDebouncer {
- 
--    private static final long DEBOUNCE_DELAY_MS = 300;
-+    // Inquiline: at once. The Mac sends a new size only once Android has taken the last one, so
-+    // requests never pile up, and the app lays out live as its window is dragged.
-+    private static final long DEBOUNCE_DELAY_MS = 0;
- 
-     public interface Callback {
-         void trigger(Size size);
 diff --git a/server/src/main/java/com/genymobile/scrcpy/video/FrameStreamer.java b/server/src/main/java/com/genymobile/scrcpy/video/FrameStreamer.java
 new file mode 100644
 index 0000000..e587dc7
