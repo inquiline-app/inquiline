@@ -122,8 +122,9 @@ final class Proxy {
             wrapped.startHandshake();
             app = wrapped;
         } catch (IOException e) {
-            // The app pins its own certificate: its next connections pass unopened.
-            pinned.add(host);
+            // The app refused the certificate, as one that pins its own does: its next connections
+            // to the site pass unopened. Other failures, as a connection cut, say nothing of that.
+            if (refusedCertificate(e)) pinned.add(host);
             return;
         }
         try (SSLSocket site = (SSLSocket) SSLSocketFactory.getDefault().createSocket(host, port)) {
@@ -135,6 +136,16 @@ final class Proxy {
         } finally {
             app.close();
         }
+    }
+
+    /** Whether the handshake ended with the app's alert that it doesn't trust the certificate. */
+    private static boolean refusedCertificate(Throwable e) {
+        for (Throwable t = e; t != null; t = t.getCause()) {
+            String message = String.valueOf(t.getMessage()).toUpperCase(Locale.ROOT);
+            if (message.contains("CERTIFICATE_UNKNOWN") || message.contains("BAD_CERTIFICATE") || message.contains("UNKNOWN_CA")
+                    || message.contains("CERTIFICATE_EXPIRED") || message.contains("ACCESS_DENIED")) return true;
+        }
+        return false;
     }
 
     private SSLContext context(String host) throws Exception {
