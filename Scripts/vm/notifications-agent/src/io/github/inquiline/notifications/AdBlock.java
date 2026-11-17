@@ -76,6 +76,7 @@ public final class AdBlock extends VpnService {
         java.util.Set<String> before = new java.util.TreeSet<>(apps.keySet());
         if (intent != null) {
             String add = intent.getStringExtra("add"), remove = intent.getStringExtra("remove");
+            if (intent.getStringExtra("reset") != null) Counts.reset(this, intent.getStringExtra("reset"));
             // "package=ads,privacy": that app's categories, each on its own; none leaves the app alone.
             String set = intent.getStringExtra("set");
             if (add != null) apps.putIfAbsent(add, Lists.DEFAULT);
@@ -175,7 +176,6 @@ public final class AdBlock extends VpnService {
         }
     }
 
-    private final java.util.concurrent.atomic.AtomicInteger blockedCount = new java.util.concurrent.atomic.AtomicInteger();
 
     /** The rules of every list as they are now. */
     private Proxy.Filter filter() throws Exception {
@@ -197,23 +197,22 @@ public final class AdBlock extends VpnService {
         android.util.Log.i("InquilineAdBlock", "Ad blocking rules: " + rules.count);
         return new Proxy.Filter() {
             @Override
-            public int maskOf(java.net.Socket app) {
-                return categoriesOf(app);
+            public Proxy.Owner ownerOf(java.net.Socket app) {
+                return owner(app);
             }
 
             @Override
-            public Proxy.Answer decide(String url, String host, String headers, int mask) {
+            public Proxy.Answer decide(String url, String host, String headers, Proxy.Owner owner) {
                 // uBlock's lists alone: the address list, for apps' own name lookups, would also cut
                 // services uBlock leaves alone on purpose, as sites' cookie consent.
                 Filters.Request request = request(url, host, headers);
-                request.mask = mask;
-                String decision = rules.decide(request);
+                request.mask = owner.mask;
+                Filters.Decision decision = rules.decide(request);
                 if (decision == null) return null;
                 // How many, never which: what an app asks for is the user's own business.
-                if (blockedCount.incrementAndGet() % 25 == 0) {
-                    android.util.Log.i("InquilineAdBlock", "Ads blocked so far: " + blockedCount.get());
-                }
-                return decision.isEmpty() || decision.equals("empty") ? Proxy.Answer.EMPTY : standIn(decision);
+                Counts.add(AdBlock.this, owner.pkg, decision.category & owner.mask);
+                String redirect = decision.redirect;
+                return redirect.isEmpty() || redirect.equals("empty") ? Proxy.Answer.EMPTY : standIn(redirect);
             }
 
             @Override
@@ -229,21 +228,24 @@ public final class AdBlock extends VpnService {
     }
 
     /**
-     * The categories on for the app on the other end of a proxy connection: Android tells a VPN
-     * app which app owns a connection, and the user chose them for that app.
+     * The app on the other end of a proxy connection and the categories on for it: Android tells
+     * a VPN app which app owns a connection, and the user chose them for that app.
      */
-    private int categoriesOf(java.net.Socket app) {
+    private Proxy.Owner owner(java.net.Socket app) {
         try {
             android.net.ConnectivityManager connectivity = getSystemService(android.net.ConnectivityManager.class);
             int uid = connectivity.getConnectionOwnerUid(android.system.OsConstants.IPPROTO_TCP,
                     (java.net.InetSocketAddress) app.getRemoteSocketAddress(), (java.net.InetSocketAddress) app.getLocalSocketAddress());
             String[] packages = getPackageManager().getPackagesForUid(uid);
-            int mask = 0;
-            if (packages != null) for (String pkg : packages) mask |= masks.getOrDefault(pkg, 0);
-            if (mask != 0) return mask;
+            if (packages != null) {
+                for (String pkg : packages) {
+                    Integer mask = masks.get(pkg);
+                    if (mask != null && mask != 0) return new Proxy.Owner(pkg, mask);
+                }
+            }
         } catch (Exception ignored) {
         }
-        return Lists.DEFAULT;
+        return new Proxy.Owner("", Lists.DEFAULT);
     }
 
     private static org.json.JSONObject standIns;

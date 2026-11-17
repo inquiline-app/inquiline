@@ -797,6 +797,26 @@ final class AndroidRuntime {
         return []
     }
 
+    /// How many requests the ad blocker blocked in the app, by category, since they were last
+    /// reset (the helper's Counts): only categories with any.
+    func adCounts(package: String) -> [String: Int] {
+        guard package.range(of: "^[A-Za-z0-9_.]+$", options: .regularExpression) != nil,
+              let output = try? shell("su 0 cat /data/data/\(NotificationBridge.agent)/files/adblock-counts 2>/dev/null")
+        else { return [:] }
+        var counts: [String: Int] = [:]
+        for line in output.split(whereSeparator: \.isNewline) {
+            let parts = line.split(separator: " ")
+            guard parts.count == 3, parts[0] == package, let count = Int(parts[2]) else { continue }
+            counts[String(parts[1])] = count
+        }
+        return counts
+    }
+
+    func resetAdCounts(package: String) {
+        guard package.range(of: "^[A-Za-z0-9_.]+$", options: .regularExpression) != nil else { return }
+        _ = try? shell("su 0 am start-foreground-service -n \(NotificationBridge.agent)/.AdBlock --es reset \(package)")
+    }
+
     /// What is blocked in the app, each category on its own ("ads", "privacy"...); none turns the
     /// ad blocker off for it.
     func setAdCategories(_ categories: Set<String>, package: String) {

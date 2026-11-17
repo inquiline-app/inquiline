@@ -203,12 +203,24 @@ final class Filters {
         return best;
     }
 
+    /** A blocked request's fate: the stand-in to answer with ("" for none), and the category that blocked it. */
+    static final class Decision {
+        final String redirect;
+        final int category;
+
+        Decision(String redirect, int category) {
+            this.redirect = redirect;
+            this.category = category;
+        }
+    }
+
     /**
-     * What becomes of the request: null to let it through, "" to block it, or the name of the
+     * What becomes of the request: null to let it through, else what blocked it and the
      * stand-in resource to answer it with, as uBlock answers some blocked scripts.
      */
-    String decide(Request r) {
-        if (!blocks(r)) return null;
+    Decision decide(Request r) {
+        Rule blocking = blockingRule(r);
+        if (blocking == null) return null;
         String url = r.url.toLowerCase(Locale.ROOT), host = r.host.toLowerCase(Locale.ROOT);
         String redirect = null;
         for (List<Rule> rules : candidates(url, host)) {
@@ -218,7 +230,7 @@ final class Filters {
                 redirect = rule.redirect;
             }
         }
-        return redirect == null ? "" : redirect;
+        return new Decision(redirect == null ? "" : redirect, blocking.category);
     }
 
     /** The rule lists a request's address can match: by its host and its domains, by its words. */
@@ -250,13 +262,18 @@ final class Filters {
 
     /** Whether the request is to be blocked. */
     boolean blocks(Request r) {
+        return blockingRule(r) != null;
+    }
+
+    /** The rule that blocks the request, or null when none does (or an exception lets it through). */
+    private Rule blockingRule(Request r) {
         String url = r.url.toLowerCase(Locale.ROOT);
         Rule blocking = null;
         // Rules for the request's host and the domains it is under.
         String host = r.host.toLowerCase(Locale.ROOT);
         for (String h = host; ; ) {
             blocking = check(byHost.get(h), r, url, host, blocking);
-            if (blocking != null && blocking.important) return true;
+            if (blocking != null && blocking.important) return blocking;
             int dot = h.indexOf('.');
             if (dot < 0) break;
             h = h.substring(dot + 1);
@@ -272,11 +289,11 @@ final class Filters {
             while (i < url.length() && Character.isLetterOrDigit(url.charAt(i))) i++;
             if (i - start >= 3) {
                 blocking = check(byWord.get(url.substring(start, i)), r, url, host, blocking);
-                if (blocking != null && blocking.important) return true;
+                if (blocking != null && blocking.important) return blocking;
             }
         }
         blocking = check(unindexed, r, url, host, blocking);
-        return blocking != null && !blocking.exception;
+        return blocking != null && !blocking.exception ? blocking : null;
     }
 
     /** The deciding rule so far: a block, overridden by an exception, unless the block is important. */

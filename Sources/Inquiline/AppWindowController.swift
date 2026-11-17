@@ -877,6 +877,15 @@ private final class AppSettingsView: NSView {
     private var groups: [AndroidRuntime.PermissionGroup] = []
     private let level = NSSlider(value: 0, minValue: 0, maxValue: 3, target: nil, action: nil)
     private let levelText = NSTextField(wrappingLabelWithString: "")
+    private let countRows = NSStackView()
+    private let resetCounts = NSButton(title: "Reset Counts", target: nil, action: nil)
+    private var countTimer: Timer?
+
+    /// The names the counts show by, for the helper's categories.
+    private static let countNames = [
+        ("ads", "Ads"), ("privacy", "Trackers"), ("malware", "Malicious Sites"),
+        ("cookies", "Cookie Notices"), ("social", "Social Widgets"), ("annoyances", "Annoyances"),
+    ]
 
     /// How much the ad blocker takes away, as Firefox's tracking protection has levels: the
     /// helper's categories each level turns on, its name and what it blocks.
@@ -925,6 +934,17 @@ private final class AppSettingsView: NSView {
         levelText.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
         levelText.textColor = .secondaryLabelColor
         for view in [level, names, levelText] as [NSView] { adRows.addArrangedSubview(view) }
+        // What has been blocked here, by kind, until reset: only kinds with any.
+        countRows.orientation = .vertical
+        countRows.alignment = .leading
+        countRows.spacing = 6
+        countRows.isHidden = true
+        resetCounts.target = self
+        resetCounts.action = #selector(resetClicked)
+        resetCounts.controlSize = .small
+        resetCounts.isHidden = true
+        adRows.addArrangedSubview(countRows)
+        adRows.addArrangedSubview(resetCounts)
         let permissionsHeader = Self.header("Permissions", rows: permissionRows, trailing: nil)
         let adsHeader = Self.header("Ad Blocking", rows: adRows, trailing: nil)
 
@@ -967,7 +987,7 @@ private final class AppSettingsView: NSView {
         for view in [permissionsHeader, permissionRows, adsHeader, adRows, dataHeader, dataRows] {
             constraints.append(view.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -32))
         }
-        for view in [level, names, levelText] as [NSView] {
+        for view in [level, names, levelText, countRows] as [NSView] {
             constraints.append(view.widthAnchor.constraint(equalTo: adRows.widthAnchor, constant: -18))
         }
         constraints.append(folder.widthAnchor.constraint(equalTo: clearing.widthAnchor))
@@ -1037,6 +1057,55 @@ private final class AppSettingsView: NSView {
             toggle.action = #selector(permissionChanged(_:))
             permissionRows.addArrangedSubview(Self.row(group.name, toggle))
         }
+    }
+
+    /// The counts, while the settings show: each newly blocked one appears as it's blocked.
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        countTimer?.invalidate()
+        countTimer = nil
+        guard window != nil else { return }
+        refreshCounts()
+        countTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in self?.refreshCounts() }
+    }
+
+    private var refreshing = false
+
+    private func refreshCounts() {
+        guard !refreshing else { return }
+        refreshing = true
+        let package = package
+        DispatchQueue.global().async { [weak self] in
+            let counts = AndroidRuntime.shared.adCounts(package: package)
+            DispatchQueue.main.async { self?.showCounts(counts) }
+        }
+    }
+
+    private var shownCounts: [String: Int]?
+
+    private func showCounts(_ counts: [String: Int]) {
+        refreshing = false
+        guard counts != shownCounts else { return }
+        shownCounts = counts
+        countRows.arrangedSubviews.forEach { $0.removeFromSuperview() }
+        let format = NumberFormatter()
+        format.numberStyle = .decimal
+        for (id, name) in Self.countNames {
+            guard let count = counts[id], count > 0 else { continue }
+            let value = NSTextField(labelWithString: format.string(from: NSNumber(value: count)) ?? "\(count)")
+            value.textColor = .secondaryLabelColor
+            let row = Self.row(name + " blocked", value)
+            countRows.addArrangedSubview(row)
+            row.widthAnchor.constraint(equalTo: countRows.widthAnchor).isActive = true
+        }
+        countRows.isHidden = countRows.arrangedSubviews.isEmpty
+        resetCounts.isHidden = countRows.isHidden
+    }
+
+    @objc private func resetClicked() {
+        let package = package
+        showCounts([:])
+        DispatchQueue.global().async { AndroidRuntime.shared.resetAdCounts(package: package) }
     }
 
     /// The level nearest what is on: the most it covers without turning on more.
