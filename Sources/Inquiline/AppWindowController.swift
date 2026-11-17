@@ -992,6 +992,8 @@ private final class AppSettingsView: NSView {
         names.orientation = .horizontal
         names.distribution = .equalSpacing
         levelText.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        // Wrapped at the settings' width, so its height is known before it shows.
+        levelText.preferredMaxLayoutWidth = 220
         levelText.textColor = .secondaryLabelColor
         for view in [level, names, levelText] as [NSView] { adRows.addArrangedSubview(view) }
         // What has been blocked here, by kind, until reset: only kinds with any.
@@ -1177,6 +1179,7 @@ private final class AppSettingsView: NSView {
         level.integerValue = index
         level.isEnabled = true
         levelText.stringValue = Self.levels[index].blocks
+        fitToContent()
     }
 
     @objc private func permissionChanged(_ sender: NSSwitch) {
@@ -1194,6 +1197,8 @@ private final class AppSettingsView: NSView {
     @objc private func levelChanged() {
         let chosen = Self.levels[level.integerValue], package = package
         levelText.stringValue = chosen.blocks
+        // The description takes one line or three: the settings fit it.
+        fitToContent()
         DispatchQueue.global().async { AndroidRuntime.shared.setAdCategories(chosen.categories, package: package) }
     }
 
