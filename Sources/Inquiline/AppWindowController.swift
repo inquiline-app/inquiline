@@ -875,16 +875,17 @@ private final class AppSettingsView: NSView {
     private let dataSize = NSTextField(labelWithString: "")
     private let cacheSize = NSTextField(labelWithString: "")
     private var groups: [AndroidRuntime.PermissionGroup] = []
-    private var categorySwitches: [String: NSSwitch] = [:]
+    private let level = NSSlider(value: 0, minValue: 0, maxValue: 3, target: nil, action: nil)
+    private let levelText = NSTextField(wrappingLabelWithString: "")
 
-    /// What the ad blocker can block, each on its own, as uBlock's lists: its id with the helper, and its name.
-    private static let categories = [
-        ("ads", "Ads"),
-        ("privacy", "Trackers"),
-        ("malware", "Malicious Sites"),
-        ("cookies", "Cookie Notices"),
-        ("social", "Social Widgets"),
-        ("annoyances", "Annoyances"),
+    /// How much the ad blocker takes away, as Firefox's tracking protection has levels: the
+    /// helper's categories each level turns on, its name and what it blocks.
+    private static let levels: [(categories: Set<String>, name: String, blocks: String)] = [
+        ([], "Off", "Nothing is blocked."),
+        (["ads"], "Light", "Ads."),
+        (["ads", "privacy", "malware"], "Balanced", "Ads, trackers and malicious sites, as uBlock Origin by default."),
+        (["ads", "privacy", "malware", "cookies", "social", "annoyances"], "Strong",
+         "Also cookie notices, social media buttons and annoyances such as newsletter pop-ups."),
     ]
 
     init(package: String, label: String) {
@@ -905,16 +906,25 @@ private final class AppSettingsView: NSView {
             rows.edgeInsets = NSEdgeInsets(top: 0, left: 18, bottom: 0, right: 0)
         }
         permissionRows.addArrangedSubview(Self.row("Notifications", notifications))
-        // What is blocked in this app, each on its own.
-        for (id, name) in Self.categories {
-            let toggle = NSSwitch()
-            toggle.identifier = NSUserInterfaceItemIdentifier(id)
-            toggle.target = self
-            toggle.action = #selector(categoryChanged(_:))
-            toggle.isEnabled = false
-            categorySwitches[id] = toggle
-            adRows.addArrangedSubview(Self.row(name, toggle))
-        }
+        // How much is blocked in this app.
+        level.numberOfTickMarks = Self.levels.count
+        level.allowsTickMarkValuesOnly = true
+        // Android hears the level once it's let go, not at every step of a drag.
+        level.isContinuous = false
+        level.target = self
+        level.action = #selector(levelChanged)
+        level.isEnabled = false
+        let names = NSStackView(views: Self.levels.map { level in
+            let label = NSTextField(labelWithString: level.name)
+            label.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+            label.textColor = .secondaryLabelColor
+            return label
+        })
+        names.orientation = .horizontal
+        names.distribution = .equalSpacing
+        levelText.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        levelText.textColor = .secondaryLabelColor
+        for view in [level, names, levelText] as [NSView] { adRows.addArrangedSubview(view) }
         let permissionsHeader = Self.header("Permissions", rows: permissionRows, trailing: nil)
         let adsHeader = Self.header("Ad Blocking", rows: adRows, trailing: nil)
 
@@ -956,6 +966,9 @@ private final class AppSettingsView: NSView {
         ]
         for view in [permissionsHeader, permissionRows, adsHeader, adRows, dataHeader, dataRows] {
             constraints.append(view.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -32))
+        }
+        for view in [level, names, levelText] as [NSView] {
+            constraints.append(view.widthAnchor.constraint(equalTo: adRows.widthAnchor, constant: -18))
         }
         constraints.append(folder.widthAnchor.constraint(equalTo: clearing.widthAnchor))
         constraints.append(clearing.widthAnchor.constraint(equalTo: dataRows.widthAnchor, constant: -18))
@@ -1026,11 +1039,12 @@ private final class AppSettingsView: NSView {
         }
     }
 
+    /// The level nearest what is on: the most it covers without turning on more.
     private func showCategories(_ on: Set<String>) {
-        for (id, toggle) in categorySwitches {
-            toggle.state = on.contains(id) ? .on : .off
-            toggle.isEnabled = true
-        }
+        let index = Self.levels.lastIndex { $0.categories.isSubset(of: on) } ?? 0
+        level.integerValue = index
+        level.isEnabled = true
+        levelText.stringValue = Self.levels[index].blocks
     }
 
     @objc private func permissionChanged(_ sender: NSSwitch) {
@@ -1045,9 +1059,10 @@ private final class AppSettingsView: NSView {
         DispatchQueue.global().async { AndroidRuntime.shared.setNotificationsAllowed(allowed, package: package) }
     }
 
-    @objc private func categoryChanged(_ sender: NSSwitch) {
-        let chosen = Set(categorySwitches.filter { $0.value.state == .on }.map(\.key)), package = package
-        DispatchQueue.global().async { AndroidRuntime.shared.setAdCategories(chosen, package: package) }
+    @objc private func levelChanged() {
+        let chosen = Self.levels[level.integerValue], package = package
+        levelText.stringValue = chosen.blocks
+        DispatchQueue.global().async { AndroidRuntime.shared.setAdCategories(chosen.categories, package: package) }
     }
 
     /// Inquiline opens it, as it mounts Android's disk: an app's own process would need the
