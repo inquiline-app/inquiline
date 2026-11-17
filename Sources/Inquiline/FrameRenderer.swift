@@ -36,6 +36,15 @@ final class FrameRenderer {
     private var scaler: MTLFXSpatialScaler?
     private var scaled: MTLTexture?
 
+    /// An app laid out for its window's size (AppWindowController's flexible apps): its picture
+    /// shows at its own size, at the window's top left, as a Mac app's does while its window is
+    /// resized, and the rest of the window has the app's own background colour, not black.
+    private(set) var keepsPixelSize = false
+    /// Set when Android's screen is given a new size: until the app draws on it, Android shows
+    /// nothing there, and the last picture stays instead.
+    private var waitingForContent = false
+    private var background: (UInt8, UInt8, UInt8) = (0, 0, 0)
+
     init?() {
         guard let device = MTLCreateSystemDefaultDevice(), let queue = device.makeCommandQueue(),
               let library = try? device.makeLibrary(source: Self.shaders, options: nil)
@@ -55,6 +64,19 @@ final class FrameRenderer {
         layer.backgroundColor = CGColor(gray: 0, alpha: 1)
         // Frames show at the display's refresh, as a phone's screen shows them, without tearing.
         layer.displaySyncEnabled = true
+    }
+
+    /// Called on the main thread, once, for an app that lays out for its window.
+    func keepPixelSize() {
+        keepsPixelSize = true
+        layer.contentsGravity = .topLeft
+    }
+
+    /// Called as Android's screen is asked to take a new size.
+    func awaitContent() {
+        outputLock.lock()
+        waitingForContent = true
+        outputLock.unlock()
     }
 
     deinit {
@@ -101,6 +123,10 @@ final class FrameRenderer {
             freeSlots.signal()
             return
         }
+        if keepsPixelSize, !takeContent(slot: slot) {
+            freeSlots.signal()
+            return
+        }
         var frame = textures[slot]
         if let scaler = upscaler() {
             scaler.colorTexture = frame
@@ -128,6 +154,43 @@ final class FrameRenderer {
         commands.commit()
     }
 
+    /// Whether the frame in `slot` is shown: after a new size, an empty screen isn't, as Android
+    /// draws one while the app lays out again. Also takes the app's background colour from the
+    /// frame's bottom right corner, for the part of the window the picture doesn't cover.
+    private func takeContent(slot: Int) -> Bool {
+        guard let memory else { return true }
+        let pixels = memory.advanced(by: slot * slotSize).assumingMemoryBound(to: UInt8.self)
+        func pixel(_ x: Int, _ y: Int) -> (UInt8, UInt8, UInt8) {
+            let offset = (min(max(y, 0), height - 1) * width + min(max(x, 0), width - 1)) * 4
+            return (pixels[offset], pixels[offset + 1], pixels[offset + 2])
+        }
+        outputLock.lock()
+        let waiting = waitingForContent
+        outputLock.unlock()
+        if waiting {
+            // A grid of points: an app's screen, even a dark one, has something on it that isn't black.
+            var empty = true
+            for row in 0..<16 where empty {
+                for column in 0..<16 where pixel(width * (2 * column + 1) / 32, height * (2 * row + 1) / 32) != (0, 0, 0) {
+                    empty = false
+                    break
+                }
+            }
+            if empty { return false }
+            outputLock.lock()
+            waitingForContent = false
+            outputLock.unlock()
+        }
+        let corner = pixel(width - 4, height - 4)
+        if corner != background {
+            background = corner
+            let color = CGColor(srgbRed: CGFloat(corner.0) / 255, green: CGFloat(corner.1) / 255,
+                                blue: CGFloat(corner.2) / 255, alpha: 1)
+            DispatchQueue.main.async { [layer] in layer.backgroundColor = color }
+        }
+        return true
+    }
+
     /// Called on the main thread when the window's size or screen changes.
     func setWindowPixels(_ size: CGSize) {
         outputLock.lock()
@@ -141,6 +204,8 @@ final class FrameRenderer {
     /// The upscaler for the window's current size, made again when it changes. None when the
     /// window shows the frame at its own size or smaller, where the layer's scaling is enough.
     private func upscaler() -> MTLFXSpatialScaler? {
+        // Its picture is the window's own pixels, never scaled up.
+        if keepsPixelSize { return nil }
         outputLock.lock()
         let window = windowPixels, changed = windowChanged
         outputLock.unlock()
