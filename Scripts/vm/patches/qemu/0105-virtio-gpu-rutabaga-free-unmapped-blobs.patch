@@ -1,0 +1,15 @@
+--- a/hw/display/virtio-gpu-rutabaga.c	2026-11-17 19:21:19
++++ b/hw/display/virtio-gpu-rutabaga.c	2026-11-17 19:21:19
+@@ -771,6 +771,12 @@
+ 
+         MemoryRegion *mr = &(vr->memory_regions[slot].mr);
+         memory_region_del_subregion(&vb->hostmem, mr);
++        /*
++         * Inquiline: the region is let go too, which frees its RAM block. Without this each
++         * map left one behind, so a game that maps buffers every frame gathered thousands,
++         * and every later map slowed with their number until a frame took a second.
++         */
++        object_unparent(OBJECT(mr));
+ 
+         vr->memory_regions[slot].resource_id = 0;
+         vr->memory_regions[slot].used = 0;

@@ -1,0 +1,82 @@
+diff --git a/system/physmem.c b/system/physmem.c
+index c21ea92915..356e37d12c 100644
+--- a/system/physmem.c
++++ b/system/physmem.c
+@@ -1786,10 +1786,29 @@ static void *file_ram_alloc(RAMBlock *block,
+  * dirty bitmaps.
+  * Called with the ramlist lock held.
+  */
++/*
++ * Inquiline: the blocks are sorted once and each gap found by binary search, rather than a
++ * scan of every block for every block. Graphics map a block for each buffer they share, so a
++ * game holds hundreds, and the quadratic scan held the main loop for most of every frame.
++ * The offset chosen is the same: the smallest gap that fits, after the first such block.
++ */
++typedef struct RAMSpan {
++    ram_addr_t start, end;
++} RAMSpan;
++
++static int ram_span_compare(const void *a, const void *b)
++{
++    ram_addr_t x = ((const RAMSpan *)a)->start, y = ((const RAMSpan *)b)->start;
++
++    return x < y ? -1 : x > y;
++}
++
+ static ram_addr_t find_ram_offset(ram_addr_t size)
+ {
+-    RAMBlock *block, *next_block;
++    RAMBlock *block;
+     ram_addr_t offset = RAM_ADDR_MAX, mingap = RAM_ADDR_MAX;
++    g_autofree RAMSpan *spans = NULL;
++    size_t count = 0, i = 0;
+ 
+     assert(size != 0); /* it would hand out same offset multiple times */
+ 
+@@ -1797,8 +1816,20 @@ static ram_addr_t find_ram_offset(ram_addr_t size)
+         return 0;
+     }
+ 
++    RAMBLOCK_FOREACH(block) {
++        count++;
++    }
++    spans = g_new(RAMSpan, count);
++    RAMBLOCK_FOREACH(block) {
++        spans[i].start = block->offset;
++        spans[i].end = block->offset + block->max_length;
++        i++;
++    }
++    qsort(spans, count, sizeof(*spans), ram_span_compare);
++
+     RAMBLOCK_FOREACH(block) {
+         ram_addr_t candidate, next = RAM_ADDR_MAX;
++        size_t low = 0, high = count;
+ 
+         /* Align blocks to start on a 'long' in the bitmap
+          * which makes the bitmap sync'ing take the fast path.
+@@ -1806,14 +1837,19 @@ static ram_addr_t find_ram_offset(ram_addr_t size)
+         candidate = block->offset + block->max_length;
+         candidate = ROUND_UP(candidate, BITS_PER_LONG << TARGET_PAGE_BITS);
+ 
+-        /* Search for the closest following block
+-         * and find the gap.
+-         */
+-        RAMBLOCK_FOREACH(next_block) {
+-            if (next_block->offset >= candidate) {
+-                next = MIN(next, next_block->offset);
++        /* The closest following block: the first that starts at or after the candidate. */
++        while (low < high) {
++            size_t middle = low + (high - low) / 2;
++
++            if (spans[middle].start >= candidate) {
++                high = middle;
++            } else {
++                low = middle + 1;
+             }
+         }
++        if (low < count) {
++            next = spans[low].start;
++        }
+ 
+         /* If it fits remember our place and remember the size
+          * of gap, but keep going so that we might find a smaller
