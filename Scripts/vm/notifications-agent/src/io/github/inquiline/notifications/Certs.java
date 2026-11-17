@@ -29,6 +29,48 @@ final class Certs {
     final KeyPair siteKey;
     private final SecureRandom random = new SecureRandom();
 
+    /**
+     * This installation's own authority, made the first time in the helper's private files
+     * (ca.pem, ca.key) and kept: its key never leaves them. Also writes ca.name, the file name
+     * Android's certificate stores give it (OpenSSL's old subject hash), for Inquiline to install it.
+     */
+    static Certs ofInstallation(java.io.File dir) throws Exception {
+        java.io.File pem = new java.io.File(dir, "ca.pem"), key = new java.io.File(dir, "ca.key");
+        if (!pem.exists() || !key.exists()) {
+            KeyPairGenerator generator = KeyPairGenerator.getInstance("RSA");
+            generator.initialize(2048);
+            KeyPair pair = generator.generateKeyPair();
+            byte[] name = seq(set(seq(oid(new int[] {2, 5, 4, 3}), tlv(0x0C, "Inquiline Ad Blocking".getBytes(StandardCharsets.UTF_8)))),
+                    set(seq(oid(new int[] {2, 5, 4, 10}), tlv(0x0C, "Inquiline".getBytes(StandardCharsets.UTF_8)))));
+            byte[] sha256WithRsa = seq(oid(new int[] {1, 2, 840, 113549, 1, 1, 11}), new byte[] {0x05, 0x00});
+            long now = System.currentTimeMillis();
+            byte[] validity = seq(utcTime(new Date(now - 86_400_000L)), utcTime(new Date(now + 3650L * 86_400_000L)));
+            byte[] basic = seq(oid(new int[] {2, 5, 29, 19}), new byte[] {0x01, 0x01, (byte) 0xFF},
+                    tlv(0x04, seq(new byte[] {0x01, 0x01, (byte) 0xFF})));
+            byte[] usage = seq(oid(new int[] {2, 5, 29, 15}), new byte[] {0x01, 0x01, (byte) 0xFF},
+                    tlv(0x04, tlv(0x03, new byte[] {0x01, 0x06})));
+            byte[] tbs = seq(tlv(0xA0, integer(BigInteger.valueOf(2))), integer(new BigInteger(64, new SecureRandom()).add(BigInteger.ONE)),
+                    sha256WithRsa, name, validity, name, pair.getPublic().getEncoded(), tlv(0xA3, seq(basic, usage)));
+            Signature signer = Signature.getInstance("SHA256withRSA");
+            signer.initSign(pair.getPrivate());
+            signer.update(tbs);
+            byte[] signature = signer.sign();
+            byte[] bits = new byte[signature.length + 1];
+            System.arraycopy(signature, 0, bits, 1, signature.length);
+            byte[] der = seq(tbs, sha256WithRsa, tlv(0x03, bits));
+            String text = "-----BEGIN CERTIFICATE-----\n"
+                    + java.util.Base64.getMimeEncoder(64, "\n".getBytes(StandardCharsets.US_ASCII)).encodeToString(der)
+                    + "\n-----END CERTIFICATE-----\n";
+            java.nio.file.Files.write(key.toPath(), pair.getPrivate().getEncoded());
+            java.nio.file.Files.write(pem.toPath(), text.getBytes(StandardCharsets.US_ASCII));
+        }
+        Certs certs = new Certs(java.nio.file.Files.readAllBytes(pem.toPath()), java.nio.file.Files.readAllBytes(key.toPath()));
+        byte[] md5 = java.security.MessageDigest.getInstance("MD5").digest(certs.authority.getSubjectX500Principal().getEncoded());
+        String hash = String.format(Locale.US, "%02x%02x%02x%02x", md5[3], md5[2], md5[1], md5[0]);
+        java.nio.file.Files.write(new java.io.File(dir, "ca.name").toPath(), (hash + ".0").getBytes(StandardCharsets.US_ASCII));
+        return certs;
+    }
+
     Certs(byte[] authorityPem, byte[] authorityKeyPkcs8) throws Exception {
         authority = (X509Certificate) CertificateFactory.getInstance("X.509")
                 .generateCertificate(new java.io.ByteArrayInputStream(authorityPem));

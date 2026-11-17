@@ -130,12 +130,10 @@ public final class AdBlock extends VpnService {
 
     private static Proxy proxy;
 
-    /** The proxy, once there is an authority to open connections with (files/ca.pem, ca.key). */
+    /** The proxy, with this installation's authority to open connections with (Certs.ofInstallation). */
     private boolean startProxy() {
         if (proxy != null) return true;
         try {
-            byte[] pem = Files.readAllBytes(new File(getFilesDir(), "ca.pem").toPath());
-            byte[] key = Files.readAllBytes(new File(getFilesDir(), "ca.key").toPath());
             Filters rules = new Filters();
             Cosmetics hiding = new Cosmetics();
             for (String list : new String[] {"easylist.txt", "easyprivacy.txt", "ublock-filters.txt", "adguard-turkish.txt"}) {
@@ -148,7 +146,7 @@ public final class AdBlock extends VpnService {
             }
             android.util.Log.i("InquilineAdBlock", "Ad blocking rules: " + rules.count);
             java.util.concurrent.atomic.AtomicInteger blockedCount = new java.util.concurrent.atomic.AtomicInteger();
-            Proxy started = new Proxy(new Certs(pem, key), new Proxy.Filter() {
+            Proxy started = new Proxy(Certs.ofInstallation(getFilesDir()), new Proxy.Filter() {
                 @Override
                 public boolean blocks(String url, String host, String headers) {
                     boolean blocked = isBlocked(host) || rules.blocks(request(url, host, headers));

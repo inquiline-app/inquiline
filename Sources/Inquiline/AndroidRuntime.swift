@@ -105,6 +105,16 @@ final class AndroidRuntime {
         watchSleep()
         NotificationBridge.shared.start()
         followMac()
+        // As Android starts again without it, for apps whose ads are blocked; the helper may still
+        // be making it, the first time after an update.
+        DispatchQueue.global().async {
+            for _ in 0..<30 {
+                if self.trustAdBlockAuthority() { return }
+                let chosen = (try? self.shell("su 0 cat /data/data/\(NotificationBridge.agent)/files/adblock 2>/dev/null")) ?? ""
+                if chosen.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return }
+                Thread.sleep(forTimeInterval: 1)
+            }
+        }
     }
 
     // MARK: - Following the Mac
@@ -775,6 +785,33 @@ final class AndroidRuntime {
         let agent = NotificationBridge.agent
         _ = try? shell("appops set \(agent) ACTIVATE_VPN allow; su 0 am start-foreground-service -n \(agent)/.AdBlock "
                        + "--es \(blocked ? "add" : "remove") \(package)")
+        // The helper makes this installation's authority the first time; it's trusted once it's there.
+        guard blocked else { return }
+        for _ in 0..<20 {
+            if trustAdBlockAuthority() { return }
+            Thread.sleep(forTimeInterval: 0.5)
+        }
+    }
+
+    /**
+     * Makes Android trust the ad blocker's authority, which the helper made for this installation
+     * alone: in the system store, which apps trust, and in the user's, which is the one Chrome
+     * trusts beside its own roots. The system store is read-only, so a copy with it is laid over
+     * it, for Android and its app launcher (zygote), each start. Returns false while there is none.
+     */
+    @discardableResult
+    func trustAdBlockAuthority() -> Bool {
+        let files = "/data/data/\(NotificationBridge.agent)/files"
+        let store = "/apex/com.android.conscrypt/cacerts", copy = "/dev/inquiline-cacerts"
+        let script = """
+            N=$(cat \(files)/ca.name 2>/dev/null); [ -n "$N" ] || { echo none; exit 0; }; \
+            if [ ! -f \(copy)/$N ]; then mkdir -p \(copy) && cp \(store)/* \(copy)/ && cp \(files)/ca.pem \(copy)/$N && chmod 644 \(copy)/*; fi; \
+            [ -f \(store)/$N ] || mount --bind \(copy) \(store); \
+            for p in $(pidof zygote64 zygote); do nsenter --mount=/proc/$p/ns/mnt -- sh -c "[ -f \(store)/$N ] || mount --bind \(copy) \(store)"; done; \
+            U=/data/misc/user/0/cacerts-added; mkdir -p $U && cp \(files)/ca.pem $U/$N && chown system:system $U $U/$N && chmod 644 $U/$N; \
+            echo trusted
+            """
+        return (try? shell("su 0 sh -c '\(script)'"))?.contains("trusted") == true
     }
 
     /// Mutes one app as Android itself does, by taking away its permission to play sound
