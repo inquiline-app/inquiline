@@ -13,7 +13,8 @@ import java.net.URL;
 import java.nio.charset.StandardCharsets;
 
 /**
- * The ad blocker's lists, those uBlock Origin uses by default and AdGuard's Turkish one. Each
+ * The ad blocker's lists: those uBlock Origin uses by default, AdGuard's Turkish one and
+ * AdGuard's for the ads in apps and games. Each
  * comes with the helper, and is fetched again from its source once a day, as uBlock fetches
  * them: sites such as YouTube change every week and so do the rules for them. Fetching sends
  * nothing about the user; a list that can't be fetched stays as it was.
@@ -41,6 +42,8 @@ final class Lists {
         new List("ublock-unbreak.txt", UASSETS + "unbreak.txt", true),
         new List("ublock-privacy.txt", UASSETS + "privacy.txt", true),
         new List("adguard-turkish.txt", "https://filters.adtidy.org/extension/ublock/filters/13.txt", false),
+        // The ad networks of apps and games (AppLovin, Mintegral, Unity, ironSource...).
+        new List("adguard-mobile.txt", "https://filters.adtidy.org/extension/ublock/filters/11.txt", false),
     };
 
     private static final long DAY = 24L * 60 * 60 * 1000;
