@@ -1,0 +1,23 @@
+--- a/host/vulkan/vk_decoder_internal_structs.h	2026-11-18 01:50:59
++++ b/host/vulkan/vk_decoder_internal_structs.h	2026-11-18 01:50:59
+@@ -649,6 +649,12 @@
+     std::unordered_map<VkPhysicalDevice, PhysicalDeviceInfo> physicalDevices;
+     struct DeviceObjects {
+         std::unordered_map<VkDevice, DeviceInfo>::node_type device;
++        // Inquiline: before the images, so they go first: an Android native buffer's image
++        // waits on its queue under that queue's mutex as it goes, which the queue owns. In the
++        // order upstream had, an app whose process ended without cleaning up (an ad's web
++        // view, say) had its queues freed first, and the image then locked a freed mutex,
++        // which ended the whole engine.
++        std::unordered_map<VkQueue, QueueInfo> queues;
+ 
+         std::unordered_map<VkBuffer, BufferInfo> buffers;
+         std::unordered_map<VkCommandBuffer, CommandBufferInfo> commandBuffers;
+@@ -665,7 +671,6 @@
+         std::unordered_map<VkPipeline, PipelineInfo> pipelines;
+         std::unordered_map<VkPipelineCache, PipelineCacheInfo> pipelineCaches;
+         std::unordered_map<VkPipelineLayout, PipelineLayoutInfo> pipelineLayouts;
+-        std::unordered_map<VkQueue, QueueInfo> queues;
+         std::unordered_map<VkRenderPass, RenderPassInfo> renderPasses;
+         std::unordered_map<VkSampler, SamplerInfo> samplers;
+         std::unordered_map<VkEvent, EventInfo> events;
