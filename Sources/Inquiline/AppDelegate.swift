@@ -258,6 +258,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, SPUSta
                      action: #selector(changeGooglePlay(_:)), keyEquivalent: "").target = self
         menu.addItem(.separator())
         menu.addItem(withTitle: "Show Files in Finder", action: #selector(showFiles(_:)), keyEquivalent: "").target = self
+        menu.addItem(withTitle: "Android Settings", action: #selector(openAndroidSettings(_:)), keyEquivalent: "").target = self
         menu.addItem(.separator())
         let login = menu.addItem(withTitle: "Open at Login", action: #selector(toggleOpenAtLogin(_:)), keyEquivalent: "")
         login.target = self
@@ -320,6 +321,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, SPUSta
         run("Starting Android…") {
             try self.prepareAndroid()
             AndroidFiles.show()
+        }
+    }
+
+    /// Android's Settings in a window of its own, with Android's icon once Android can give it.
+    @objc private func openAndroidSettings(_ sender: Any?) {
+        launchQueue.async {
+            let icon = AndroidRuntime.shared.isRunning
+                ? AndroidRuntime.shared.iconPNG(package: AppShortcuts.settingsPackage).flatMap(NSImage.init(data:)) : nil
+            AppShortcuts.settingsApp(icon: icon) { bundle in
+                guard let bundle else { return }
+                NSWorkspace.shared.openApplication(at: bundle, configuration: NSWorkspace.OpenConfiguration())
+            }
         }
     }
 

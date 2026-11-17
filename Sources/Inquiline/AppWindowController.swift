@@ -424,15 +424,18 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate {
     }
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        // The space keeps the buttons clear of the window's rounded corner.
-        [.flexibleSpace, Self.fpsItem, Self.controlsItem, Self.muteItem, Self.rotateItem, Self.settingsItem, .space]
+        // The space keeps the buttons clear of the window's rounded corner. Android's Settings
+        // is no app to set up or clear.
+        package == AppShortcuts.settingsPackage ? [.flexibleSpace, Self.rotateItem, .space]
+            : [.flexibleSpace, Self.fpsItem, Self.controlsItem, Self.muteItem, Self.rotateItem, Self.settingsItem, .space]
     }
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
         // Clearing is in App Settings and the app's menu; these are there for those who want
         // them at hand.
-        [.flexibleSpace, .space, Self.fpsItem, Self.controlsItem, Self.muteItem, Self.rotateItem, Self.settingsItem,
-         Self.clearCacheItem, Self.clearDataItem]
+        package == AppShortcuts.settingsPackage ? [.flexibleSpace, .space, Self.rotateItem]
+            : [.flexibleSpace, .space, Self.fpsItem, Self.controlsItem, Self.muteItem, Self.rotateItem, Self.settingsItem,
+               Self.clearCacheItem, Self.clearDataItem]
     }
 
     func toolbar(_ toolbar: NSToolbar, itemForItemIdentifier identifier: NSToolbarItem.Identifier,

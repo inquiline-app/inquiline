@@ -120,6 +120,31 @@ enum AppShortcuts {
         }
     }
 
+    /// Android's own Settings, which Inquiline's menu opens in a window of its own, as any app's.
+    /// It isn't an app the user added, so it's kept in Inquiline's folder, not the Applications
+    /// folder: Launchpad doesn't list it, and the Dock shows it only while it's open, as System
+    /// Settings.
+    static let settingsPackage = "com.android.settings"
+
+    /// Makes or brings up to date Android Settings' app; `done` gets where it is, on the main thread.
+    /// Without an icon the one it has stays.
+    static func settingsApp(icon: NSImage?, done: @escaping (URL?) -> Void) {
+        guard let fingerprint = programFingerprint(of: Bundle.main),
+              let program = Bundle.main.executableURL,
+              let server = Bundle.main.url(forResource: "scrcpy-server", withExtension: nil),
+              let frames = Bundle.main.url(forResource: "libinquiline-frames", withExtension: "so")
+        else { return done(nil) }
+        queue.async {
+            let bundle = AndroidRuntime.shared.home.appendingPathComponent("Android Settings.app")
+            let existing = FileManager.default.fileExists(atPath: bundle.path)
+            guard let icon = icon ?? (existing ? nil : NSImage(systemSymbolName: "gearshape.fill", accessibilityDescription: nil))
+            else { return DispatchQueue.main.async { done(bundle) } }
+            let app = App(package: settingsPackage, label: "Android Settings", orientation: .portrait, isGame: false, icon: icon)
+            let written = write(app, to: bundle, program: program, server: server, frames: frames, fingerprint: fingerprint)
+            DispatchQueue.main.async { done(written ? bundle : nil) }
+        }
+    }
+
     /// Its settings on the Mac, kept by the app's own copy of the program: window, sound,
     /// resolution. Gone with the app.
     static func forget(package: String) {

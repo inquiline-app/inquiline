@@ -69,10 +69,12 @@ final class AppProcess: NSObject, NSApplicationDelegate {
 
         let appItem = NSMenuItem()
         let appMenu = NSMenu()
-        // As Android's Settings > Apps > Storage has them, for this app.
-        appMenu.addItem(withTitle: "Clear Cache", action: #selector(AppWindowController.clearCache), keyEquivalent: "").target = controller
-        appMenu.addItem(withTitle: "Clear Data…", action: #selector(AppWindowController.clearData), keyEquivalent: "").target = controller
-        appMenu.addItem(.separator())
+        // As Android's Settings > Apps > Storage has them, for this app; not for Settings itself.
+        if package != AppShortcuts.settingsPackage {
+            appMenu.addItem(withTitle: "Clear Cache", action: #selector(AppWindowController.clearCache), keyEquivalent: "").target = controller
+            appMenu.addItem(withTitle: "Clear Data…", action: #selector(AppWindowController.clearData), keyEquivalent: "").target = controller
+            appMenu.addItem(.separator())
+        }
         appMenu.addItem(withTitle: "Hide \(label)", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
         appMenu.addItem(.separator())
         appMenu.addItem(withTitle: "Quit \(label)", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
