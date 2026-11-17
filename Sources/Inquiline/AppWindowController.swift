@@ -405,7 +405,6 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate {
         let screen = flexibleScreen()
         guard CGFloat(screen.width) != displaySize.width || CGFloat(screen.height) != displaySize.height else { return }
         resizing = true
-        displayView.renderer?.awaitContent()
         session.sendResize(width: screen.width, height: screen.height)
     }
 

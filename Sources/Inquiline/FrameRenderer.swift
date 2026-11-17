@@ -40,8 +40,8 @@ final class FrameRenderer {
     /// the window's own pixels, never upscaled; while the window is resized it's scaled to fit,
     /// and what it doesn't cover has the app's own background colour, not black.
     private(set) var keepsPixelSize = false
-    /// Set when Android's screen is given a new size: until the app draws on it, Android shows
-    /// nothing there, and the last picture stays instead.
+    /// Set when Android's screen has a new size (setSize): until the app draws for it, Android
+    /// shows half-drawn pictures, which aren't shown.
     private var waitingForContent = false
     /// The size of the last picture shown, and how many pictures were held back since a new size.
     private var shownWidth = 0
@@ -77,13 +77,6 @@ final class FrameRenderer {
         keepsPixelSize = true
     }
 
-    /// Called as Android's screen is asked to take a new size.
-    func awaitContent() {
-        outputLock.lock()
-        waitingForContent = true
-        outputLock.unlock()
-    }
-
     deinit {
         if server >= 0 { close(server) }
         unmapMemory()
@@ -98,6 +91,11 @@ final class FrameRenderer {
         defer { for _ in 0..<Self.slots { freeSlots.signal() } }
         self.width = width
         self.height = height
+        if keepsPixelSize {
+            outputLock.lock()
+            waitingForContent = true
+            outputLock.unlock()
+        }
         layer.drawableSize = CGSize(width: width, height: height)
         scaler = nil
         textures = []
