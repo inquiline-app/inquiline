@@ -350,7 +350,15 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate {
 
     /// As the window takes a new size, Android's screen does; Android lays the app out again once
     /// the sizes stop changing, and the picture is scaled meanwhile.
+    /// As Android's own desktop windows do: while the window is dragged, the app's picture stays
+    /// as it is, and the app takes the new size once, when it's let go. Many apps (Gmail among
+    /// them) start their screen again for each size, which during a drag would be dozens of times.
+    /// Sizes that come at once, as full screen, go at once.
     func windowDidResize(_ notification: Notification) {
+        if isFlexible, !window.inLiveResize { resizeAndroid() }
+    }
+
+    func windowDidEndLiveResize(_ notification: Notification) {
         if isFlexible { resizeAndroid() }
     }
 
