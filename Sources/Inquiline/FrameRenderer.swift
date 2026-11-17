@@ -48,8 +48,7 @@ final class FrameRenderer {
     private var shownHeight = 0
     private var heldBack = 0
     private var background: (UInt8, UInt8, UInt8) = (0, 0, 0)
-    /// Called on the main thread when the app has drawn for its new size (after awaitContent).
-    var onContent: (() -> Void)?
+
 
     init?() {
         guard let device = MTLCreateSystemDefaultDevice(), let queue = device.makeCommandQueue(),
@@ -195,7 +194,6 @@ final class FrameRenderer {
             outputLock.lock()
             waitingForContent = false
             outputLock.unlock()
-            DispatchQueue.main.async { [weak self] in self?.onContent?() }
         }
         heldBack = 0
         shownWidth = width

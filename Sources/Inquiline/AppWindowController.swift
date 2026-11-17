@@ -20,10 +20,7 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate {
     private let resolution: ScrcpySession.Resolution
     private var watch: Timer?
     private let launchScreen = LaunchScreen()
-    /// Covers a flexible app while its window's size isn't Android's yet, as Android's own
-    /// desktop windows do: the app's background colour with its icon, until the app has drawn
-    /// for the new size.
-    private let veil = NSView()
+
     /// The Android screen this window shows, once the app has appeared on it.
     private var watchedDisplay: String?
     /// Screens of sessions before a restart: a slow app can stay on one a while as it ends.
@@ -71,17 +68,7 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate {
         launchScreen.frame = screen.bounds
         launchScreen.autoresizingMask = [.width, .height]
         screen.addSubview(launchScreen)
-        if flexible {
-            veil.frame = screen.bounds
-            veil.autoresizingMask = [.width, .height]
-            veil.wantsLayer = true
-            let icon = NSImageView(image: NSApp.applicationIconImage)
-            icon.frame = NSRect(x: (veil.bounds.width - 96) / 2, y: (veil.bounds.height - 96) / 2, width: 96, height: 96)
-            icon.autoresizingMask = [.minXMargin, .maxXMargin, .minYMargin, .maxYMargin]
-            veil.addSubview(icon)
-            veil.isHidden = true
-            screen.addSubview(veil)
-        }
+
         window.contentView = screen
         window.delegate = self
         window.acceptsMouseMovedEvents = true
@@ -101,10 +88,6 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate {
         window.setFrameAutosaveName("Window")
         if flexible {
             displayView.renderer?.keepPixelSize()
-            displayView.renderer?.onContent = { [weak self] in
-                guard let self, !self.resizing, self.matchesAndroid else { return }
-                self.veil.isHidden = true
-            }
             let screen = flexibleScreen()
             session = ScrcpySession(package: package, screen: screen, flexible: true)
             session.startsApp = !fromNotification
@@ -369,31 +352,10 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate {
 
     /// As the window takes a new size, Android's screen does; Android lays the app out again once
     /// the sizes stop changing, and the picture is scaled meanwhile.
-    /// One way for every size change: once the window's size isn't Android's, the veil covers
-    /// the app; Android gets the new size when it's settled (let go, or at once for full screen),
-    /// and the veil goes when the app has drawn for it. An Android app needs 50 to 200 ms to lay
-    /// out for a size, so anything shown meanwhile would be stretched or half drawn.
+    /// The app lays out live as the window's size changes, as a Mac app does, as fast as
+    /// Android can: each new size goes once Android has shown the last one.
     func windowDidResize(_ notification: Notification) {
-        guard isFlexible else { return }
-        if !matchesAndroid { showVeil() }
-        if !window.inLiveResize { resizeAndroid() }
-    }
-
-    func windowDidEndLiveResize(_ notification: Notification) {
-        guard isFlexible else { return }
-        resizeAndroid()
-        if !resizing, matchesAndroid { veil.isHidden = true }
-    }
-
-    private var matchesAndroid: Bool {
-        let screen = flexibleScreen()
-        return CGFloat(screen.width) == displaySize.width && CGFloat(screen.height) == displaySize.height
-    }
-
-    private func showVeil() {
-        guard veil.isHidden else { return }
-        veil.layer?.backgroundColor = displayView.renderer?.layer.backgroundColor
-        veil.isHidden = false
+        if isFlexible { resizeAndroid() }
     }
 
     /// A size sent to Android that it hasn't shown yet: one at a time, so Android lays out each
