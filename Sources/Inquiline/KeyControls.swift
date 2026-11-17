@@ -96,9 +96,11 @@ struct KeyControlSet: Codable {
     private static func key(_ package: String) -> String { "KeyControls.\(package)" }
 
     var hasAim: Bool { controls.contains { $0.kind == .aim } }
-    /// With a controller button given to a control, the controller works the controls, and the
-    /// game doesn't see it as a controller.
-    var usesPad: Bool { isActive && controls.contains { $0.key.map(KeyControl.isPad) == true } }
+    /// Controls made for a touch-only game, with an on-screen stick, aiming or a controller
+    /// button, are what the controller works; the game then doesn't see it as a controller.
+    var usesPad: Bool {
+        isActive && controls.contains { $0.kind == .stick || $0.kind == .aim || $0.key.map(KeyControl.isPad) == true }
+    }
     var isActive: Bool { isOn && !controls.isEmpty }
 }
 

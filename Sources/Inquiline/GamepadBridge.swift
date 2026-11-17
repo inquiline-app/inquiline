@@ -7,8 +7,8 @@ import GameController
 /// this one sees them at rest, with nothing pressed.
 ///
 /// A game made only for touch gets its controller through the app's controls instead
-/// (KeyControls): once a controller button is given to one, the controller works them, and
-/// the game sees no controller.
+/// (KeyControls): once they have an on-screen stick, aiming or a controller button, the
+/// controller works them, and the game sees no controller.
 final class GamepadBridge {
     private let session: ScrcpySession
     private weak var controls: KeyControlPlayer?
