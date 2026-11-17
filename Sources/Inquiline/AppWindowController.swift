@@ -196,6 +196,9 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate {
                 // A flexible screen follows the window, not the window it.
                 guard !self.isFlexible else {
                     self.displaySize = NSSize(width: width, height: height)
+                    // Android took its new size: the window's latest, if it changed meanwhile, goes next.
+                    self.resizing = false
+                    self.resizeAndroid()
                     return
                 }
                 self.followAndroid(landscape: width > height)
@@ -241,6 +244,7 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate {
     /// Starts the app again on a screen turned the way it now wants.
     private func restartApp() {
         restarted = true
+        resizing = false
         gamepads?.stop()
         gamepads = nil
         displayView.keyboard?.stop()
@@ -338,16 +342,25 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate {
     private func flexibleScreen() -> ScrcpySession.Screen {
         let scale = max(window.backingScaleFactor, NSScreen.main?.backingScaleFactor ?? Self.pixelsPerPoint)
         let size = screen.bounds.size
-        func even(_ value: CGFloat) -> Int { max(2, Int((value * scale / 2).rounded()) * 2) }
+        // Multiples of 4, as Android's display server takes them, so it takes exactly this size.
+        func even(_ value: CGFloat) -> Int { max(4, Int(value * scale / 4) * 4) }
         return ScrcpySession.Screen(width: even(size.width), height: even(size.height), density: Int(160 * scale))
     }
 
-    /// As the window takes a new size, Android's screen does; Android lays the app out again once
-    /// the sizes stop changing, and the picture is scaled meanwhile.
+    /// As the window takes a new size, Android's screen does, live: one size at a time, the
+    /// window's newest as soon as Android has taken the last, so requests never pile up.
     func windowDidResize(_ notification: Notification) {
-        guard isFlexible else { return }
+        if isFlexible { resizeAndroid() }
+    }
+
+    /// A size sent to Android that it hasn't taken yet.
+    private var resizing = false
+
+    private func resizeAndroid() {
+        guard !resizing else { return }
         let screen = flexibleScreen()
         guard CGFloat(screen.width) != displaySize.width || CGFloat(screen.height) != displaySize.height else { return }
+        resizing = true
         session.sendResize(width: screen.width, height: screen.height)
     }
 
