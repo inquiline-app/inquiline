@@ -1,4 +1,5 @@
 import AppKit
+import DiskArbitration
 import NetFS
 import dnssd
 
@@ -95,7 +96,7 @@ enum AndroidFiles {
         defer { lock.unlock() }
         mountPoint = nil
         for point in mounted() {
-            if gone { _ = Darwin.unmount(point.path, MNT_FORCE) } else { eject(at: point) }
+            if gone { forceUnmount(point) } else { eject(at: point) }
         }
     }
 
@@ -126,7 +127,25 @@ enum AndroidFiles {
         _ = done.wait(timeout: .now() + 5)
         // Finder may still be using it, as a window open on it. Android is going away regardless,
         // and Finder would then report a lost server: the disk goes now, as a pulled drive does.
-        if !ejected { _ = Darwin.unmount(mountPoint.path, MNT_FORCE) }
+        if !ejected { forceUnmount(mountPoint) }
+    }
+
+    /// Takes the disk away even while in use, through Disk Arbitration as Finder's own eject
+    /// does: unmounting by path from Inquiline itself counts as reaching into a network
+    /// volume, which macOS asks the user to allow.
+    private static func forceUnmount(_ mountPoint: URL) {
+        guard let session = DASessionCreate(kCFAllocatorDefault),
+              let disk = DADiskCreateFromVolumePath(kCFAllocatorDefault, session, mountPoint as CFURL)
+        else { return }
+        let queue = DispatchQueue(label: "inquiline.files-unmount")
+        DASessionSetDispatchQueue(session, queue)
+        let done = DispatchSemaphore(value: 0)
+        let context = Unmanaged.passRetained(done).toOpaque()
+        DADiskUnmount(disk, DADiskUnmountOptions(kDADiskUnmountOptionForce), { _, _, context in
+            Unmanaged<DispatchSemaphore>.fromOpaque(context!).takeRetainedValue().signal()
+        }, context)
+        _ = done.wait(timeout: .now() + 10)
+        DASessionSetDispatchQueue(session, nil)
     }
 
     /// Mounts the disk and shows it in Finder: an app's own folder when `label` names one.
