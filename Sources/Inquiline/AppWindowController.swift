@@ -867,6 +867,7 @@ private final class AppSettingsView: NSView {
     var clearData: (() -> Void)?
     private let package: String
     private let notifications = NSSwitch()
+    private let ads = NSSwitch()
 
     init(package: String) {
         self.package = package
@@ -878,6 +879,12 @@ private final class AppSettingsView: NSView {
         notifications.isEnabled = false
         let row = NSStackView(views: [label, NSView(), notifications])
         row.orientation = .horizontal
+        // Ads the app shows, which a game may also give rewards for watching.
+        ads.target = self
+        ads.action = #selector(adsChanged)
+        ads.isEnabled = false
+        let adsRow = NSStackView(views: [NSTextField(labelWithString: "Block Ads"), NSView(), ads])
+        adsRow.orientation = .horizontal
         // The app's other permissions, as Android's Settings lists them, once Android answers.
         permissionRows.orientation = .vertical
         permissionRows.alignment = .leading
@@ -892,7 +899,7 @@ private final class AppSettingsView: NSView {
         buttons.distribution = .fillEqually
         let separator = NSBox()
         separator.boxType = .separator
-        let stack = NSStackView(views: [row, permissionRows, separator, buttons])
+        let stack = NSStackView(views: [row, adsRow, permissionRows, separator, buttons])
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 12
@@ -906,18 +913,24 @@ private final class AppSettingsView: NSView {
             stack.bottomAnchor.constraint(equalTo: bottomAnchor),
             row.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -32),
             permissionRows.widthAnchor.constraint(equalTo: row.widthAnchor),
+            adsRow.widthAnchor.constraint(equalTo: row.widthAnchor),
             buttons.widthAnchor.constraint(equalTo: row.widthAnchor),
             separator.widthAnchor.constraint(equalTo: row.widthAnchor),
             widthAnchor.constraint(equalToConstant: 260),
         ])
         DispatchQueue.global().async { [weak self] in
             let allowed = AndroidRuntime.shared.notificationsAllowed(package: package)
+            let blocked = AndroidRuntime.shared.adsBlocked(package: package)
             let groups = AndroidRuntime.shared.permissions(package: package) ?? []
             DispatchQueue.main.async {
                 guard let self else { return }
                 if let allowed {
                     self.notifications.state = allowed ? .on : .off
                     self.notifications.isEnabled = true
+                }
+                if let blocked {
+                    self.ads.state = blocked ? .on : .off
+                    self.ads.isEnabled = true
                 }
                 self.show(groups)
             }
@@ -955,6 +968,11 @@ private final class AppSettingsView: NSView {
         let allowed = notifications.state == .on
         let package = package
         DispatchQueue.global().async { AndroidRuntime.shared.setNotificationsAllowed(allowed, package: package) }
+    }
+
+    @objc private func adsChanged() {
+        let blocked = ads.state == .on, package = package
+        DispatchQueue.global().async { AndroidRuntime.shared.setAdsBlocked(blocked, package: package) }
     }
 
     @objc private func clearCacheClicked() { clearCache?() }

@@ -171,7 +171,7 @@ mount -t cgroup2 cgroup2 /sys/fs/cgroup
 mount --make-rshared /
 hostname inquiline
 modprobe loop max_loop=64
-for module in virtio_balloon dm_verity overlay virtio_gpu virtio_net veth bridge fuse nf_tables nft_compat nft_chain_nat nft_masq nft_ct \
+for module in virtio_balloon dm_verity overlay virtio_gpu virtio_net veth bridge fuse tun nf_tables nft_compat nft_chain_nat nft_masq nft_ct \
     xt_MASQUERADE xt_nat xt_comment xt_addrtype xt_conntrack xt_tcpudp xt_mark xt_multiport uhid virtio_snd; do modprobe "$module"; done
 # The sound card, which QEMU plays on the Mac, for Android's audio server (group audio, 1005).
 chgrp -R 1005 /dev/snd && chmod 660 /dev/snd/*
@@ -234,7 +234,7 @@ EXTRA=""
 # podman's default of 2048 tasks counts threads, and a large game with Android's own
 # services passes it: the game then can't start a thread and crashes.
 exec podman run --rm $EXTRA --name redroid --ip 10.88.0.2 --privileged --pull=never --shm-size=65536000 --pids-limit=-1 \
-  --device /dev/mapper/control:/dev/device-mapper -v $A/data:/data -v $A/files:/data/inquiline-files:rshared \
+  --device /dev/mapper/control:/dev/device-mapper --device /dev/net/tun:/dev/tun -v $A/data:/data -v $A/files:/data/inquiline-files:rshared \
   -v /run/inquiline-input:/dev/input -v $A/gpu_config.sh:/vendor/bin/gpu_config.sh:ro \
   -v $A/libdrm.so:/vendor/lib64/libdrm.so:ro -v $A/vulkan.gfxstream.so:/vendor/lib64/hw/vulkan.gfxstream.so:ro \
   -v $A/audio.primary.redroid.so:/vendor/lib64/hw/audio.primary.redroid.so:ro \
@@ -255,6 +255,9 @@ cat > "$ROOT/var/inquiline/inquiline.rc" <<'EOF'
 on post-fs
     chown system system /data/.empty
     chmod 0660 /data/.empty
+    # The tunnel device Android's VPNs use, as its own ueventd rules give it.
+    chown system vpn /dev/tun
+    chmod 0660 /dev/tun
 EOF
 cat > "$ROOT/usr/local/bin/inquiline-input" <<'EOF'
 #!/bin/sh

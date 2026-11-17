@@ -438,7 +438,8 @@ final class AndroidRuntime {
     /// 19: Android's sleep service may write its decisions to sleep, which Inquiline follows.
     /// 20: Android's storage follows the Mac's disk: its file system grows with the disk file
     /// (resize2fs at each start) and gives deleted space back at once (discard).
-    private static let diskRevision = 20
+    /// 21: a tunnel device for Android's VPNs, which ad blocking uses, Android's own (system, vpn).
+    private static let diskRevision = 21
     /// The VM's memory map fits the 36-bit (64 GB) address space Apple's M1 and M2 give a VM:
     /// above the RAM, the window for 64-bit device memory, such as the GPU's 2 GB, is 16 GB,
     /// not QEMU's 512 GB, which only M3 and later have room for (see the QEMU patch 0102).
@@ -757,6 +758,23 @@ final class AndroidRuntime {
                 + "pm set-permission-flags \(package) android.permission.\($0) user-set 2>/dev/null"
         }
         _ = try? shell(commands.joined(separator: "; "))
+    }
+
+    /// Whether the helper blocks the app's ads (its AdBlock class), or nil when Android can't say.
+    func adsBlocked(package: String) -> Bool? {
+        guard package.range(of: "^[A-Za-z0-9_.]+$", options: .regularExpression) != nil,
+              let output = try? shell("su 0 cat /data/data/\(NotificationBridge.agent)/files/adblock 2>/dev/null; echo end")
+        else { return nil }
+        return output.split(whereSeparator: \.isNewline).contains { $0 == package }
+    }
+
+    /// Blocks or lets through the app's ads, as a phone's ad blocker does, with a VPN for its name
+    /// lookups only. Android lets the helper run one without asking, as Inquiline's.
+    func setAdsBlocked(_ blocked: Bool, package: String) {
+        guard package.range(of: "^[A-Za-z0-9_.]+$", options: .regularExpression) != nil else { return }
+        let agent = NotificationBridge.agent
+        _ = try? shell("appops set \(agent) ACTIVATE_VPN allow; su 0 am start-foreground-service -n \(agent)/.AdBlock "
+                       + "--es \(blocked ? "add" : "remove") \(package)")
     }
 
     /// Mutes one app as Android itself does, by taking away its permission to play sound

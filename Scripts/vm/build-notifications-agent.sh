@@ -21,7 +21,7 @@ fi
 mkdir -p "$OUT/classes"
 "$JAVA_HOME/bin/javac" --release 17 -classpath "$PLATFORM" -d "$OUT/classes" $(find "$SRC/src" -name '*.java')
 "$TOOLS/d8" --release --min-api 35 --lib "$PLATFORM" --output "$OUT" $(find "$OUT/classes" -name '*.class')
-"$TOOLS/aapt2" link -o "$OUT/unsigned.apk" -I "$PLATFORM" --manifest "$SRC/AndroidManifest.xml"
+"$TOOLS/aapt2" link -o "$OUT/unsigned.apk" -I "$PLATFORM" --manifest "$SRC/AndroidManifest.xml" -A "$SRC/assets"
 (cd "$OUT" && zip -q unsigned.apk classes.dex)
 "$TOOLS/zipalign" -f 4 "$OUT/unsigned.apk" "$OUT/aligned.apk"
 "$TOOLS/apksigner" sign --v4-signing-enabled false --ks "$KEY" --ks-pass pass:inquiline \
