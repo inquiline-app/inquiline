@@ -902,6 +902,7 @@ private final class AppSettingsView: NSView {
             rows.edgeInsets = NSEdgeInsets(top: 0, left: 18, bottom: 0, right: 0)
         }
         permissionRows.addArrangedSubview(Self.row("Notifications", notifications))
+        adRows.addArrangedSubview(Self.row("Block Ads", ads))
         // What blocking takes away besides ads, for this app.
         for (id, name) in Self.categories {
             let toggle = NSSwitch()
@@ -914,7 +915,7 @@ private final class AppSettingsView: NSView {
             adRows.addArrangedSubview(Self.row(name, toggle))
         }
         let permissionsHeader = Self.header("Permissions", rows: permissionRows, trailing: nil)
-        let adsHeader = Self.header("Block Ads", rows: adRows, trailing: ads)
+        let adsHeader = Self.header("Ad Blocking", rows: adRows, trailing: nil)
 
         let cache = NSButton(title: "Clear Cache", target: self, action: #selector(clearCacheClicked))
         let data = NSButton(title: "Clear Data…", target: self, action: #selector(clearDataClicked))
