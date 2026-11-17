@@ -711,6 +711,18 @@ final class AndroidRuntime {
         _ = try? shell("su 0 sh -c 'CLASSPATH=$(pm path \(agent) | cut -d: -f2) app_process / \(agent).Switch \(package) \(uid) \(allowed ? "on" : "off")'")
     }
 
+    /// What the app takes on Android's storage, in bytes, as Settings > Apps > Storage shows it
+    /// (the helper's Sizes class); nil when Android can't say.
+    func storage(package: String) -> (app: Int64, data: Int64, cache: Int64)? {
+        guard package.range(of: "^[A-Za-z0-9_.]+$", options: .regularExpression) != nil else { return nil }
+        let agent = NotificationBridge.agent
+        guard let output = try? shell("su 0 sh -c 'CLASSPATH=$(pm path \(agent) | cut -d: -f2) app_process / \(agent).Sizes \(package)'")
+        else { return nil }
+        let numbers = output.split(whereSeparator: \.isWhitespace).compactMap { Int64($0) }
+        guard numbers.count == 3 else { return nil }
+        return (numbers[0], numbers[1], numbers[2])
+    }
+
     /// An app's permissions as Android's Settings > Apps > Permissions shows them: by group, each
     /// allowed or not. Only the groups the app asks for.
     struct PermissionGroup {

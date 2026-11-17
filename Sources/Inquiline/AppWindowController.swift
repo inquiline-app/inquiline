@@ -871,6 +871,9 @@ private final class AppSettingsView: NSView {
     private let permissionRows = NSStackView()
     private let adRows = NSStackView()
     private let dataRows = NSStackView()
+    private let appSize = NSTextField(labelWithString: "")
+    private let dataSize = NSTextField(labelWithString: "")
+    private let cacheSize = NSTextField(labelWithString: "")
     private var groups: [AndroidRuntime.PermissionGroup] = []
     private var categorySwitches: [String: NSSwitch] = [:]
 
@@ -928,6 +931,12 @@ private final class AppSettingsView: NSView {
         let clearing = NSStackView(views: [cache, data])
         clearing.orientation = .horizontal
         clearing.distribution = .fillEqually
+        // What it takes, as Android's Settings shows it, once Android answers.
+        for (name, value) in [("App", appSize), ("Data", dataSize), ("Cache", cacheSize)] {
+            value.stringValue = "…"
+            value.textColor = .secondaryLabelColor
+            dataRows.addArrangedSubview(Self.row(name, value))
+        }
         dataRows.addArrangedSubview(folder)
         dataRows.addArrangedSubview(clearing)
         let dataHeader = Self.header("Data", rows: dataRows, trailing: nil)
@@ -956,6 +965,7 @@ private final class AppSettingsView: NSView {
             let allowed = AndroidRuntime.shared.notificationsAllowed(package: package)
             let blocking = AndroidRuntime.shared.adBlocking(package: package)
             let groups = AndroidRuntime.shared.permissions(package: package) ?? []
+            let storage = AndroidRuntime.shared.storage(package: package)
             DispatchQueue.main.async {
                 guard let self else { return }
                 if let allowed {
@@ -963,6 +973,13 @@ private final class AppSettingsView: NSView {
                     self.notifications.isEnabled = true
                 }
                 if let blocking { self.showCategories(blocking) }
+                if let storage {
+                    let format = ByteCountFormatter()
+                    format.countStyle = .file
+                    self.appSize.stringValue = format.string(fromByteCount: storage.app)
+                    self.dataSize.stringValue = format.string(fromByteCount: storage.data)
+                    self.cacheSize.stringValue = format.string(fromByteCount: storage.cache)
+                }
                 self.show(groups)
             }
         }
