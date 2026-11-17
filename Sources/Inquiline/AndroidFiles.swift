@@ -125,11 +125,16 @@ enum AndroidFiles {
         if !ejected { _ = Darwin.unmount(mountPoint.path, MNT_FORCE) }
     }
 
-    /// Mounts the disk and shows it in Finder.
-    static func show() {
+    /// Mounts the disk and shows it in Finder: an app's own folder when `label` names one.
+    static func show(label: String? = nil) {
         DispatchQueue.global().async {
             guard let volume = mount() else { return }
-            DispatchQueue.main.async { NSWorkspace.shared.open(volume) }
+            var target = volume
+            if let label {
+                let folder = volume.appendingPathComponent("Apps").appendingPathComponent(label.replacingOccurrences(of: "/", with: "-"))
+                if FileManager.default.fileExists(atPath: folder.path) { target = folder }
+            }
+            DispatchQueue.main.async { NSWorkspace.shared.open(target) }
         }
     }
 }

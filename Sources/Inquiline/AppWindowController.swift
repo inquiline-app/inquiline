@@ -663,7 +663,7 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate {
     @objc private func showSettings(_ sender: NSButton) {
         let popover = NSPopover()
         popover.behavior = .transient
-        let settings = AppSettingsView(package: package)
+        let settings = AppSettingsView(package: package, label: window.title)
         settings.clearCache = { [weak self, weak popover] in popover?.close(); self?.clearCache() }
         settings.clearData = { [weak self, weak popover] in popover?.close(); self?.clearData() }
         let controller = NSViewController()
@@ -866,9 +866,11 @@ private final class AppSettingsView: NSView {
     var clearCache: (() -> Void)?
     var clearData: (() -> Void)?
     private let package: String
+    private let label: String
     private let notifications = NSSwitch()
     private let permissionRows = NSStackView()
     private let adRows = NSStackView()
+    private let dataRows = NSStackView()
     private var groups: [AndroidRuntime.PermissionGroup] = []
     private var categorySwitches: [String: NSSwitch] = [:]
 
@@ -882,8 +884,9 @@ private final class AppSettingsView: NSView {
         ("annoyances", "Annoyances"),
     ]
 
-    init(package: String) {
+    init(package: String, label: String) {
         self.package = package
+        self.label = label
         super.init(frame: .zero)
         // Until Android answers, nothing to switch.
         notifications.target = self
@@ -891,7 +894,7 @@ private final class AppSettingsView: NSView {
         notifications.isEnabled = false
 
         // Permissions, notifications first: the one most often changed.
-        for rows in [permissionRows, adRows] {
+        for rows in [permissionRows, adRows, dataRows] {
             rows.orientation = .vertical
             rows.alignment = .leading
             rows.spacing = 10
@@ -912,15 +915,18 @@ private final class AppSettingsView: NSView {
         let permissionsHeader = Self.header("Permissions", rows: permissionRows, trailing: nil)
         let adsHeader = Self.header("Ad Blocking", rows: adRows, trailing: nil)
 
+        // The app's files and what it keeps, as Android's Settings > Apps > Storage has them.
+        let folder = NSButton(title: "Show in Finder", target: self, action: #selector(showFolderClicked))
         let cache = NSButton(title: "Clear Cache", target: self, action: #selector(clearCacheClicked))
         let data = NSButton(title: "Clear Data…", target: self, action: #selector(clearDataClicked))
         data.hasDestructiveAction = true
-        let buttons = NSStackView(views: [cache, data])
-        buttons.orientation = .horizontal
-        buttons.distribution = .fillEqually
-        let separator = NSBox()
-        separator.boxType = .separator
-        let stack = NSStackView(views: [permissionsHeader, permissionRows, adsHeader, adRows, separator, buttons])
+        let clearing = NSStackView(views: [cache, data])
+        clearing.orientation = .horizontal
+        clearing.distribution = .fillEqually
+        dataRows.addArrangedSubview(folder)
+        dataRows.addArrangedSubview(clearing)
+        let dataHeader = Self.header("Data", rows: dataRows, trailing: nil)
+        let stack = NSStackView(views: [permissionsHeader, permissionRows, adsHeader, adRows, dataHeader, dataRows])
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 12
@@ -934,9 +940,11 @@ private final class AppSettingsView: NSView {
             stack.bottomAnchor.constraint(equalTo: bottomAnchor),
             widthAnchor.constraint(equalToConstant: 270),
         ]
-        for view in [permissionsHeader, permissionRows, adsHeader, adRows, separator, buttons] {
+        for view in [permissionsHeader, permissionRows, adsHeader, adRows, dataHeader, dataRows] {
             constraints.append(view.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -32))
         }
+        constraints.append(folder.widthAnchor.constraint(equalTo: clearing.widthAnchor))
+        constraints.append(clearing.widthAnchor.constraint(equalTo: dataRows.widthAnchor, constant: -18))
         NSLayoutConstraint.activate(constraints)
 
         DispatchQueue.global().async { [weak self] in
@@ -1020,6 +1028,7 @@ private final class AppSettingsView: NSView {
         DispatchQueue.global().async { AndroidRuntime.shared.setAdCategories(chosen, package: package) }
     }
 
+    @objc private func showFolderClicked() { AndroidFiles.show(label: label) }
     @objc private func clearCacheClicked() { clearCache?() }
     @objc private func clearDataClicked() { clearData?() }
 }
