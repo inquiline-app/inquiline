@@ -189,16 +189,15 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate {
                 }
             }
         }
+        let sizeSent = self.sizeSent
         session.onSessionSize = { [weak self] width, height in
+            if sizeSent.take() { self?.pictureOfNewSize.set(true) }
             self?.displayView.setDisplaySize(width: width, height: height)
             DispatchQueue.main.async {
                 guard let self else { return }
                 // A flexible screen follows the window, not the window it.
                 guard !self.isFlexible else {
                     self.displaySize = NSSize(width: width, height: height)
-                    // Android took its new size: the window's latest, if it changed meanwhile, goes next.
-                    self.resizing = false
-                    self.resizeAndroid()
                     return
                 }
                 self.followAndroid(landscape: width > height)
@@ -215,9 +214,19 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate {
         let renderer = displayView.renderer
         let frames = frameCount
         var shown = false
+        let pictureOfNewSize = self.pictureOfNewSize
         session.onFrame = { [weak self] resource in
             renderer?.draw(resource: resource)
             frames.add()
+            // A new size goes once Android has shown a picture of the last: each new size starts
+            // Android's picture stream again, so sending sooner would let none through.
+            if pictureOfNewSize.take() {
+                DispatchQueue.main.async {
+                    guard let self else { return }
+                    self.resizing = false
+                    self.resizeAndroid()
+                }
+            }
             guard !shown else { return }
             shown = true
             AppLog.write(String(format: "First frame %.1f s after the app was started", frames.sinceStart()))
@@ -361,8 +370,14 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate {
         if isFlexible { resizeAndroid() }
     }
 
-    /// A size sent to Android that it hasn't taken yet.
-    private var resizing = false
+    /// A size sent to Android that it hasn't shown a picture of yet.
+    private var resizing = false {
+        didSet { sizeSent.set(resizing) }
+    }
+    /// Set as a size is sent, then, on the receiving thread, as Android's stream comes with the
+    /// new size, so only a picture after it counts.
+    private let sizeSent = Flag()
+    private let pictureOfNewSize = Flag()
 
     private func resizeAndroid() {
         guard !resizing else { return }
@@ -888,4 +903,25 @@ private final class AppSettingsView: NSView {
 
     @objc private func clearCacheClicked() { clearCache?() }
     @objc private func clearDataClicked() { clearData?() }
+}
+
+/// A flag set on one thread and taken once on another.
+final class Flag {
+    private let lock = NSLock()
+    private var value = false
+
+    func set(_ on: Bool) {
+        lock.lock()
+        value = on
+        lock.unlock()
+    }
+
+    /// True once after it's set.
+    func take() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        let was = value
+        value = false
+        return was
+    }
 }
