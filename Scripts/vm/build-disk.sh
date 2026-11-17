@@ -29,7 +29,7 @@ echo "base: $MINIROOT"
 cp /etc/resolv.conf "$ROOT/etc/resolv.conf"
 mount -t proc proc "$ROOT/proc"
 mount --bind /dev "$ROOT/dev"
-chroot "$ROOT" /sbin/apk add --no-cache -q podman socat kmod iptables samba-server
+chroot "$ROOT" /sbin/apk add --no-cache -q podman socat kmod iptables samba-server e2fsprogs-extra
 umount "$ROOT/proc" "$ROOT/dev"
 rm -rf "$ROOT/var/cache/apk"/*
 
@@ -183,6 +183,11 @@ ip link set lo up
 ip link set eth0 up
 udhcpc -q -f -n -i eth0 -s /usr/share/udhcpc/default.script
 sysctl -qw net.ipv4.ip_forward=1
+# The disk file is as large as the Mac's disk (AndroidRuntime.growDiskToMac), and the file
+# system grows to fill it, online, in a moment.
+resize2fs /dev/vda >/dev/null 2>&1
+# What Android deletes goes back to the Mac at once, through QEMU, not at the next start.
+mount -o remount,discard /
 # The unpacked disk loses some of its holes, and QEMU turns this back into them.
 fstrim / &
 EOF

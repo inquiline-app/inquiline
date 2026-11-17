@@ -68,6 +68,7 @@ final class AndroidRuntime {
 
         if vm?.isRunning == true {
             if isReady() {
+                DispatchQueue.global().async { self.followMacFreeSpace() }
                 watchPackages()
                 watchSleep()
                 NotificationBridge.shared.start()
@@ -80,6 +81,7 @@ final class AndroidRuntime {
             status(firstLaunch ? "Setting up Android, the first launch takes longer…" : "Starting Android…")
             try VMInstaller.installIfNeeded(at: disk)
             try updateDiskIfNeeded(firstLaunch: firstLaunch, status: status)
+            growDiskToMac()
             try launchVM()
         }
 
@@ -94,6 +96,7 @@ final class AndroidRuntime {
             Thread.sleep(forTimeInterval: 0.25)
         }
         AppLog.write("Android is ready after \(Int(Date().timeIntervalSince(start))) s")
+        followMacFreeSpace()
         setFullVolume()
         keepLogs()
         turnOffBluetooth()
@@ -343,6 +346,51 @@ final class AndroidRuntime {
     }
 
 
+    // MARK: - Storage
+
+    /// Android's storage follows the Mac's disk, as a Mac app's files do: there is no size to
+    /// pick or outgrow. Its disk file is as large as the Mac's disk but sparse, so it takes only
+    /// what Android writes; the VM grows its file system to match at each start
+    /// (inquiline-boot), and what Android deletes goes back to the Mac at once. Only grows.
+    private func growDiskToMac() {
+        guard let total = try? vmHome.resourceValues(forKeys: [.volumeTotalCapacityKey]).volumeTotalCapacity,
+              let size = (try? FileManager.default.attributesOfItem(atPath: disk.path))?[.size] as? Int,
+              total > size, let handle = try? FileHandle(forWritingTo: disk)
+        else { return }
+        defer { try? handle.close() }
+        let wanted = (UInt64(total) >> 20) << 20
+        do {
+            try handle.truncate(atOffset: wanted)
+            AppLog.write("Android's disk follows the Mac's: \(size >> 30) GB → \(wanted >> 30) GB")
+        } catch {
+            AppLog.write("Android's disk could not grow: \(error.localizedDescription)")
+        }
+    }
+
+    /// A file inside Android that is allocated but never written. Its file system counts it as
+    /// used; on the Mac it stays a hole and takes nothing.
+    private static let spaceFile = "/data/.inquiline-space"
+
+    /// Android sees as free what the Mac has free, as a phone shows its own free space, so its
+    /// apps and Android itself see a full disk, warn and stop before the Mac fills. The space
+    /// file holds the part of Android's file system the Mac doesn't have. Called when Android
+    /// starts, when an app opens and before an install.
+    func followMacFreeSpace() {
+        guard let macFree = try? vmHome.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey])
+                .volumeAvailableCapacityForImportantUsage,
+              let output = try? shell("su 0 sh -c 'stat -f -c \"%a %S\" /data; stat -c %s \(Self.spaceFile) 2>/dev/null || echo 0'")
+        else { return }
+        let numbers = output.split(whereSeparator: \.isWhitespace).compactMap { Int64($0) }
+        guard numbers.count == 3, numbers[1] > 0 else { return }
+        let block = numbers[1], held = numbers[2]
+        var wanted = max(0, numbers[0] * block + held - macFree)
+        wanted -= wanted % block
+        // Small changes of the Mac's free space are left alone.
+        guard abs(wanted - held) >= 64 << 20 else { return }
+        let command = wanted > held ? "fallocate -l \(wanted)" : "truncate -s \(wanted)"
+        _ = try? shell("su 0 \(command) \(Self.spaceFile)")
+    }
+
     /// Goes up with each release that changes what Android runs on, as in its disk's
     /// disk-update.tar, which holds everything since revision 1. 2: gfxstream and ANGLE
     /// instead of Mesa's virgl. 3: Android claims Vulkan 1.3, as it has. 4: ANGLE gives GLES 3.2.
@@ -363,7 +411,9 @@ final class AndroidRuntime {
     /// 18: Android's own settings changed by an overlay in /vendor/overlay: no frame around the
     /// whole screen of a game once a key is pressed.
     /// 19: Android's sleep service may write its decisions to sleep, which Inquiline follows.
-    private static let diskRevision = 19
+    /// 20: Android's storage follows the Mac's disk: its file system grows with the disk file
+    /// (resize2fs at each start) and gives deleted space back at once (discard).
+    private static let diskRevision = 20
     /// The VM's memory map fits the 36-bit (64 GB) address space Apple's M1 and M2 give a VM:
     /// above the RAM, the window for 64-bit device memory, such as the GPU's 2 GB, is 16 GB,
     /// not QEMU's 512 GB, which only M3 and later have room for (see the QEMU patch 0102).
@@ -556,6 +606,7 @@ final class AndroidRuntime {
         // checks those through a Google service that MindTheGapps lacks, so the install waits
         // forever. Android's developer option "Verify apps over USB" turns that check off.
         _ = try shell("settings put global verifier_verify_adb_installs 0")
+        followMacFreeSpace()
         let sizes = try app.apks.map { url -> Int in
             guard let size = try url.resourceValues(forKeys: [.fileSizeKey]).fileSize else {
                 throw RuntimeError("Could not read \(url.lastPathComponent).")
