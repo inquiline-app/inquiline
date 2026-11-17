@@ -76,13 +76,14 @@ public final class AdBlock extends VpnService {
         java.util.Set<String> before = new java.util.TreeSet<>(apps.keySet());
         if (intent != null) {
             String add = intent.getStringExtra("add"), remove = intent.getStringExtra("remove");
-            // "package=ads,privacy": that app's categories.
+            // "package=ads,privacy": that app's categories, each on its own; none leaves the app alone.
             String set = intent.getStringExtra("set");
             if (add != null) apps.putIfAbsent(add, Lists.DEFAULT);
             if (remove != null) apps.remove(remove);
             if (set != null && set.contains("=")) {
                 String pkg = set.substring(0, set.indexOf('='));
-                if (apps.containsKey(pkg)) apps.put(pkg, Lists.mask(set.substring(set.indexOf('=') + 1)) | Lists.ADS);
+                int mask = Lists.mask(set.substring(set.indexOf('=') + 1));
+                if (mask == 0) apps.remove(pkg); else apps.put(pkg, mask);
             }
         }
         java.util.List<String> lines = new java.util.ArrayList<>();

@@ -785,24 +785,17 @@ final class AndroidRuntime {
         return []
     }
 
-    /// The categories blocked in the app, besides its ads, which are always on while blocking is.
+    /// What is blocked in the app, each category on its own ("ads", "privacy"...); none turns the
+    /// ad blocker off for it.
     func setAdCategories(_ categories: Set<String>, package: String) {
         guard package.range(of: "^[A-Za-z0-9_.]+$", options: .regularExpression) != nil,
               categories.allSatisfy({ $0.range(of: "^[a-z]+$", options: .regularExpression) != nil })
         else { return }
-        let names = (categories.union(["ads"])).sorted().joined(separator: ",")
-        _ = try? shell("su 0 am start-foreground-service -n \(NotificationBridge.agent)/.AdBlock --es set \(package)=\(names)")
-    }
-
-    /// Blocks or lets through the app's ads, as a phone's ad blocker does, with a VPN for its name
-    /// lookups only. Android lets the helper run one without asking, as Inquiline's.
-    func setAdsBlocked(_ blocked: Bool, package: String) {
-        guard package.range(of: "^[A-Za-z0-9_.]+$", options: .regularExpression) != nil else { return }
         let agent = NotificationBridge.agent
         _ = try? shell("appops set \(agent) ACTIVATE_VPN allow; su 0 am start-foreground-service -n \(agent)/.AdBlock "
-                       + "--es \(blocked ? "add" : "remove") \(package)")
+                       + "--es set \(package)=\(categories.sorted().joined(separator: ","))")
         // The helper makes this installation's authority the first time; it's trusted once it's there.
-        guard blocked else { return }
+        guard !categories.isEmpty else { return }
         for _ in 0..<20 {
             if trustAdBlockAuthority() { return }
             Thread.sleep(forTimeInterval: 0.5)

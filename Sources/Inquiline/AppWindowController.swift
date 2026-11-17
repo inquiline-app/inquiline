@@ -867,14 +867,14 @@ private final class AppSettingsView: NSView {
     var clearData: (() -> Void)?
     private let package: String
     private let notifications = NSSwitch()
-    private let ads = NSSwitch()
     private let permissionRows = NSStackView()
     private let adRows = NSStackView()
     private var groups: [AndroidRuntime.PermissionGroup] = []
     private var categorySwitches: [String: NSSwitch] = [:]
 
-    /// What the ad blocker can block besides ads, as uBlock's optional lists: its id with the helper, and its name.
+    /// What the ad blocker can block, each on its own, as uBlock's lists: its id with the helper, and its name.
     private static let categories = [
+        ("ads", "Ads"),
         ("privacy", "Trackers"),
         ("malware", "Malicious Sites"),
         ("cookies", "Cookie Notices"),
@@ -889,9 +889,6 @@ private final class AppSettingsView: NSView {
         notifications.target = self
         notifications.action = #selector(notificationsChanged)
         notifications.isEnabled = false
-        ads.target = self
-        ads.action = #selector(adsChanged)
-        ads.isEnabled = false
 
         // Permissions, notifications first: the one most often changed.
         for rows in [permissionRows, adRows] {
@@ -902,11 +899,9 @@ private final class AppSettingsView: NSView {
             rows.edgeInsets = NSEdgeInsets(top: 0, left: 18, bottom: 0, right: 0)
         }
         permissionRows.addArrangedSubview(Self.row("Notifications", notifications))
-        adRows.addArrangedSubview(Self.row("Block Ads", ads))
-        // What blocking takes away besides ads, for this app.
+        // What is blocked in this app, each on its own.
         for (id, name) in Self.categories {
             let toggle = NSSwitch()
-            toggle.controlSize = .small
             toggle.identifier = NSUserInterfaceItemIdentifier(id)
             toggle.target = self
             toggle.action = #selector(categoryChanged(_:))
@@ -954,11 +949,7 @@ private final class AppSettingsView: NSView {
                     self.notifications.state = allowed ? .on : .off
                     self.notifications.isEnabled = true
                 }
-                if let blocking {
-                    self.ads.state = blocking.isEmpty ? .off : .on
-                    self.ads.isEnabled = true
-                    self.showCategories(blocking)
-                }
+                if let blocking { self.showCategories(blocking) }
                 self.show(groups)
             }
         }
@@ -1007,8 +998,8 @@ private final class AppSettingsView: NSView {
 
     private func showCategories(_ on: Set<String>) {
         for (id, toggle) in categorySwitches {
-            toggle.state = on.contains(id) || on.isEmpty && ["privacy", "malware"].contains(id) ? .on : .off
-            toggle.isEnabled = !on.isEmpty
+            toggle.state = on.contains(id) ? .on : .off
+            toggle.isEnabled = true
         }
     }
 
@@ -1022,16 +1013,6 @@ private final class AppSettingsView: NSView {
         let allowed = notifications.state == .on
         let package = package
         DispatchQueue.global().async { AndroidRuntime.shared.setNotificationsAllowed(allowed, package: package) }
-    }
-
-    @objc private func adsChanged() {
-        let blocked = ads.state == .on, package = package
-        for toggle in categorySwitches.values { toggle.isEnabled = blocked }
-        let chosen = Set(categorySwitches.filter { $0.value.state == .on }.map(\.key))
-        DispatchQueue.global().async {
-            AndroidRuntime.shared.setAdsBlocked(blocked, package: package)
-            if blocked { AndroidRuntime.shared.setAdCategories(chosen, package: package) }
-        }
     }
 
     @objc private func categoryChanged(_ sender: NSSwitch) {
