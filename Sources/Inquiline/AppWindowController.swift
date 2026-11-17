@@ -240,8 +240,6 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate, 
         let frames = frameCount
         var shown = false
         session.onFrame = { [weak self] resource in
-            // While the app steps away for a controller, the window keeps its last picture.
-            guard !frames.isHeld else { return }
             renderer?.draw(resource: resource)
             frames.add()
             guard !shown else { return }
@@ -253,24 +251,6 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate, 
                 if self.gamepads == nil {
                     let gamepads = GamepadBridge(session: session, controls: self.displayView.controls)
                     gamepads.onEditPress = { [weak self] code in self?.overlay.padPressed(code) ?? false }
-                    gamepads.stepAway = { [weak self] in
-                        // The window's Android display, as "Display #2"; read on the main thread.
-                        let display = DispatchQueue.main.sync { self?.watchedDisplay }
-                        guard let number = display?.split(separator: "#").last.flatMap({ Int($0) }) else { return }
-                        // StepAway covers the app until Android has stopped it, then goes, and this
-                        // returns once the app has started again: each wait is on Android's own record
-                        // of the app's steps, from the moment before each. 0x10010000 is a new task,
-                        // without animation. The timeouts only keep a stuck step from holding on.
-                        let start = "am start --display \(number) -f 0x10010000 -n \(NotificationBridge.agent)/.StepAway"
-                        frames.hold(true)
-                        defer { frames.hold(false) }
-                        let since = "T=$(date +%s.%N | cut -c1-14)"
-                        func until(_ step: String) -> String {
-                            "timeout 5 logcat -b events -T $T --pid=$P -m 1 -e 'wm_on_\(step)_called' >/dev/null"
-                        }
-                        _ = try? AdbClient.shell("P=$(pidof \(package)); \(since); \(start) >/dev/null; \(until("stop")); "
-                                                 + "\(since); \(start) >/dev/null; \(until("resume"))", timeout: 15)
-                    }
                     self.gamepads = gamepads
                 }
                 if self.displayView.keyboard == nil { self.displayView.keyboard = KeyboardBridge(session: session) }
@@ -864,18 +844,6 @@ private final class FrameCounter: @unchecked Sendable {
     func sinceStart() -> Double {
         lock.lock(); defer { lock.unlock() }
         return Date().timeIntervalSince(started)
-    }
-
-    private var held = false
-
-    /// While held, the window keeps its last picture.
-    var isHeld: Bool {
-        lock.lock(); defer { lock.unlock() }
-        return held
-    }
-
-    func hold(_ on: Bool) {
-        lock.lock(); held = on; lock.unlock()
     }
 
     func add() {

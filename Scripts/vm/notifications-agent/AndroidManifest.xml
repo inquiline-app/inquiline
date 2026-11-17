@@ -2,8 +2,8 @@
 <!-- Hands Android's notifications to Inquiline, which shows them in the Mac's Notification Center. -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="io.github.inquiline.notifications"
-    android:versionCode="23"
-    android:versionName="23">
+    android:versionCode="24"
+    android:versionName="24">
     <uses-sdk android:minSdkVersion="35" android:targetSdkVersion="35" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SYSTEM_EXEMPTED" />
@@ -32,14 +32,6 @@
                 <action android:name="android.net.VpnService" />
             </intent-filter>
         </service>
-        <!-- Stops and starts the app beneath once, when a controller connects (StepAway). -->
-        <activity
-            android:name=".StepAway"
-            android:exported="true"
-            android:theme="@android:style/Theme.Black.NoTitleBar.Fullscreen"
-            android:excludeFromRecents="true"
-            android:launchMode="singleTask"
-            android:taskAffinity="io.github.inquiline.notifications.stepaway" />
         <receiver android:name=".Boot" android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.BOOT_COMPLETED" />

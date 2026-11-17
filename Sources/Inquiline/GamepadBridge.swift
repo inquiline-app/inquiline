@@ -18,13 +18,6 @@ final class GamepadBridge {
     /// The HID id each controller has in Android. scrcpy keeps 1 and 2 for a keyboard and mouse.
     private var plugged: [ObjectIdentifier: UInt16] = [:]
     private var observers: [NSObjectProtocol] = []
-    /// Pauses and resumes the app once; run before a controller that connects while the app
-    /// runs is plugged in, as some games only start listening for controllers as they resume.
-    var stepAway: (() -> Void)?
-    /// Controllers that may be plugged in: those there as the app starts, which it finds as it
-    /// starts, and later ones once the app has stepped away and back for them.
-    private var ready: Set<ObjectIdentifier>?
-    private var steppingAway: Set<ObjectIdentifier> = []
 
     init(session: ScrcpySession, controls: KeyControlPlayer) {
         self.session = session
@@ -56,8 +49,6 @@ final class GamepadBridge {
         let wanted = GCController.controllers().filter { $0.extendedGamepad != nil }
         let usesPad = controls?.set.usesPad == true
         let wantedKeys = Set(wanted.map(ObjectIdentifier.init))
-        if ready == nil { ready = wantedKeys }
-        ready?.formIntersection(wantedKeys)
         for (key, id) in plugged where !wantedKeys.contains(key) || usesPad {
             session.sendHIDClose(id: id)
             plugged[key] = nil
@@ -65,9 +56,7 @@ final class GamepadBridge {
         for controller in wanted {
             let key = ObjectIdentifier(controller)
             guard let pad = controller.extendedGamepad else { continue }
-            if !usesPad, plugged[key] == nil, ready?.contains(key) == false {
-                stepAwayThenPlug(key)
-            } else if !usesPad, plugged[key] == nil,
+            if !usesPad, plugged[key] == nil,
                let id = (3...10).map(UInt16.init).first(where: { !plugged.values.contains($0) }) {
                 plugged[key] = id
                 session.sendHIDOpen(id: id, vendor: 0x045E, product: 0x028E, name: "Microsoft X-Box 360 Pad",
@@ -80,23 +69,6 @@ final class GamepadBridge {
             // Going to the back lets go of everything held; coming to the front picks up the pad as it is.
             if let id = plugged[key] { session.sendHIDInput(id: id, report: NSApp.isActive ? Self.report(pad) : Self.atRest) }
             if !NSApp.isActive { release(key) }
-        }
-    }
-
-    /// The app pauses and resumes, as a phone's user steps out to the Bluetooth settings and
-    /// back, and then the controller is plugged in, so a game listening from its resume hears of it.
-    private func stepAwayThenPlug(_ key: ObjectIdentifier) {
-        guard !steppingAway.contains(key) else { return }
-        guard let stepAway else { ready?.insert(key); update(); return }
-        steppingAway.insert(key)
-        DispatchQueue.global().async { [weak self] in
-            stepAway()
-            DispatchQueue.main.async {
-                guard let self else { return }
-                self.steppingAway.remove(key)
-                self.ready?.insert(key)
-                self.update()
-            }
         }
     }
 
