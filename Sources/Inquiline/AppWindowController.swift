@@ -919,7 +919,10 @@ private final class AppSettingsView: NSView {
         let folder = NSButton(title: "Show in Finder", target: self, action: #selector(showFolderClicked))
         let cache = NSButton(title: "Clear Cache", target: self, action: #selector(clearCacheClicked))
         let data = NSButton(title: "Clear Data…", target: self, action: #selector(clearDataClicked))
+        // Red, as the Mac shows what can't be undone; it asks first. Clearing the cache loses
+        // nothing the app can't fetch again, so it neither asks nor warns, as on Android.
         data.hasDestructiveAction = true
+        data.contentTintColor = .systemRed
         let clearing = NSStackView(views: [cache, data])
         clearing.orientation = .horizontal
         clearing.distribution = .fillEqually
