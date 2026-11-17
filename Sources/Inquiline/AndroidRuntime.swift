@@ -122,9 +122,6 @@ final class AndroidRuntime {
     /// Android takes the Mac's languages, appearance, time zone and clock, as an iPhone app on a
     /// Mac does: they're set once, on the Mac, never again inside Android. Called when Android
     /// starts and when one changes on the Mac; only what differs changes in Android.
-    /// The region last given to the ad blocker, so it's given again only when it changes.
-    private var sentRegion: String?
-
     func followMac() {
         guard isRunning else { return }
         // Read fresh each time: the process's own copies of these only change at its next launch.
@@ -150,17 +147,8 @@ final class AndroidRuntime {
             [ "$(getprop persist.sys.timezone)" = \(zone) ] || { cmd time_zone_detector set_auto_detection_enabled false; \
             su 1000 cmd time_zone_detector suggest_manual_time_zone --zone_id \(zone) >/dev/null; }
             """)
-        // The Mac's region ("tr_TR" → "TR"), which the ad blocker's regional lists follow too,
-        // as it may differ from the languages.
-        let region = ((preference("AppleLocale") as? String) ?? Locale.current.identifier)
-            .split(separator: "@").first?.split(separator: "_").dropFirst().first.map(String.init) ?? ""
-        let newRegion = region != sentRegion && region.range(of: "^[A-Z]{2}$", options: .regularExpression) != nil
-        if newRegion { sentRegion = region }
+        guard !languages.isEmpty else { return }
         NotificationBridge.shared.withAgent {
-            if newRegion {
-                _ = try? AdbClient.shell("su 0 am broadcast -n \(NotificationBridge.agent)/.Region --es region \(region)")
-            }
-            guard !languages.isEmpty else { return }
             _ = try? AdbClient.shell("CLASSPATH=$(pm path \(NotificationBridge.agent) | cut -d: -f2) "
                                      + "app_process / \(NotificationBridge.agent).Languages \(languages)")
         }

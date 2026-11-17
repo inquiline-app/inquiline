@@ -154,13 +154,7 @@ public final class AdBlock extends VpnService {
     @Override
     public void onConfigurationChanged(android.content.res.Configuration config) {
         super.onConfigurationChanged(config);
-        listsChanged();
-    }
-
-    /** The lists in use changed (a language or the Mac's region): they're looked at now. */
-    static void listsChanged() {
-        Thread current = updates;
-        if (current != null) current.interrupt();
+        if (updates != null) updates.interrupt();
     }
 
     /** The proxy, with this installation's authority to open connections with (Certs.ofInstallation). */
