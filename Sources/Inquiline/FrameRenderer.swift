@@ -48,7 +48,7 @@ final class FrameRenderer {
     private var shownHeight = 0
     private var heldBack = 0
     private var background: (UInt8, UInt8, UInt8) = (0, 0, 0)
-    /// Called on the main thread when the app has drawn for its new size (after awaitContent).
+    /// Called on the main thread when the app has drawn for a new size of its screen.
     var onContent: (() -> Void)?
 
     init?() {

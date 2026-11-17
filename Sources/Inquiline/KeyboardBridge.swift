@@ -31,9 +31,6 @@ final class KeyboardBridge {
         if let observer { DistributedNotificationCenter.default().removeObserver(observer) }
     }
 
-    /// Whether keys go through this keyboard: only with a layout Android knows.
-    var isPlugged: Bool { plugged }
-
     /// Unplugs the keyboard, as when the app's window closes.
     func stop() {
         if let observer { DistributedNotificationCenter.default().removeObserver(observer) }

@@ -31,7 +31,6 @@ final class NotificationBridge: NSObject, UNUserNotificationCenterDelegate {
     private var shown: [String: String] = [:]
     /// Each shown notification's group, which Android may gather it into.
     private var groupOf: [String: String] = [:]
-    private var iconFiles: [String: URL] = [:]
 
     private static let replyCategory = "reply"
 

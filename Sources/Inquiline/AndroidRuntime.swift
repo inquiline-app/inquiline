@@ -300,19 +300,6 @@ final class AndroidRuntime {
         EngineControl.isPaused
     }
 
-    /// The engine of this user's Inquiline, whichever process asks.
-    static func enginePID() -> pid_t {
-        var pids = [pid_t](repeating: 0, count: 4096)
-        let count = Int(proc_listallpids(&pids, Int32(pids.count * MemoryLayout<pid_t>.size)))
-        var path = [CChar](repeating: 0, count: 4096)
-        for pid in pids.prefix(max(count, 0)) where pid > 0 {
-            if proc_pidpath(pid, &path, UInt32(path.count)) > 0, String(cString: path).hasSuffix("/" + engineName) {
-                return pid
-            }
-        }
-        return 0
-    }
-
     private func isReady() -> Bool {
         Self.isReady()
     }
