@@ -75,6 +75,9 @@ final class FrameRenderer {
     /// Called on the main thread, once, for an app that lays out for its window.
     func keepPixelSize() {
         keepsPixelSize = true
+        // Its picture is the window's size, up to the few pixels Android's display server rounds
+        // it to: filled, not fitted, so no thin bars at its sides.
+        layer.contentsGravity = .resize
     }
 
     deinit {

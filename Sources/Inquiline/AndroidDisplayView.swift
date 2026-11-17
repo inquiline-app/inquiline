@@ -271,6 +271,7 @@ final class AndroidDisplayView: NSView {
         if event.keyCode != 53, !event.modifierFlags.contains(.option) || keyboard?.optionIsAltGr == true,
            keyboard?.key(event.keyCode, down: true, flags: event.modifierFlags) == true { return }
         if let keycode = Self.specialKeys[event.keyCode] {
+            heldKeys[event.keyCode] = (keycode, 0)
             session?.sendKey(.down, keycode: keycode)
         } else if let key = heldKeys[event.keyCode] ?? Self.androidKey(for: event) {
             heldKeys[event.keyCode] = key
@@ -287,9 +288,9 @@ final class AndroidDisplayView: NSView {
         if controls.key(Int(event.keyCode), down: false) { return }
         // Let go even with Option now held: a key pressed through the keyboard is let go there.
         if event.keyCode != 53, keyboard?.key(event.keyCode, down: false) == true { return }
-        if let keycode = Self.specialKeys[event.keyCode] {
-            session?.sendKey(.up, keycode: keycode)
-        } else if let key = heldKeys.removeValue(forKey: event.keyCode) {
+        // Only keys pressed in this window: Esc that cancels a screenshot comes up here alone, and
+        // Android acts on Back's letting go.
+        if let key = heldKeys.removeValue(forKey: event.keyCode) {
             session?.sendKey(.up, keycode: key.keycode, metaState: key.metaState)
         }
     }
