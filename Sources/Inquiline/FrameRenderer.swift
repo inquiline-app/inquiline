@@ -65,7 +65,9 @@ final class FrameRenderer {
         self.pipeline = pipeline
         layer.device = device
         layer.pixelFormat = .bgra8Unorm
-        layer.framebufferOnly = true
+        // Readable, as macOS 26's glass (a popover's, a toolbar's) samples what is behind it: a
+        // layer it can't read shows black or torn there, as App Settings opened over it.
+        layer.framebufferOnly = false
         layer.contentsGravity = .resizeAspect
         layer.backgroundColor = CGColor(gray: 0, alpha: 1)
         // Frames show at the display's refresh, as a phone's screen shows them, without tearing.
