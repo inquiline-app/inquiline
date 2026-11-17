@@ -77,6 +77,9 @@ public final class AdBlock extends VpnService {
         if (intent != null) {
             String add = intent.getStringExtra("add"), remove = intent.getStringExtra("remove");
             if (intent.getStringExtra("reset") != null) Counts.reset(this, intent.getStringExtra("reset"));
+            // The Mac's region ("TR"), which may differ from its languages; its list joins theirs.
+            String region = intent.getStringExtra("region");
+            if (region != null && Lists.setRegion(this, region) && updates != null) updates.interrupt();
             // "package=ads,privacy": that app's categories, each on its own; none leaves the app alone.
             String set = intent.getStringExtra("set");
             if (add != null) apps.putIfAbsent(add, Lists.DEFAULT);

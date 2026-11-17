@@ -15,8 +15,9 @@ import java.nio.charset.StandardCharsets;
 /**
  * The ad blocker's lists: those uBlock Origin uses by default, AdGuard's for the ads in apps
  * and games, and uBlock's regional lists for Android's languages, which follow the Mac's, as
- * uBlock turns on those for the browser's. The first come with the helper; the regional ones
- * are fetched when a language needs them. Each is fetched again from its source once a day,
+ * uBlock turns on those for the browser's, and for the Mac's region, which may differ from
+ * them. A language or region with no list of its own adds none. The first come with the
+ * helper; the regional ones are fetched when a language or region needs them. Each is fetched again from its source once a day,
  * as uBlock fetches them: sites such as YouTube change every week and so do the rules for
  * them. Fetching sends nothing about the user; a list that can't be fetched stays as it was.
  */
@@ -81,16 +82,55 @@ final class Lists {
         new List("ublock-annoyances.txt", UASSETS + "annoyances-others.txt", true, ANNOYANCES),
     };
 
-    /** The lists in use: uBlock's default ones and the regional ones for Android's languages. */
+    /** Keeps the Mac's region, as two letters; returns whether it changed. */
+    static boolean setRegion(Context context, String region) {
+        File file = new File(context.getFilesDir(), "region");
+        try {
+            if (file.exists() && new String(java.nio.file.Files.readAllBytes(file.toPath()), StandardCharsets.UTF_8).equals(region)) {
+                return false;
+            }
+            java.nio.file.Files.write(file.toPath(), region.getBytes(StandardCharsets.UTF_8));
+            return true;
+        } catch (java.io.IOException e) {
+            return false;
+        }
+    }
+
+    /** The lists in use: uBlock's default ones, and the regional ones for Android's languages
+     *  and the Mac's region. uBlock names a country's list by its three letters ("TUR-0"). */
     static java.util.List<List> active(Context context) {
         java.util.List<List> lists = new java.util.ArrayList<>(java.util.Arrays.asList(ALL));
         java.util.Set<String> languages = new java.util.HashSet<>();
+        java.util.Set<String> countries = new java.util.HashSet<>();
+        java.util.List<String> places = new java.util.ArrayList<>();
         android.os.LocaleList locales = context.getResources().getConfiguration().getLocales();
-        for (int i = 0; i < locales.size(); i++) languages.add(locales.get(i).getLanguage());
+        for (int i = 0; i < locales.size(); i++) {
+            languages.add(locales.get(i).getLanguage());
+            places.add(locales.get(i).getCountry());
+        }
+        try {
+            places.add(new String(java.nio.file.Files.readAllBytes(new File(context.getFilesDir(), "region").toPath()),
+                    StandardCharsets.UTF_8).trim());
+        } catch (java.io.IOException ignored) {
+            // No region given yet.
+        }
+        for (String region : places) {
+            if (region.length() != 2) continue;
+            try {
+                countries.add(new java.util.Locale("", region).getISO3Country());
+            } catch (java.util.MissingResourceException ignored) {
+                // A region with no three-letter name has no list.
+            }
+        }
         try (InputStream in = context.getAssets().open("regions.json")) {
             org.json.JSONArray regions = new org.json.JSONArray(new String(in.readAllBytes(), StandardCharsets.UTF_8));
             for (int i = 0; i < regions.length(); i++) {
                 org.json.JSONObject region = regions.getJSONObject(i);
+                String id = region.getString("id");
+                if (countries.contains(id.substring(0, id.indexOf('-') < 0 ? id.length() : id.indexOf('-')))) {
+                    lists.add(new List("region-" + id + ".txt", region.getString("url"), false, ADS));
+                    continue;
+                }
                 org.json.JSONArray codes = region.getJSONArray("lang");
                 for (int j = 0; j < codes.length(); j++) {
                     if (!languages.contains(codes.getString(j))) continue;
