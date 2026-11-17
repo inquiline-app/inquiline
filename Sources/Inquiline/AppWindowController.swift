@@ -20,7 +20,6 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate {
     private let resolution: ScrcpySession.Resolution
     private var watch: Timer?
     private let launchScreen = LaunchScreen()
-
     /// The Android screen this window shows, once the app has appeared on it.
     private var watchedDisplay: String?
     /// Screens of sessions before a restart: a slow app can stay on one a while as it ends.
@@ -68,7 +67,6 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate {
         launchScreen.frame = screen.bounds
         launchScreen.autoresizingMask = [.width, .height]
         screen.addSubview(launchScreen)
-
         window.contentView = screen
         window.delegate = self
         window.acceptsMouseMovedEvents = true
@@ -87,7 +85,6 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate {
         }
         window.setFrameAutosaveName("Window")
         if flexible {
-            displayView.renderer?.keepPixelSize()
             let screen = flexibleScreen()
             session = ScrcpySession(package: package, screen: screen, flexible: true)
             session.startsApp = !fromNotification
@@ -199,9 +196,6 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate {
                 // A flexible screen follows the window, not the window it.
                 guard !self.isFlexible else {
                     self.displaySize = NSSize(width: width, height: height)
-                    // Android has its new size: the window's latest, if it changed meanwhile, goes next.
-                    self.resizing = false
-                    self.resizeAndroid()
                     return
                 }
                 self.followAndroid(landscape: width > height)
@@ -247,7 +241,6 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate {
     /// Starts the app again on a screen turned the way it now wants.
     private func restartApp() {
         restarted = true
-        resizing = false
         gamepads?.stop()
         gamepads = nil
         displayView.keyboard?.stop()
@@ -345,28 +338,16 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate {
     private func flexibleScreen() -> ScrcpySession.Screen {
         let scale = max(window.backingScaleFactor, NSScreen.main?.backingScaleFactor ?? Self.pixelsPerPoint)
         let size = screen.bounds.size
-        // Multiples of 4, as Android's display server takes them, so it shows exactly this size.
-        func even(_ value: CGFloat) -> Int { max(4, Int(value * scale / 4) * 4) }
+        func even(_ value: CGFloat) -> Int { max(2, Int((value * scale / 2).rounded()) * 2) }
         return ScrcpySession.Screen(width: even(size.width), height: even(size.height), density: Int(160 * scale))
     }
 
     /// As the window takes a new size, Android's screen does; Android lays the app out again once
     /// the sizes stop changing, and the picture is scaled meanwhile.
-    /// The app lays out live as the window's size changes, as a Mac app does, as fast as
-    /// Android can: each new size goes once Android has shown the last one.
     func windowDidResize(_ notification: Notification) {
-        if isFlexible { resizeAndroid() }
-    }
-
-    /// A size sent to Android that it hasn't shown yet: one at a time, so Android lays out each
-    /// size it gets, as fast as it can, and the window's newest size always comes next.
-    private var resizing = false
-
-    private func resizeAndroid() {
-        guard !resizing else { return }
+        guard isFlexible else { return }
         let screen = flexibleScreen()
         guard CGFloat(screen.width) != displaySize.width || CGFloat(screen.height) != displaySize.height else { return }
-        resizing = true
         session.sendResize(width: screen.width, height: screen.height)
     }
 

@@ -79,7 +79,7 @@ final class AndroidDisplayView: NSView {
 
     private func androidPoint(for event: NSEvent) -> (x: Int, y: Int) {
         let point = convert(event.locationInWindow, from: nil)
-        let rect = screenRect
+        let rect = AVMakeRect(aspectRatio: displaySize, insideRect: bounds)
         let x = (point.x - rect.minX) / rect.width * displaySize.width
         // AppKit's origin is bottom-left, Android's is top-left.
         let y = (rect.maxY - point.y) / rect.height * displaySize.height
