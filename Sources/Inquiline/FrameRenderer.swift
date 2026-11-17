@@ -36,9 +36,9 @@ final class FrameRenderer {
     private var scaler: MTLFXSpatialScaler?
     private var scaled: MTLTexture?
 
-    /// An app laid out for its window's size (AppWindowController's flexible apps): its picture
-    /// shows at its own size, at the window's top left, as a Mac app's does while its window is
-    /// resized, and the rest of the window has the app's own background colour, not black.
+    /// An app laid out for its window's size (AppWindowController's flexible apps): its picture is
+    /// the window's own pixels, never upscaled; while the window is resized it's scaled to fit,
+    /// and what it doesn't cover has the app's own background colour, not black.
     private(set) var keepsPixelSize = false
     /// Set when Android's screen is given a new size: until the app draws on it, Android shows
     /// nothing there, and the last picture stays instead.
@@ -73,7 +73,6 @@ final class FrameRenderer {
     /// Called on the main thread, once, for an app that lays out for its window.
     func keepPixelSize() {
         keepsPixelSize = true
-        layer.contentsGravity = .topLeft
     }
 
     /// Called as Android's screen is asked to take a new size.

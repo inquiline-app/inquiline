@@ -26,15 +26,7 @@ final class AndroidDisplayView: NSView {
 
     /// Where the app's screen is drawn in the view: the window keeps its shape, but full
     /// screen can leave bars at its sides.
-    var screenRect: NSRect {
-        // A flexible app's picture is at its own size, at the top left (FrameRenderer.keepPixelSize).
-        if renderer?.keepsPixelSize == true {
-            let scale = window?.backingScaleFactor ?? 2
-            let size = NSSize(width: displaySize.width / scale, height: displaySize.height / scale)
-            return NSRect(x: 0, y: bounds.height - size.height, width: size.width, height: size.height)
-        }
-        return AVMakeRect(aspectRatio: displaySize, insideRect: bounds)
-    }
+    var screenRect: NSRect { AVMakeRect(aspectRatio: displaySize, insideRect: bounds) }
 
     func sendFinger(_ action: ScrcpySession.TouchAction, x: Int, y: Int, finger: Int64) {
         let x = min(max(x, 0), Int(displaySize.width) - 1), y = min(max(y, 0), Int(displaySize.height) - 1)

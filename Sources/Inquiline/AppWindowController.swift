@@ -288,18 +288,14 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate {
             let package = package
             DispatchQueue.global().async {
                 // A failed look says nothing either way.
-                guard let output = try? AdbClient.shell("dumpsys activity activities | grep -E '^Display #|Hist  #|configChanges='")
-                else { return }
-                var screens: [(display: String, activity: Substring, changes: Int)] = []
+                guard let output = try? AdbClient.shell("dumpsys activity activities | grep -E '^Display #|Hist  #'") else { return }
+                var screens: [(display: String, activity: Substring)] = []
                 var current = ""
                 for line in output.split(whereSeparator: \.isNewline) {
                     if line.hasPrefix("Display #") {
                         current = String(line.split(separator: " ").prefix(2).joined(separator: " "))
-                    } else if let value = line.split(separator: "=").last.flatMap({ Int($0.dropFirst(2), radix: 16) }),
-                              line.contains("configChanges="), !screens.isEmpty {
-                        screens[screens.count - 1].changes = value
-                    } else if line.contains("Hist  #") {
-                        screens.append((current, line, 0))
+                    } else {
+                        screens.append((current, line))
                     }
                 }
                 DispatchQueue.main.async {
@@ -307,11 +303,6 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate {
                         $0.activity.contains(" \(package)/") && !self.oldDisplays.contains($0.display)
                     }?.display
                     guard let display = self.watchedDisplay else { return }
-                    // Whether the screen in front takes new sizes itself, as it tells Android.
-                    let sizeChanges = 0x80 | 0x100 | 0x400 | 0x800 // orientation, layout, size, smallest size
-                    if let top = screens.first(where: { $0.display == display }) {
-                        self.resizesLive = top.changes & sizeChanges == sizeChanges
-                    }
                     // A restart for a new screen shape leaves it empty for a moment.
                     missing = screens.contains { $0.display == display } ? 0 : missing + 1
                     if missing >= 2 { self.window.close() }
@@ -359,15 +350,14 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate {
 
     /// As the window takes a new size, Android's screen does; Android lays the app out again once
     /// the sizes stop changing, and the picture is scaled meanwhile.
-    /// As Android's own desktop windows do: a screen that takes new sizes itself (it says so to
-    /// Android) lays out live as the window is dragged, as a Mac app does. Others, as Gmail's,
-    /// start again for each size, so they keep their picture during the drag and take the new
-    /// size once, when it's let go. Sizes that come at once, as full screen, go at once.
+    /// While the window is dragged, the app's last picture is scaled to it on the Mac, smoothly;
+    /// the app takes the new size once, when it's let go. An Android app needs 50 to 200 ms to
+    /// lay out for a size (Gmail starts its screen again), far from a Mac app's one frame, so
+    /// laying out during the drag only shows half-drawn pictures. Sizes that come at once, as
+    /// full screen, go at once.
     func windowDidResize(_ notification: Notification) {
-        if isFlexible, !window.inLiveResize || resizesLive { resizeAndroid() }
+        if isFlexible, !window.inLiveResize { resizeAndroid() }
     }
-
-    private var resizesLive = false
 
     func windowDidEndLiveResize(_ notification: Notification) {
         if isFlexible { resizeAndroid() }
