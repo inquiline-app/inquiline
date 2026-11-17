@@ -136,7 +136,22 @@ public final class AdBlock extends VpnService {
         try {
             byte[] pem = Files.readAllBytes(new File(getFilesDir(), "ca.pem").toPath());
             byte[] key = Files.readAllBytes(new File(getFilesDir(), "ca.key").toPath());
-            Proxy started = new Proxy(new Certs(pem, key), (url, host, headers) -> isBlocked(host));
+            Filters rules = new Filters();
+            for (String list : new String[] {"easylist.txt", "easyprivacy.txt", "ublock-filters.txt"}) {
+                try (BufferedReader in = new BufferedReader(new InputStreamReader(getAssets().open(list), StandardCharsets.UTF_8))) {
+                    rules.load(in);
+                }
+            }
+            android.util.Log.i("InquilineAdBlock", "Ad blocking rules: " + rules.count);
+            java.util.concurrent.atomic.AtomicInteger blockedCount = new java.util.concurrent.atomic.AtomicInteger();
+            Proxy started = new Proxy(new Certs(pem, key), (url, host, headers) -> {
+                boolean blocked = isBlocked(host) || rules.blocks(request(url, host, headers));
+                // How many, never which: what an app asks for is the user's own business.
+                if (blocked && blockedCount.incrementAndGet() % 25 == 0) {
+                    android.util.Log.i("InquilineAdBlock", "Ads blocked so far: " + blockedCount.get());
+                }
+                return blocked;
+            });
             started.start();
             proxy = started;
             return true;
@@ -144,6 +159,52 @@ public final class AdBlock extends VpnService {
             android.util.Log.w("InquilineAdBlock", "The proxy could not start", e);
             return false;
         }
+    }
+
+    /** A request as the rules see it, from what a browser says in its headers about it. */
+    private static Filters.Request request(String url, String host, String headers) {
+        String dest = Proxy.header(headers, "sec-fetch-dest").toLowerCase();
+        String type;
+        switch (dest) {
+            case "script": type = "script"; break;
+            case "image": type = "image"; break;
+            case "style": type = "stylesheet"; break;
+            case "iframe": case "frame": case "embed": case "object": type = "subdocument"; break;
+            case "font": type = "font"; break;
+            case "audio": case "video": case "track": type = "media"; break;
+            case "document": type = "document"; break;
+            case "empty": type = "xmlhttprequest"; break;
+            default: type = headers.isEmpty() ? "document" : "other";
+        }
+        String page = Proxy.header(headers, "origin");
+        if (page.isEmpty() || page.equals("null")) page = Proxy.header(headers, "referer");
+        String pageHost = hostOf(page);
+        String site = Proxy.header(headers, "sec-fetch-site").toLowerCase();
+        boolean thirdParty = site.isEmpty()
+                ? !pageHost.isEmpty() && !baseDomain(pageHost).equals(baseDomain(host))
+                : site.equals("cross-site");
+        return new Filters.Request(url, host, type, pageHost, thirdParty);
+    }
+
+    private static String hostOf(String url) {
+        int start = url.indexOf("://");
+        if (start < 0) return "";
+        String rest = url.substring(start + 3);
+        int end = 0;
+        while (end < rest.length() && rest.charAt(end) != '/' && rest.charAt(end) != ':' && rest.charAt(end) != '?') end++;
+        return rest.substring(0, end).toLowerCase();
+    }
+
+    /** The site a host belongs to: its last two labels, or three under a country's own (com.tr, co.uk). */
+    private static String baseDomain(String host) {
+        String[] labels = host.split("\\.");
+        int n = labels.length;
+        if (n <= 2) return host;
+        boolean countrySecond = labels[n - 1].length() == 2
+                && java.util.Set.of("com", "co", "net", "org", "gov", "edu", "ac", "gen", "web", "biz", "info", "ne", "or", "go")
+                        .contains(labels[n - 2]);
+        int keep = countrySecond ? 3 : 2;
+        return String.join(".", java.util.Arrays.copyOfRange(labels, n - keep, n));
     }
 
     private void close() {

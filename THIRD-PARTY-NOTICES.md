@@ -163,3 +163,11 @@ Permission is hereby granted, free of charge, to any person obtaining a copy of 
 The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
 
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+## EasyList and EasyPrivacy
+
+The ad blocking rules in Scripts/vm/notifications-agent/assets/easylist.txt and easyprivacy.txt are EasyList and EasyPrivacy (https://easylist.to), by the EasyList authors, used under the Creative Commons Attribution-ShareAlike 3.0 Unported license (https://creativecommons.org/licenses/by-sa/3.0/); they are dual-licensed with the GNU General Public License version 3. They are included unchanged.
+
+## uBlock filters
+
+The rules in Scripts/vm/notifications-agent/assets/ublock-filters.txt are uBlock Origin's own filter list (https://github.com/uBlockOrigin/uAssets), by Raymond Hill and contributors, under the GNU General Public License version 3 (https://www.gnu.org/licenses/gpl-3.0.html). It is included unchanged, as data the helper reads; its source is the file itself.
