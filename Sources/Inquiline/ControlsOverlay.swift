@@ -25,7 +25,7 @@ final class ControlsOverlay: NSView {
     /// A macro being recorded: first its key, then its taps.
     private var recording: (index: Int, hasKey: Bool, last: Date?)?
     private let hint = NSTextField(labelWithString: "")
-    private static let editHint = "Click a button in the game, then press its key."
+    private static let editHint = "Click a button in the game, then press its key or controller button."
     private let bar = NSStackView()
 
     override init(frame: NSRect) {
@@ -77,8 +77,8 @@ final class ControlsOverlay: NSView {
         done.keyEquivalent = "\r"
         hint.stringValue = Self.editHint
         hint.textColor = .secondaryLabelColor
-        for view in [hint, button("Move Stick (WASD)", "dpad", #selector(addStick)),
-                     button("Mouse Aim", "scope", #selector(addAim)),
+        for view in [hint, button("Move Stick (WASD, Left Stick)", "dpad", #selector(addStick)),
+                     button("Aim (Mouse, Right Stick)", "scope", #selector(addAim)),
                      button("Macro", "list.number", #selector(addMacro)),
                      button("Clear", "trash", #selector(clearAll)), done] as [NSView] {
             bar.addArrangedSubview(view)
@@ -109,7 +109,7 @@ final class ControlsOverlay: NSView {
         set.controls.append(KeyControl(kind: .macro, x: 0.5, y: 0.5, steps: []))
         recording = (set.controls.count - 1, false, nil)
         selected = recording!.index
-        hint.stringValue = "Press the key for this macro."
+        hint.stringValue = "Press the key or controller button for this macro."
         needsDisplay = true
     }
 
@@ -399,6 +399,26 @@ final class ControlsOverlay: NSView {
         needsDisplay = true
     }
 
+    /// A controller button pressed while editing: given to the chosen control, as a key is.
+    /// Returns whether it was taken.
+    func padPressed(_ code: Int) -> Bool {
+        guard isEditing, let name = KeyControl.Pad(rawValue: code)?.name else { return false }
+        if let current = recording {
+            guard !current.hasKey else { return true }
+            for index in set.controls.indices where index != current.index && set.controls[index].key == code {
+                set.controls[index].key = nil
+            }
+            set.controls[current.index].key = code
+            set.controls[current.index].label = name
+            recording = (current.index, true, nil)
+            hint.stringValue = "Click where it taps, in order. Return when done."
+            needsDisplay = true
+            return true
+        }
+        assign(code, name)
+        return true
+    }
+
     override func keyDown(with event: NSEvent) {
         if let current = recording {
             switch event.keyCode {
@@ -469,7 +489,7 @@ final class ControlsOverlay: NSView {
             circle.stroke()
             switch control.kind {
             case .tap:
-                text(control.label ?? "Press a key", at: c, size: control.label == nil ? 10 : 13, alpha: alpha)
+                text(control.label ?? "Press a key or button", at: c, size: control.label == nil ? 10 : 13, alpha: alpha)
             case .aim:
                 text("Mouse", at: c, size: 11, alpha: alpha)
             case .macro:

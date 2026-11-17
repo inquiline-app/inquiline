@@ -92,6 +92,7 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate {
         overlay.onDone = { [unowned self] set in
             displayView.controls.set = set
             set.save(package: package)
+            gamepads?.update()
             AppLog.write("Keyboard controls: \(set.controls.count)")
             window.makeFirstResponder(displayView)
         }
@@ -124,6 +125,7 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate {
         displayView.controls.set.isOn.toggle()
         overlay.set = displayView.controls.set
         displayView.controls.set.save(package: package)
+        gamepads?.update()
     }
 
     @objc func toggleControlLabels() {
@@ -195,7 +197,11 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate {
             DispatchQueue.main.async {
                 guard let self else { return }
                 self.launchScreen.removeFromSuperview()
-                if self.gamepads == nil { self.gamepads = GamepadBridge(session: session) }
+                if self.gamepads == nil {
+                    let gamepads = GamepadBridge(session: session, controls: self.displayView.controls)
+                    gamepads.onEditPress = { [weak self] code in self?.overlay.padPressed(code) ?? false }
+                    self.gamepads = gamepads
+                }
                 if self.displayView.keyboard == nil { self.displayView.keyboard = KeyboardBridge(session: session) }
             }
         }

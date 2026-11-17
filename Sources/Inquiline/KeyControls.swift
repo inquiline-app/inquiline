@@ -1,8 +1,8 @@
 import AppKit
 
-/// Keyboard and mouse controls for a game made for touch, as Apple's Touch Alternatives are for
-/// iPhone games on a Mac: each control stands for a button or stick on the game's screen, and
-/// a key or the mouse works it by touching there. Positions are fractions of the app's screen,
+/// Keyboard, mouse and controller controls for a game made for touch, as Apple's Touch
+/// Alternatives are for iPhone games on a Mac: each control stands for a button or stick on the
+/// game's screen, and a key, the mouse or a controller works it by touching there. Positions are fractions of the app's screen,
 /// so they stay put however large the window is. Saved for each app.
 struct KeyControl: Codable, Equatable {
     enum Kind: String, Codable {
@@ -46,6 +46,36 @@ struct KeyControl: Codable, Equatable {
     static let leftClick = 1000
     static let rightClick = 1001
 
+    /// A controller's buttons, after the mouse's. Its left stick works the stick control and
+    /// its right stick the aim control, as WASD and the mouse do.
+    enum Pad: Int, CaseIterable {
+        case a = 2000, b, x, y, leftShoulder, rightShoulder, leftTrigger, rightTrigger,
+             leftStickButton, rightStickButton, menu, options, up, down, left, right
+
+        var name: String {
+            switch self {
+            case .a: return "Ⓐ"
+            case .b: return "Ⓑ"
+            case .x: return "Ⓧ"
+            case .y: return "Ⓨ"
+            case .leftShoulder: return "LB"
+            case .rightShoulder: return "RB"
+            case .leftTrigger: return "LT"
+            case .rightTrigger: return "RT"
+            case .leftStickButton: return "L3"
+            case .rightStickButton: return "R3"
+            case .menu: return "☰"
+            case .options: return "⧉"
+            case .up: return "D-pad ↑"
+            case .down: return "D-pad ↓"
+            case .left: return "D-pad ←"
+            case .right: return "D-pad →"
+            }
+        }
+    }
+
+    static func isPad(_ code: Int) -> Bool { Pad(rawValue: code) != nil }
+
     static let stickKeys: [(code: UInt16, dx: Double, dy: Double)] = [(13, 0, -1), (0, -1, 0), (1, 0, 1), (2, 1, 0)] // W A S D
 }
 
@@ -66,6 +96,9 @@ struct KeyControlSet: Codable {
     private static func key(_ package: String) -> String { "KeyControls.\(package)" }
 
     var hasAim: Bool { controls.contains { $0.kind == .aim } }
+    /// With a controller button given to a control, the controller works the controls, and the
+    /// game doesn't see it as a controller.
+    var usesPad: Bool { isActive && controls.contains { $0.key.map(KeyControl.isPad) == true } }
     var isActive: Bool { isOn && !controls.isEmpty }
 }
 
@@ -127,6 +160,55 @@ final class KeyControlPlayer {
         if isStickKey { moveStick() }
         return true
     }
+
+    // MARK: - Controller
+
+    /// The left stick, from -1 to 1 with down positive, pushes the stick control's finger as far
+    /// as the stick is pushed.
+    func padStick(x: Double, y: Double) {
+        guard set.usesPad, let stick = set.controls.first(where: { $0.kind == .stick }) else { return }
+        let center = point(stick)
+        // A worn stick rests a little off the middle; within that, it's let go.
+        guard (x * x + y * y).squareRoot() > Self.padRest else {
+            if stickDown { touch(.up, stickPoint, finger: Self.stickFinger) }
+            stickDown = false
+            return
+        }
+        if !stickDown {
+            touch(.down, center, finger: Self.stickFinger)
+            stickDown = true
+        }
+        let reach = stick.size * size.height
+        stickPoint = CGPoint(x: center.x + x * reach, y: center.y + y * reach)
+        stickMoves += 1
+        touch(.move, stickPoint, finger: Self.stickFinger)
+    }
+
+    /// The right stick turns the camera as a thumb drags across the screen, faster the further
+    /// it's pushed, as in a console shooter.
+    func padAim(x: Double, y: Double) {
+        guard set.usesPad, set.hasAim else { return }
+        padAimVector = (x * x + y * y).squareRoot() > Self.padRest ? CGPoint(x: x, y: y) : .zero
+        guard padAimVector != .zero, padAimTimer == nil else { return }
+        // Moves with the display's frames, as a thumb does.
+        padAimTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 60, repeats: true) { [weak self] timer in
+            guard let self else { return timer.invalidate() }
+            guard padAimVector != .zero else {
+                timer.invalidate()
+                padAimTimer = nil
+                liftAim()
+                return
+            }
+            // At full tilt, six tenths of the screen's height a second.
+            let speed = size.height * 0.6 / 60
+            drag(dx: padAimVector.x * speed, dy: padAimVector.y * speed)
+        }
+    }
+
+    /// How far from the middle a controller's stick counts as pushed.
+    private static let padRest = 0.15
+    private var padAimVector = CGPoint.zero
+    private var padAimTimer: Timer?
 
     private func moveStick() {
         guard let stick = set.controls.first(where: { $0.kind == .stick }) else { return }
@@ -226,9 +308,16 @@ final class KeyControlPlayer {
         view?.showCaughtNote(false)
     }
 
-    /// The mouse moved by this many points while caught.
+    /// The mouse moved by this many points while caught; a point of mouse movement is a pixel
+    /// and a half of finger movement on the app's screen.
     func aim(dx: CGFloat, dy: CGFloat) {
-        guard isCaught, let control = set.controls.first(where: { $0.kind == .aim }) else { return }
+        guard isCaught else { return }
+        drag(dx: dx * 1.5, dy: dy * 1.5)
+    }
+
+    /// Drags the aim control's finger by this many pixels of the app's screen.
+    private func drag(dx: CGFloat, dy: CGFloat) {
+        guard let control = set.controls.first(where: { $0.kind == .aim }) else { return }
         let start = point(control)
         if aimPoint == nil {
             touch(.down, start, finger: Self.aimFinger)
@@ -236,9 +325,8 @@ final class KeyControlPlayer {
             aimStart = start
         }
         guard var p = aimPoint else { return }
-        // A point of mouse movement is a pixel of finger movement on the app's screen.
-        p.x += dx * 1.5
-        p.y += dy * 1.5
+        p.x += dx
+        p.y += dy
         touch(.move, p, finger: Self.aimFinger)
         aimPoint = p
         // A thumb runs out of screen and lifts to start again; so does this one.
@@ -258,6 +346,8 @@ final class KeyControlPlayer {
 
     /// Lets go of everything, as when the window goes to the back.
     func releaseAll() {
+        padAimVector = .zero
+        padStick(x: 0, y: 0)
         looping.removeAll()
         rounds = rounds.mapValues { $0 + 1 }
         for code in heldKeys { _ = key(code, down: false) }
@@ -284,7 +374,7 @@ enum KeyName {
         switch code {
         case KeyControl.leftClick: return "Click"
         case KeyControl.rightClick: return "Right Click"
-        default: return names[UInt16(code)] ?? "?"
+        default: return KeyControl.Pad(rawValue: code)?.name ?? names[UInt16(code)] ?? "?"
         }
     }
 }

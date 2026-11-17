@@ -5,14 +5,23 @@ import GameController
 /// into it, so games that support controllers use them as on a phone. As a keyboard does,
 /// they stay plugged in while the app runs and drive the app in front: when another app is,
 /// this one sees them at rest, with nothing pressed.
+///
+/// A game made only for touch gets its controller through the app's controls instead
+/// (KeyControls): once a controller button is given to one, the controller works them, and
+/// the game sees no controller.
 final class GamepadBridge {
     private let session: ScrcpySession
+    private weak var controls: KeyControlPlayer?
+    /// While the controls are being edited, a button pressed is offered here; true takes it.
+    var onEditPress: ((Int) -> Bool)?
+    private var held: [ObjectIdentifier: Set<Int>] = [:]
     /// The HID id each controller has in Android. scrcpy keeps 1 and 2 for a keyboard and mouse.
     private var plugged: [ObjectIdentifier: UInt16] = [:]
     private var observers: [NSObjectProtocol] = []
 
-    init(session: ScrcpySession) {
+    init(session: ScrcpySession, controls: KeyControlPlayer) {
         self.session = session
+        self.controls = controls
         let center = NotificationCenter.default
         observers = [
             center.addObserver(forName: .GCControllerDidConnect, object: nil, queue: .main) { [weak self] _ in self?.update() },
@@ -31,34 +40,80 @@ final class GamepadBridge {
     func stop() {
         for (_, id) in plugged { session.sendHIDClose(id: id) }
         plugged = [:]
+        for key in held.keys { release(key) }
         GCController.controllers().forEach { $0.extendedGamepad?.valueChangedHandler = nil }
     }
 
-    private func update() {
+    /// Called again when the controls change, as they decide who gets the controller.
+    func update() {
         let wanted = GCController.controllers().filter { $0.extendedGamepad != nil }
+        let usesPad = controls?.set.usesPad == true
         let wantedKeys = Set(wanted.map(ObjectIdentifier.init))
-        for (key, id) in plugged where !wantedKeys.contains(key) {
+        for (key, id) in plugged where !wantedKeys.contains(key) || usesPad {
             session.sendHIDClose(id: id)
             plugged[key] = nil
         }
-        for controller in wanted where plugged[ObjectIdentifier(controller)] == nil {
-            guard let id = (3...10).map(UInt16.init).first(where: { !plugged.values.contains($0) }),
-                  let pad = controller.extendedGamepad
-            else { continue }
-            plugged[ObjectIdentifier(controller)] = id
-            session.sendHIDOpen(id: id, vendor: 0x045E, product: 0x028E, name: "Microsoft X-Box 360 Pad",
-                                descriptor: Self.descriptor)
-            session.sendHIDInput(id: id, report: NSApp.isActive ? Self.report(pad) : Self.atRest)
-            pad.valueChangedHandler = { [weak self] pad, _ in
-                guard let self, NSApp.isActive, self.plugged[ObjectIdentifier(controller)] == id else { return }
-                self.session.sendHIDInput(id: id, report: Self.report(pad))
-            }
-        }
-        // Going to the back lets go of everything held; coming to the front picks up the pad as it is.
         for controller in wanted {
-            guard let id = plugged[ObjectIdentifier(controller)], let pad = controller.extendedGamepad else { continue }
-            session.sendHIDInput(id: id, report: NSApp.isActive ? Self.report(pad) : Self.atRest)
+            let key = ObjectIdentifier(controller)
+            guard let pad = controller.extendedGamepad else { continue }
+            if !usesPad, plugged[key] == nil,
+               let id = (3...10).map(UInt16.init).first(where: { !plugged.values.contains($0) }) {
+                plugged[key] = id
+                session.sendHIDOpen(id: id, vendor: 0x045E, product: 0x028E, name: "Microsoft X-Box 360 Pad",
+                                    descriptor: Self.descriptor)
+            }
+            pad.valueChangedHandler = { [weak self] pad, _ in
+                guard let self, NSApp.isActive else { return }
+                self.changed(pad, key: key)
+            }
+            // Going to the back lets go of everything held; coming to the front picks up the pad as it is.
+            if let id = plugged[key] { session.sendHIDInput(id: id, report: NSApp.isActive ? Self.report(pad) : Self.atRest) }
+            if !NSApp.isActive { release(key) }
         }
+    }
+
+    private func changed(_ pad: GCExtendedGamepad, key: ObjectIdentifier) {
+        let pressed = Self.pressed(pad)
+        let before = held[key] ?? []
+        held[key] = pressed
+        // A button pressed while the controls are edited is given to the chosen control.
+        if let onEditPress {
+            for code in pressed.subtracting(before) where onEditPress(code) { return }
+        }
+        if let id = plugged[key] {
+            session.sendHIDInput(id: id, report: Self.report(pad))
+            return
+        }
+        guard let controls, controls.set.usesPad else { return }
+        for code in pressed.subtracting(before) { _ = controls.key(code, down: true) }
+        for code in before.subtracting(pressed) { _ = controls.key(code, down: false) }
+        controls.padStick(x: Double(pad.leftThumbstick.xAxis.value), y: Double(-pad.leftThumbstick.yAxis.value))
+        controls.padAim(x: Double(pad.rightThumbstick.xAxis.value), y: Double(-pad.rightThumbstick.yAxis.value))
+    }
+
+    private func release(_ key: ObjectIdentifier) {
+        guard let controls, let before = held[key] else { return }
+        held[key] = []
+        for code in before { _ = controls.key(code, down: false) }
+        controls.padStick(x: 0, y: 0)
+        controls.padAim(x: 0, y: 0)
+    }
+
+    /// The controller's buttons held now, as control codes. A trigger counts once it's half in.
+    private static func pressed(_ pad: GCExtendedGamepad) -> Set<Int> {
+        typealias Pad = KeyControl.Pad
+        var codes = Set<Int>()
+        let buttons: [(GCControllerButtonInput?, Pad)] = [
+            (pad.buttonA, .a), (pad.buttonB, .b), (pad.buttonX, .x), (pad.buttonY, .y),
+            (pad.leftShoulder, .leftShoulder), (pad.rightShoulder, .rightShoulder),
+            (pad.leftThumbstickButton, .leftStickButton), (pad.rightThumbstickButton, .rightStickButton),
+            (pad.buttonMenu, .menu), (pad.buttonOptions, .options),
+            (pad.dpad.up, .up), (pad.dpad.down, .down), (pad.dpad.left, .left), (pad.dpad.right, .right),
+        ]
+        for (button, code) in buttons where button?.isPressed == true { codes.insert(code.rawValue) }
+        if pad.leftTrigger.value > 0.5 { codes.insert(Pad.leftTrigger.rawValue) }
+        if pad.rightTrigger.value > 0.5 { codes.insert(Pad.rightTrigger.rawValue) }
+        return codes
     }
 
     /// A report with both sticks centered and nothing pressed.
