@@ -57,7 +57,7 @@ enum AndroidFiles {
     static func mount() -> URL? {
         lock.lock()
         defer { lock.unlock() }
-        if let mountPoint, FileManager.default.fileExists(atPath: mountPoint.path) { return mountPoint }
+        if let mountPoint, isMounted { return mountPoint }
         nameHost()
         let open = NSMutableDictionary()
         open[kNetFSUseGuestKey] = true
@@ -134,9 +134,13 @@ enum AndroidFiles {
     static func show(label: String? = nil) {
         guard let volume = mount() else { return }
         var target = volume
+        // Whether the app has its folder is asked of Android: Inquiline looking at files on the
+        // disk itself would need the user's leave (macOS's "network volumes"), and Finder opens it.
         if let label {
-            let folder = volume.appendingPathComponent("Apps").appendingPathComponent(label.replacingOccurrences(of: "/", with: "-"))
-            if FileManager.default.fileExists(atPath: folder.path) { target = folder }
+            let name = label.replacingOccurrences(of: "/", with: "-")
+            let there = (try? AdbClient.shell("su 0 sh -c " + quote("[ -d " + quote("\(root)/Apps/\(name)") + " ] && echo yes")))?
+                .contains("yes") == true
+            if there { target = volume.appendingPathComponent("Apps").appendingPathComponent(name) }
         }
         DispatchQueue.main.async { NSWorkspace.shared.open(target) }
     }
