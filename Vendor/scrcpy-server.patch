@@ -346,10 +346,10 @@ index 0b961c6..2831e58 100644
          void trigger(Size size);
 diff --git a/server/src/main/java/com/genymobile/scrcpy/video/FrameStreamer.java b/server/src/main/java/com/genymobile/scrcpy/video/FrameStreamer.java
 new file mode 100644
-index 0000000..5a73e4c
+index 0000000..e587dc7
 --- /dev/null
 +++ b/server/src/main/java/com/genymobile/scrcpy/video/FrameStreamer.java
-@@ -0,0 +1,224 @@
+@@ -0,0 +1,242 @@
 +package com.genymobile.scrcpy.video;
 +
 +import com.genymobile.scrcpy.AsyncProcessor;
@@ -409,6 +409,13 @@ index 0000000..5a73e4c
 +    private final Map<Integer, Image> sent = new HashMap<>();
 +    private Thread thread;
 +    private int frameNumber;
++    /**
++     * The reader whose pictures are taken. Its listener runs on another thread and may still be
++     * running as a new size replaces the reader: under this lock it can't hand on a picture from
++     * a reader being closed, which closes it.
++     */
++    private final Object readerLock = new Object();
++    private ImageReader currentReader;
 +
 +    public FrameStreamer(SurfaceCapture capture, FileDescriptor fd) {
 +        this.capture = capture;
@@ -444,21 +451,29 @@ index 0000000..5a73e4c
 +                capture.prepare();
 +                Size size = capture.getSize();
 +                ImageReader reader = ImageReader.newInstance(size.getWidth(), size.getHeight(), PixelFormat.RGBA_8888, MAX_IMAGES, USAGE);
++                synchronized (readerLock) {
++                    currentReader = reader;
++                }
 +                reader.setOnImageAvailableListener(r -> {
-+                    // Only the newest picture waits; older ones go back to Android at once. When
-+                    // the Mac falls behind, as while another app loads, every buffer may be held:
-+                    // this picture is then skipped rather than failing.
-+                    Image old;
-+                    while ((old = available.poll()) != null) {
-+                        old.close();
-+                    }
-+                    try {
-+                        Image image = r.acquireLatestImage();
-+                        if (image != null) {
-+                            available.add(image);
++                    synchronized (readerLock) {
++                        if (r != currentReader) {
++                            return;
 +                        }
-+                    } catch (IllegalStateException e) {
-+                        // All buffers are held
++                        // Only the newest picture waits; older ones go back to Android at once. When
++                        // the Mac falls behind, as while another app loads, every buffer may be held:
++                        // this picture is then skipped rather than failing.
++                        Image old;
++                        while ((old = available.poll()) != null) {
++                            old.close();
++                        }
++                        try {
++                            Image image = r.acquireLatestImage();
++                            if (image != null) {
++                                available.add(image);
++                            }
++                        } catch (IllegalStateException e) {
++                            // All buffers are held
++                        }
 +                    }
 +                }, handler);
 +                capture.start(reader.getSurface());
@@ -470,8 +485,11 @@ index 0000000..5a73e4c
 +                } finally {
 +                    capture.stop();
 +                    reader.setOnImageAvailableListener(null, null);
-+                    drop();
-+                    reader.close();
++                    synchronized (readerLock) {
++                        currentReader = null;
++                        drop();
++                        reader.close();
++                    }
 +                }
 +            }
 +        } finally {
