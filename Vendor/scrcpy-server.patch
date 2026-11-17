@@ -329,6 +329,20 @@ index 20532c0..6f20ac5 100644
          buf.put(reportDesc);
          return buf.array();
      }
+diff --git a/server/src/main/java/com/genymobile/scrcpy/display/DisplayResizeDebouncer.java b/server/src/main/java/com/genymobile/scrcpy/display/DisplayResizeDebouncer.java
+index 0b961c6..259c5a3 100644
+--- a/server/src/main/java/com/genymobile/scrcpy/display/DisplayResizeDebouncer.java
++++ b/server/src/main/java/com/genymobile/scrcpy/display/DisplayResizeDebouncer.java
+@@ -7,7 +7,8 @@ import android.os.SystemClock;
+ 
+ public final class DisplayResizeDebouncer {
+ 
+-    private static final long DEBOUNCE_DELAY_MS = 300;
++    // Inquiline: 100 ms, not 300, so an app answers sooner once its window stops changing.
++    private static final long DEBOUNCE_DELAY_MS = 100;
+ 
+     public interface Callback {
+         void trigger(Size size);
 diff --git a/server/src/main/java/com/genymobile/scrcpy/video/FrameStreamer.java b/server/src/main/java/com/genymobile/scrcpy/video/FrameStreamer.java
 new file mode 100644
 index 0000000..e587dc7
