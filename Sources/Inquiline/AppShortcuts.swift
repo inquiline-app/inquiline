@@ -173,6 +173,20 @@ enum AppShortcuts {
     }
 
     /// The package of an app Inquiline made, or nil for any other.
+    /// Lists every app's widget extension with the Mac again. One registered as its app is
+    /// written can be unlisted a moment later, as the Mac's extension service catches up with
+    /// the app's replacement; registered once more after that, it stays.
+    static func registerWidgets() {
+        let plugins = queue.sync { locate().values.map { $0.appendingPathComponent("Contents/PlugIns/Widgets.appex") } }
+        for plugin in plugins where FileManager.default.fileExists(atPath: plugin.path) {
+            let pluginkit = Process()
+            pluginkit.executableURL = URL(fileURLWithPath: "/usr/bin/pluginkit")
+            pluginkit.arguments = ["-a", plugin.path]
+            try? pluginkit.run()
+            pluginkit.waitUntilExit()
+        }
+    }
+
     /// The Mac app of an Android app, wherever the user keeps it.
     static func bundle(of package: String) -> URL? {
         queue.sync { locate()[package] }
@@ -265,10 +279,7 @@ enum AppShortcuts {
     private static func write(_ app: App, to bundle: URL, program: URL, server: URL, frames: URL, fingerprint: String) -> Bool {
         let files = FileManager.default
         let contents = bundle.appendingPathComponent("Contents")
-        let executable = contents.appendingPathComponent("MacOS/app")
         let iconFile = contents.appendingPathComponent("Resources/AppIcon.icns")
-        let serverFile = contents.appendingPathComponent("Resources/scrcpy-server")
-        let framesFile = contents.appendingPathComponent("Resources/libinquiline-frames.so")
         let infoFile = contents.appendingPathComponent("Info.plist")
         let icon = icns(app.icon)
         let info: NSMutableDictionary = [
@@ -308,27 +319,41 @@ enum AppShortcuts {
         }
 
         let existed = files.fileExists(atPath: bundle.path)
-        try? files.removeItem(at: bundle)
+        // Made beside it and swapped in at once: an app taken away even for a moment is one the
+        // Mac's extension service may unlist, widgets and all, after it's back.
+        guard let place = try? files.url(for: .itemReplacementDirectory, in: .userDomainMask,
+                                         appropriateFor: bundle, create: true) else { return false }
+        defer { try? files.removeItem(at: place) }
+        let made = place.appendingPathComponent(bundle.lastPathComponent)
+        let madeContents = made.appendingPathComponent("Contents")
         do {
-            try files.createDirectory(at: executable.deletingLastPathComponent(), withIntermediateDirectories: true)
-            try files.createDirectory(at: iconFile.deletingLastPathComponent(), withIntermediateDirectories: true)
-            try files.copyItem(at: program, to: executable)
-            try files.copyItem(at: server, to: serverFile)
-            try files.copyItem(at: frames, to: framesFile)
-            try icon.write(to: iconFile)
-            try info.write(to: infoFile)
-            try addWidgets(to: contents, identifier: identifier, version: widgets)
+            try files.createDirectory(at: madeContents.appendingPathComponent("MacOS"), withIntermediateDirectories: true)
+            try files.createDirectory(at: madeContents.appendingPathComponent("Resources"), withIntermediateDirectories: true)
+            try files.copyItem(at: program, to: madeContents.appendingPathComponent("MacOS/app"))
+            try files.copyItem(at: server, to: madeContents.appendingPathComponent("Resources/scrcpy-server"))
+            try files.copyItem(at: frames, to: madeContents.appendingPathComponent("Resources/libinquiline-frames.so"))
+            try icon.write(to: madeContents.appendingPathComponent("Resources/AppIcon.icns"))
+            try info.write(to: madeContents.appendingPathComponent("Info.plist"))
+            try addWidgets(to: madeContents, identifier: identifier, version: widgets)
         } catch {
-            try? files.removeItem(at: bundle)
             return false
         }
         // Apple silicon only runs signed code; an ad hoc signature is enough for a local app.
         let codesign = Process()
         codesign.executableURL = URL(fileURLWithPath: "/usr/bin/codesign")
-        codesign.arguments = ["--force", "--sign", "-", bundle.path]
+        codesign.arguments = ["--force", "--sign", "-", made.path]
         codesign.standardError = FileHandle.nullDevice
         try? codesign.run()
         codesign.waitUntilExit()
+        do {
+            if existed {
+                _ = try files.replaceItemAt(bundle, withItemAt: made)
+            } else {
+                try files.moveItem(at: made, to: bundle)
+            }
+        } catch {
+            return false
+        }
         LSRegisterURL(bundle as CFURL, existed)
         // Its widgets join the Mac's widget gallery.
         let pluginkit = Process()

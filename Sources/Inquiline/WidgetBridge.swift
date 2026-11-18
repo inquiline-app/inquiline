@@ -166,6 +166,8 @@ final class WidgetBridge {
     func connected() {
         queue.async { [self] in
             placed = [:]
+            // Android is up, well after its apps' Mac apps were written at launch.
+            AppShortcuts.registerWidgets()
             // Widgets removed from the Mac while Android was off are let go now: the apps' Mac
             // apps say which they still show.
             let files = FileManager.default
