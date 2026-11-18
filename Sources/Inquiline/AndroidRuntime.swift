@@ -274,6 +274,22 @@ final class AndroidRuntime {
         return Int(output[match].filter(\.isNumber))
     }
 
+    /// Android's equalizer on all its sound (the helper's Sound): "off", "preset <n>" or
+    /// "bands <five levels in millibels>".
+    func equalizer() -> String {
+        let value = (try? shell("su 0 cat /data/data/\(NotificationBridge.agent)/files/eq 2>/dev/null"))?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return value.isEmpty ? "off" : value
+    }
+
+    func setEqualizer(_ choice: String) {
+        guard choice.range(of: "^(off|preset [0-9]+|bands( -?[0-9]+){5})$", options: .regularExpression) != nil else { return }
+        _ = try? shell("su 0 am broadcast -n \(NotificationBridge.agent)/.Sound --es eq '\(choice)' >/dev/null")
+    }
+
+    static let equalizerPresets = ["Normal", "Classical", "Dance", "Flat", "Folk", "Heavy Metal", "Hip Hop", "Jazz", "Pop", "Rock"]
+    static let equalizerBands = ["60", "230", "910", "3.6k", "14k"]
+
     func setMediaVolume(_ volume: Int) {
         _ = try? shell("cmd audio set-volume 3 \(min(max(volume, 0), Self.mediaVolumeSteps))")
     }

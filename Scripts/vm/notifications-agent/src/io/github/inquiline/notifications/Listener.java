@@ -52,6 +52,7 @@ public final class Listener extends NotificationListenerService {
         }
         location = new Location(this, this::send);
         widgets = new WidgetHost(this, this::send);
+        Sound.apply(this);
         Thread accept = new Thread(this::acceptClients, "inquiline-accept");
         accept.setDaemon(true);
         accept.start();

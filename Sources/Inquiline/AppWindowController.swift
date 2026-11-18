@@ -660,6 +660,8 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate, 
         let controller = NSViewController()
         controller.view = view
         popover.contentViewController = controller
+        // The bands show and hide with Custom: the popover takes the new size.
+        view.onResize = { [weak popover] size in popover?.contentSize = size }
         guard let anchor = sender as? NSView else { return }
         popover.show(relativeTo: anchor.bounds, of: anchor, preferredEdge: anchor.isFlipped ? .maxY : .minY)
     }
@@ -1487,22 +1489,32 @@ private final class WidgetTile: NSView {
     override func mouseDown(with event: NSEvent) {}
 }
 
-/// The sound popover: a volume slider, as a Mac's sound menu has; its speakers set it to
-/// silent and to full.
+/// The sound popover: a volume slider, as a Mac's sound menu has, its speakers setting it to
+/// silent and to full; and Android's equalizer, as a phone's sound settings have it: off, its
+/// presets, or the user's own five bands.
 private final class SoundView: NSView {
-    /// The level last read or set, so the slider opens where it is at once.
+    /// What was last read or set, so the popover opens as it is at once.
     private static var lastLevel: Int?
+    private static var lastEqualizer: String?
 
     /// Read when the window opens, as the app's settings are.
     static func prefetch() {
         DispatchQueue.global().async {
-            guard let level = AndroidRuntime.shared.mediaVolume() else { return }
-            DispatchQueue.main.async { lastLevel = level }
+            let level = AndroidRuntime.shared.mediaVolume(), equalizer = AndroidRuntime.shared.equalizer()
+            DispatchQueue.main.async {
+                if let level { lastLevel = level }
+                lastEqualizer = equalizer
+            }
         }
     }
 
     private let slider = NSSlider(value: Double(SoundView.lastLevel ?? AndroidRuntime.mediaVolumeSteps), minValue: 0,
                                   maxValue: Double(AndroidRuntime.mediaVolumeSteps), target: nil, action: nil)
+    private let presets = NSPopUpButton()
+    private let bandRow = NSStackView()
+    private var bandSliders: [NSSlider] = []
+    private static let customTag = 1000, offTag = -1
+    var onResize: ((NSSize) -> Void)?
 
     init() {
         super.init(frame: .zero)
@@ -1520,18 +1532,66 @@ private final class SoundView: NSView {
                                          speaker("speaker.wave.3.fill", "Full Volume", #selector(full))])
         volume.orientation = .horizontal
         volume.spacing = 8
-        volume.edgeInsets = NSEdgeInsets(top: 22, left: 18, bottom: 22, right: 18)
-        volume.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(volume)
+
+        // The equalizer: off, Android's presets, and the user's own bands.
+        presets.addItem(withTitle: "Off")
+        presets.lastItem?.tag = Self.offTag
+        presets.menu?.addItem(.separator())
+        for (index, name) in AndroidRuntime.equalizerPresets.enumerated() {
+            presets.addItem(withTitle: name)
+            presets.lastItem?.tag = index
+        }
+        presets.menu?.addItem(.separator())
+        presets.addItem(withTitle: "Custom")
+        presets.lastItem?.tag = Self.customTag
+        presets.target = self
+        presets.action = #selector(presetChosen)
+        let equalizerRow = NSStackView(views: [NSTextField(labelWithString: "Equalizer"), NSView(), presets])
+        equalizerRow.orientation = .horizontal
+
+        // Five bands, each from -15 to +15 dB, as Android's equalizer has them.
+        bandRow.orientation = .horizontal
+        bandRow.distribution = .fillEqually
+        for name in AndroidRuntime.equalizerBands {
+            let band = NSSlider(value: 0, minValue: -1500, maxValue: 1500, target: self, action: #selector(bandsChanged))
+            band.isVertical = true
+            band.isContinuous = false
+            band.numberOfTickMarks = 3
+            let label = NSTextField(labelWithString: name)
+            label.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+            label.textColor = .secondaryLabelColor
+            let column = NSStackView(views: [band, label])
+            column.orientation = .vertical
+            column.spacing = 4
+            band.heightAnchor.constraint(equalToConstant: 90).isActive = true
+            bandSliders.append(band)
+            bandRow.addArrangedSubview(column)
+        }
+        bandRow.isHidden = true
+
+        let stack = NSStackView(views: [volume, equalizerRow, bandRow])
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 16
+        stack.edgeInsets = NSEdgeInsets(top: 22, left: 18, bottom: 22, right: 18)
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(stack)
         NSLayoutConstraint.activate([
-            volume.leadingAnchor.constraint(equalTo: leadingAnchor), volume.trailingAnchor.constraint(equalTo: trailingAnchor),
-            volume.topAnchor.constraint(equalTo: topAnchor), volume.bottomAnchor.constraint(equalTo: bottomAnchor),
-            widthAnchor.constraint(equalToConstant: 260),
+            stack.leadingAnchor.constraint(equalTo: leadingAnchor), stack.trailingAnchor.constraint(equalTo: trailingAnchor),
+            stack.topAnchor.constraint(equalTo: topAnchor), stack.bottomAnchor.constraint(equalTo: bottomAnchor),
+            widthAnchor.constraint(equalToConstant: 280),
+            volume.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -36),
+            equalizerRow.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -36),
+            bandRow.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -36),
         ])
+        if let equalizer = Self.lastEqualizer { show(equalizer) }
         DispatchQueue.global().async { [weak self] in
-            let level = AndroidRuntime.shared.mediaVolume()
+            let level = AndroidRuntime.shared.mediaVolume(), equalizer = AndroidRuntime.shared.equalizer()
             DispatchQueue.main.async {
-                guard let self, let level else { return }
+                guard let self else { return }
+                Self.lastEqualizer = equalizer
+                self.show(equalizer)
+                guard let level else { return }
                 Self.lastLevel = level
                 self.slider.integerValue = level
                 self.slider.isEnabled = true
@@ -1541,6 +1601,20 @@ private final class SoundView: NSView {
 
     required init?(coder: NSCoder) { fatalError() }
 
+    private func show(_ equalizer: String) {
+        let parts = equalizer.split(separator: " ")
+        switch parts.first {
+        case "preset": presets.selectItem(withTag: Int(parts.dropFirst().first ?? "") ?? Self.offTag)
+        case "bands":
+            presets.selectItem(withTag: Self.customTag)
+            for (slider, value) in zip(bandSliders, parts.dropFirst()) { slider.doubleValue = Double(value) ?? 0 }
+        default: presets.selectItem(withTag: Self.offTag)
+        }
+        bandRow.isHidden = parts.first != "bands"
+        layoutSubtreeIfNeeded()
+        onResize?(fittingSize)
+    }
+
     @objc private func silent() { set(0) }
     @objc private func full() { set(AndroidRuntime.mediaVolumeSteps) }
     @objc private func volumeChanged() { set(slider.integerValue) }
@@ -1549,5 +1623,21 @@ private final class SoundView: NSView {
         slider.integerValue = level
         Self.lastLevel = level
         DispatchQueue.global().async { AndroidRuntime.shared.setMediaVolume(level) }
+    }
+
+    @objc private func presetChosen() {
+        let tag = presets.selectedTag()
+        let choice = tag == Self.offTag ? "off" : tag == Self.customTag ? bands() : "preset \(tag)"
+        apply(choice)
+    }
+
+    @objc private func bandsChanged() { apply(bands()) }
+
+    private func bands() -> String { "bands " + bandSliders.map { String(Int($0.doubleValue)) }.joined(separator: " ") }
+
+    private func apply(_ choice: String) {
+        Self.lastEqualizer = choice
+        show(choice)
+        DispatchQueue.global().async { AndroidRuntime.shared.setEqualizer(choice) }
     }
 }
