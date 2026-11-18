@@ -173,6 +173,11 @@ enum AppShortcuts {
     }
 
     /// The package of an app Inquiline made, or nil for any other.
+    /// The Mac app of an Android app, wherever the user keeps it.
+    static func bundle(of package: String) -> URL? {
+        queue.sync { locate()[package] }
+    }
+
     private static func package(of bundle: URL) -> String? {
         NSDictionary(contentsOf: bundle.appendingPathComponent("Contents/Info.plist"))?[packageKey] as? String
     }
@@ -308,6 +313,7 @@ enum AppShortcuts {
             try files.copyItem(at: frames, to: framesFile)
             try icon.write(to: iconFile)
             try info.write(to: infoFile)
+            try addWidgets(to: contents, identifier: identifier)
         } catch {
             try? files.removeItem(at: bundle)
             return false
@@ -320,7 +326,33 @@ enum AppShortcuts {
         try? codesign.run()
         codesign.waitUntilExit()
         LSRegisterURL(bundle as CFURL, existed)
+        // Its widgets join the Mac's widget gallery.
+        let pluginkit = Process()
+        pluginkit.executableURL = URL(fileURLWithPath: "/usr/bin/pluginkit")
+        pluginkit.arguments = ["-a", contents.appendingPathComponent("PlugIns/Widgets.appex").path]
+        try? pluginkit.run()
+        pluginkit.waitUntilExit()
         return true
+    }
+
+    /// The widget extension (WidgetBridge), named after this app, with its own sandbox: the Mac
+    /// lists an extension's widgets under the app it's in.
+    private static func addWidgets(to contents: URL, identifier: String) throws {
+        guard let template = Bundle.main.url(forResource: "Widgets", withExtension: "appex"),
+              let entitlements = Bundle.main.url(forResource: "widgets", withExtension: "entitlements") else { return }
+        let plugin = contents.appendingPathComponent("PlugIns/Widgets.appex")
+        try FileManager.default.createDirectory(at: plugin.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try FileManager.default.copyItem(at: template, to: plugin)
+        let infoFile = plugin.appendingPathComponent("Contents/Info.plist")
+        guard let info = NSMutableDictionary(contentsOf: infoFile) else { return }
+        info["CFBundleIdentifier"] = identifier + ".widgets"
+        try info.write(to: infoFile)
+        let codesign = Process()
+        codesign.executableURL = URL(fileURLWithPath: "/usr/bin/codesign")
+        codesign.arguments = ["--force", "--sign", "-", "--entitlements", entitlements.path, plugin.path]
+        codesign.standardError = FileHandle.nullDevice
+        try codesign.run()
+        codesign.waitUntilExit()
     }
 
     /// Android icons are drawn on macOS's icon grid: a rounded square of 824 in 1024.

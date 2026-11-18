@@ -38,10 +38,13 @@ public final class Listener extends NotificationListenerService {
 
     private final List<OutputStream> clients = new CopyOnWriteArrayList<>();
     private LocalServerSocket server;
+    /** The widgets placed on the Mac, hosted in this process, which Android keeps running. */
+    private WidgetHost widgets;
 
     @Override
     public void onListenerConnected() {
         if (server != null) return;
+        widgets = new WidgetHost(this, this::send);
         try {
             server = new LocalServerSocket(SOCKET);
         } catch (IOException e) {
@@ -85,6 +88,12 @@ public final class Listener extends NotificationListenerService {
                 try {
                     JSONObject command = new JSONObject(line);
                     if (command.has("reply")) reply(command.getString("reply"), command.getString("text"));
+                    // A widget placed on the Mac, at its size in points, which are dp here.
+                    if (command.has("placeWidget") && widgets != null) {
+                        widgets.place(command.getString("placeWidget"), command.getString("provider"),
+                                command.getInt("width"), command.getInt("height"));
+                    }
+                    if (command.has("removeWidget") && widgets != null) widgets.remove(command.getString("removeWidget"));
                 } catch (org.json.JSONException ignored) {
                 }
             }
