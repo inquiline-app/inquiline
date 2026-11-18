@@ -1,3 +1,4 @@
+import ImageIO
 import SwiftUI
 import WidgetKit
 
@@ -41,8 +42,17 @@ enum Folder {
         return (try? JSONDecoder().decode([ManifestWidget].self, from: data)) ?? []
     }
 
-    static func image(_ name: String) -> NSImage? {
-        widgets.flatMap { NSImage(contentsOf: $0.appendingPathComponent(name)) }
+    /// The picture, no larger than the widget shows it on a Retina screen: the Mac leaves a
+    /// widget blank whose picture has more pixels than the widget.
+    static func image(_ name: String, fitting size: CGSize) -> NSImage? {
+        guard let file = widgets?.appendingPathComponent(name),
+              let source = CGImageSourceCreateWithURL(file as CFURL, nil) else { return nil }
+        let options: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceThumbnailMaxPixelSize: max(1, Int(max(size.width, size.height) * 2)),
+        ]
+        guard let image = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else { return nil }
+        return NSImage(cgImage: image, size: NSSize(width: image.width, height: image.height))
     }
 }
 
@@ -77,8 +87,9 @@ struct Provider: TimelineProvider {
     let kind: String
 
     private func entry(_ context: Context, live: Bool) -> Entry {
-        let drawn = live ? Folder.image("\(kind)-\(context.family.name).png") : nil
-        return Entry(date: .now, image: drawn ?? Folder.image("\(kind)-preview.png"))
+        let size = context.displaySize
+        let drawn = live ? Folder.image("\(kind)-\(context.family.name).png", fitting: size) : nil
+        return Entry(date: .now, image: drawn ?? Folder.image("\(kind)-preview.png", fitting: size))
     }
 
     func placeholder(in context: Context) -> Entry { entry(context, live: false) }

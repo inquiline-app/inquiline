@@ -39,8 +39,10 @@ final class WidgetBridge {
     // MARK: - Manifests
 
     /// Writes each app's widget manifest and previews, when the app is new or changed. Call off
-    /// the main thread, with the installed apps and their versions.
-    func updateManifests(packages: [String], versions: [String: String]) {
+    /// the main thread, with the installed apps and their versions. Returns whether any changed.
+    @discardableResult
+    func updateManifests(packages: [String], versions: [String: String]) -> Bool {
+        var changed = false
         let files = FileManager.default
         try? files.createDirectory(at: folder, withIntermediateDirectories: true)
         for package in packages where package.range(of: "^[A-Za-z0-9_.]+$", options: .regularExpression) != nil {
@@ -67,11 +69,13 @@ final class WidgetBridge {
             guard let data = try? JSONSerialization.data(withJSONObject: manifest) else { continue }
             try? data.write(to: app.appendingPathComponent("manifest.json"), options: .atomic)
             try? version.write(to: source, atomically: true, encoding: .utf8)
+            changed = true
         }
         // An app Android no longer has takes its widgets with it.
         for gone in (try? files.contentsOfDirectory(atPath: folder.path)) ?? [] where !packages.contains(gone) {
             try? files.removeItem(at: folder.appendingPathComponent(gone))
         }
+        return changed
     }
 
     /// The Mac sizes in a phone's home screen cells, as a 4-column launcher lays widgets out:
