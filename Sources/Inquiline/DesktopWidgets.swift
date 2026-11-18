@@ -249,9 +249,6 @@ private final class WidgetView: NSView {
         didSet { layer?.contents = picture?.cgImage(forProposedRect: nil, context: nil, hints: nil) }
     }
 
-    /// How near an edge a press resizes rather than moves or taps.
-    private static let edge: CGFloat = 6
-
     private enum Gesture { case pending, moving, resizing(left: Bool, right: Bool, bottom: Bool, top: Bool) }
 
     /// Showing its frame and handles, as a long press does on a phone, until a click elsewhere.
@@ -280,6 +277,7 @@ private final class WidgetView: NSView {
                 escape = nil
             }
             window?.invalidateCursorRects(for: self)
+            if !framed { NSCursor.arrow.set() }
         }
     }
     private var outside: Any?
@@ -309,12 +307,12 @@ private final class WidgetView: NSView {
         guard framed, let widget = owner?.widget(key) else { return }
         // A rounded frame in the accent, with a round handle on each side it resizes along.
         let path = CGMutablePath()
-        path.addRoundedRect(in: bounds.insetBy(dx: 2, dy: 2), cornerWidth: 12, cornerHeight: 12)
+        path.addRoundedRect(in: bounds.insetBy(dx: 9, dy: 9), cornerWidth: 12, cornerHeight: 12)
         var handles: [CGPoint] = []
-        if widget.resizeMode & 1 != 0 { handles += [CGPoint(x: 2, y: bounds.midY), CGPoint(x: bounds.maxX - 2, y: bounds.midY)] }
-        if widget.resizeMode & 2 != 0 { handles += [CGPoint(x: bounds.midX, y: 2), CGPoint(x: bounds.midX, y: bounds.maxY - 2)] }
+        if widget.resizeMode & 1 != 0 { handles += [CGPoint(x: 9, y: bounds.midY), CGPoint(x: bounds.maxX - 9, y: bounds.midY)] }
+        if widget.resizeMode & 2 != 0 { handles += [CGPoint(x: bounds.midX, y: 9), CGPoint(x: bounds.midX, y: bounds.maxY - 9)] }
         let dots = CGMutablePath()
-        for handle in handles { dots.addEllipse(in: CGRect(x: handle.x - 5, y: handle.y - 5, width: 10, height: 10)) }
+        for handle in handles { dots.addEllipse(in: CGRect(x: handle.x - 7, y: handle.y - 7, width: 14, height: 14)) }
         frameLayer.frame = bounds
         frameLayer.path = path
         frameLayer.lineWidth = 2
@@ -325,8 +323,8 @@ private final class WidgetView: NSView {
             return layer
         }()
         dotLayer.path = dots
-        dotLayer.fillColor = NSColor.white.cgColor
-        dotLayer.strokeColor = NSColor.controlAccentColor.cgColor
+        dotLayer.fillColor = NSColor.controlAccentColor.cgColor
+        dotLayer.strokeColor = NSColor.white.cgColor
         dotLayer.lineWidth = 2
     }
 
@@ -369,15 +367,17 @@ private final class WidgetView: NSView {
 
     private func edges(at point: CGPoint) -> (left: Bool, right: Bool, bottom: Bool, top: Bool) {
         guard let widget = owner?.widget(key) else { return (false, false, false, false) }
+        // Only in its frame, as on a phone only after a long press.
+        guard framed else { return (false, false, false, false) }
         let across = widget.resizeMode & 1 != 0, down = widget.resizeMode & 2 != 0
-        let edge = framed ? 18 : Self.edge
+        let edge: CGFloat = 18
         return (across && point.x < edge, across && point.x > bounds.width - edge,
                 down && point.y < edge, down && point.y > bounds.height - edge)
     }
 
     override func resetCursorRects() {
-        guard let widget = owner?.widget(key) else { return }
-        let edge = framed ? 18 : Self.edge
+        guard framed, let widget = owner?.widget(key) else { return }
+        let edge: CGFloat = 18
         if widget.resizeMode & 1 != 0 {
             addCursorRect(NSRect(x: 0, y: 0, width: edge, height: bounds.height), cursor: .resizeLeftRight)
             addCursorRect(NSRect(x: bounds.width - edge, y: 0, width: edge, height: bounds.height), cursor: .resizeLeftRight)
