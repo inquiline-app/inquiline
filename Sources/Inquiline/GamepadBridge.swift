@@ -2,10 +2,11 @@ import AppKit
 import GameController
 import IOKit.hid
 
-/// Game controllers connected to the Mac reach the Android app as they are: each one's own
-/// reports, with its own name and ids, as if paired with the phone, so Android's own drivers
-/// and layouts know it, the Mac's or not (RawPads). One the Mac can't hand over that way
-/// reaches it as an Xbox 360 pad, made from what the Mac makes of it. As a keyboard does,
+/// Game controllers connected to the Mac reach the Android app as Xbox 360 pads plugged
+/// into it, made from what the Mac makes of them. One the Mac's game controller support
+/// doesn't know (not Xbox, PlayStation, Switch or MFi) reaches it as it is, its own reports
+/// under its own name and ids, as if paired with the phone, so Android's own drivers and
+/// layouts know it (RawPads). As a keyboard does,
 /// they stay plugged in while the app runs and drive the app in front: when another app is,
 /// this one sees them at rest, with nothing pressed.
 ///
@@ -54,20 +55,20 @@ final class GamepadBridge {
     /// Called again when the controls change, as they decide who gets the controller.
     func update() {
         let usesPad = controls?.set.usesPad == true
-        // Handed over as they are, while the game takes controllers: then none is made up.
-        let rawPads = !usesPad && raw?.hasPads == true
-        raw?.forwarding = rawPads && NSApp.isActive
-        raw?.plugged = rawPads
         let wanted = GCController.controllers().filter { $0.extendedGamepad != nil }
+        // Those the Mac doesn't know go as they are, while the game takes controllers. The Mac
+        // lists controllers to the app in front, so only it decides which those are.
+        if NSApp.isActive { raw?.sync(plug: !usesPad, known: Set(wanted.compactMap(\.vendorName))) }
+        raw?.forwarding = NSApp.isActive
         let wantedKeys = Set(wanted.map(ObjectIdentifier.init))
-        for (key, id) in plugged where !wantedKeys.contains(key) || usesPad || rawPads {
+        for (key, id) in plugged where !wantedKeys.contains(key) || usesPad {
             session.sendHIDClose(id: id)
             plugged[key] = nil
         }
         for controller in wanted {
             let key = ObjectIdentifier(controller)
             guard let pad = controller.extendedGamepad else { continue }
-            if !usesPad, !rawPads, plugged[key] == nil,
+            if !usesPad, plugged[key] == nil,
                let id = (3...10).map(UInt16.init).first(where: { !plugged.values.contains($0) }) {
                 plugged[key] = id
                 session.sendHIDOpen(id: id, vendor: 0x045E, product: 0x028E, name: "Microsoft X-Box 360 Pad",
@@ -178,8 +179,8 @@ final class GamepadBridge {
     }
 }
 
-/// The controllers the Mac sees, read as their own reports (IOKit's HID manager) and handed to
-/// Android unchanged, under their own name and vendor and product ids: Android's kernel and its
+/// The controllers the Mac's game controller support doesn't know, read as their own reports
+/// (IOKit's HID manager) and handed to Android unchanged, under their own name and vendor and product ids: Android's kernel and its
 /// controller layouts then know each one as when it's paired with a phone. Reports pass only
 /// while the app is in front, as the Mac's other controls do.
 private final class RawPads {
@@ -216,13 +217,21 @@ private final class RawPads {
         deinit { buffer.deallocate() }
     }
 
-    /// Whether the game sees them: plugged into Android, each under an HID id of its own.
-    var plugged = false {
-        didSet { if plugged != oldValue { pads.values.forEach(plugged ? plug : unplug) } }
-    }
+    /// Whether the game takes controllers, and the names of those the Mac knows.
+    private var plugging = false
+    private var known: Set<String> = []
     /// Whether their reports pass now.
     var forwarding = false
-    var hasPads: Bool { !pads.isEmpty }
+
+    /// Plugs into Android, each under an HID id of its own, those the Mac doesn't know; one it
+    /// comes to know goes the Mac's way instead.
+    func sync(plug: Bool, known: Set<String>) {
+        plugging = plug
+        self.known = known
+        for pad in pads.values { wanted(pad) ? self.plug(pad) : unplug(pad) }
+    }
+
+    private func wanted(_ pad: Pad) -> Bool { plugging && !known.contains(pad.name) }
 
     init(session: ScrcpySession, changed: @escaping () -> Void) {
         self.session = session
@@ -246,7 +255,7 @@ private final class RawPads {
     }
 
     func stop() {
-        plugged = false
+        pads.values.forEach(unplug)
         IOHIDManagerUnscheduleFromRunLoop(manager, CFRunLoopGetMain(), CFRunLoopMode.defaultMode.rawValue)
         IOHIDManagerClose(manager, IOOptionBits(kIOHIDOptionsTypeNone))
         pads = [:]
@@ -261,7 +270,7 @@ private final class RawPads {
             let pads = Unmanaged<RawPads>.fromOpaque(context).takeUnretainedValue()
             pads.report(from: Unmanaged<IOHIDDevice>.fromOpaque(sender).takeUnretainedValue(), Array(UnsafeBufferPointer(start: report, count: length)))
         }, me)
-        if plugged { plug(pad) }
+        if wanted(pad) { plug(pad) }
         changed()
     }
 
