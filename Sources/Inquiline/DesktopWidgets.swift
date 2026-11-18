@@ -120,8 +120,10 @@ final class DesktopWidgets {
 
     /// A tap that opens the widget's app: its window opens, and the tap's action runs in it.
     func open(key: String, package: String) {
-        NotificationBridge.shared.openWindow(package: package) { [weak self] display in
-            self?.send?(["launchWidget": key, "display": display])
+        guard key.range(of: "^[A-F0-9-]+$", options: .regularExpression) != nil else { return }
+        NotificationBridge.shared.openWindow(package: package) { display in
+            // Root, as only the helper itself may start its screen.
+            _ = try? AdbClient.shell("su 0 am start --display \(display) -n \(NotificationBridge.agent)/.Launch --es key \(key)")
         }
     }
 

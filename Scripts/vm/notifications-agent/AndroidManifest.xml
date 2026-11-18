@@ -2,8 +2,8 @@
 <!-- Hands Android's notifications to Inquiline, which shows them in the Mac's Notification Center. -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="io.github.inquiline.notifications"
-    android:versionCode="38"
-    android:versionName="38">
+    android:versionCode="39"
+    android:versionName="39">
     <uses-sdk android:minSdkVersion="35" android:targetSdkVersion="35" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SYSTEM_EXEMPTED" />
@@ -13,6 +13,13 @@
     <!-- To tell which app owns a connection the ad blocker sees, by name. -->
     <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
     <application android:label="Mac Notifications" android:hasCode="true" android:allowBackup="false">
+        <activity
+            android:name=".Launch"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:taskAffinity=""
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
         <service
             android:name=".Listener"
             android:label="Mac Notifications"

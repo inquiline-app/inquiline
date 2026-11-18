@@ -47,8 +47,8 @@ import java.util.Map;
  * the Mac shows the last picture meanwhile.
  *
  * What a tap starts in the widget's own app (a mail, the app itself) opens in that app's Mac
- * window, as from a notification: the helper tells Inquiline, which opens the window and says
- * its display, and the app's own action runs there. Taps that work in place (play, a checkbox,
+ * window, as from a notification: the helper tells Inquiline, which opens the window and starts
+ * Launch on its display, from where the app's own action runs there. Taps that work in place (play, a checkbox,
  * refresh) run at once. Reaching the tap's action takes two members Android keeps for its own
  * launchers, which Inquiline lets the helper use (hidden_api_blacklist_exemptions).
  *
@@ -92,6 +92,8 @@ final class WidgetHost {
     private final Map<String, Intent> openingFill = Collections.synchronizedMap(new HashMap<>());
     /** Android's screen, which the widgets' own follow; on the main thread. */
     private boolean screenOn;
+    /** The host, for Launch, which runs in the same process. */
+    static volatile WidgetHost current;
 
     WidgetHost(Context context, Sink sink) {
         this.context = context;
@@ -130,6 +132,7 @@ final class WidgetHost {
         // What a previous run bound is let go: Inquiline places what the Mac shows again.
         host.deleteHost();
         host.startListening();
+        current = this;
     }
 
     /** Shows the provider's widget at this size in dp, under the Mac's key for it. */
@@ -241,7 +244,7 @@ final class WidgetHost {
         });
     }
 
-    /** The display of the app's Mac window, for a tap that opens it: its action runs there. */
+    /** From Launch, on the display of the app's Mac window: the tap's action runs there. */
     void launch(String key, int display) {
         PendingIntent action = opening.remove(key);
         Intent fill = openingFill.remove(key);

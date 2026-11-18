@@ -1360,11 +1360,14 @@ private final class SectionToggle: NSObject {
     }
 }
 
-/// One of the app's widgets in its settings: its picture and name; ticked while on the desktop.
+/// One of the app's widgets in its settings, as a phone's widget picker shows it: its picture,
+/// whatever its shape, fitted in a tile of the same size as the others, its name below. On the
+/// desktop, the tile has the accent's ring and a tick, as a chosen item on the Mac.
 private final class WidgetTile: NSView {
     private let provider: String
     private let package: String
     private var key: String?
+    private let well = NSView()
     private let tick = NSImageView()
 
     init(provider: String, label: String, preview: NSImage?, key: String?, package: String) {
@@ -1372,38 +1375,63 @@ private final class WidgetTile: NSView {
         self.package = package
         self.key = key
         super.init(frame: .zero)
+        well.wantsLayer = true
+        well.layer?.cornerRadius = 10
+        well.layer?.cornerCurve = .continuous
         let picture = NSImageView()
         picture.image = preview ?? NSImage(systemSymbolName: "square.dashed", accessibilityDescription: nil)
-        picture.imageScaling = .scaleProportionallyUpOrDown
-        let name = NSTextField(wrappingLabelWithString: label)
+        picture.imageScaling = .scaleProportionallyDown
+        let name = NSTextField(labelWithString: label)
         name.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
         name.alignment = .center
-        name.maximumNumberOfLines = 2
+        name.lineBreakMode = .byTruncatingTail
+        name.toolTip = label
         tick.image = NSImage(systemSymbolName: "checkmark.circle.fill", accessibilityDescription: "On the Desktop")
         tick.contentTintColor = .controlAccentColor
-        tick.symbolConfiguration = .init(pointSize: 16, weight: .regular)
-        for view in [picture, name, tick] {
+        tick.symbolConfiguration = .init(pointSize: 13, weight: .semibold)
+        for view in [well, name] {
             view.translatesAutoresizingMaskIntoConstraints = false
             addSubview(view)
         }
+        for view in [picture, tick] {
+            view.translatesAutoresizingMaskIntoConstraints = false
+            well.addSubview(view)
+        }
         NSLayoutConstraint.activate([
-            widthAnchor.constraint(equalToConstant: 111),
-            picture.topAnchor.constraint(equalTo: topAnchor),
-            picture.leadingAnchor.constraint(equalTo: leadingAnchor),
-            picture.trailingAnchor.constraint(equalTo: trailingAnchor),
-            picture.heightAnchor.constraint(equalToConstant: 72),
-            name.topAnchor.constraint(equalTo: picture.bottomAnchor, constant: 4),
+            widthAnchor.constraint(equalToConstant: 106),
+            well.topAnchor.constraint(equalTo: topAnchor),
+            well.leadingAnchor.constraint(equalTo: leadingAnchor),
+            well.trailingAnchor.constraint(equalTo: trailingAnchor),
+            well.heightAnchor.constraint(equalToConstant: 72),
+            picture.topAnchor.constraint(equalTo: well.topAnchor, constant: 10),
+            picture.bottomAnchor.constraint(equalTo: well.bottomAnchor, constant: -10),
+            picture.leadingAnchor.constraint(equalTo: well.leadingAnchor, constant: 10),
+            picture.trailingAnchor.constraint(equalTo: well.trailingAnchor, constant: -10),
+            tick.topAnchor.constraint(equalTo: well.topAnchor, constant: 5),
+            tick.trailingAnchor.constraint(equalTo: well.trailingAnchor, constant: -5),
+            name.topAnchor.constraint(equalTo: well.bottomAnchor, constant: 5),
             name.leadingAnchor.constraint(equalTo: leadingAnchor),
             name.trailingAnchor.constraint(equalTo: trailingAnchor),
             name.bottomAnchor.constraint(equalTo: bottomAnchor),
-            tick.topAnchor.constraint(equalTo: topAnchor, constant: 2),
-            tick.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -2),
         ])
-        tick.isHidden = key == nil
-        toolTip = key == nil ? "Add to the Desktop" : "Remove from the Desktop"
+        showState()
     }
 
     required init?(coder: NSCoder) { fatalError() }
+
+    private func showState() {
+        let on = key != nil
+        tick.isHidden = !on
+        well.layer?.backgroundColor = NSColor.quaternarySystemFill.cgColor
+        well.layer?.borderWidth = on ? 2 : 0
+        well.layer?.borderColor = NSColor.controlAccentColor.cgColor
+        toolTip = on ? "Remove from the Desktop" : "Add to the Desktop"
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        effectiveAppearance.performAsCurrentDrawingAppearance { showState() }
+    }
 
     override func mouseUp(with event: NSEvent) {
         guard bounds.contains(convert(event.locationInWindow, from: nil)) else { return }
@@ -1420,8 +1448,7 @@ private final class WidgetTile: NSView {
             // Inquiline gives it its key; until the settings open again, any marks it as there.
             self.key = ""
         }
-        tick.isHidden = key == nil
-        toolTip = key == nil ? "Add to the Desktop" : "Remove from the Desktop"
+        showState()
         guard let url = components.url else { return }
         let configuration = NSWorkspace.OpenConfiguration()
         configuration.activates = false

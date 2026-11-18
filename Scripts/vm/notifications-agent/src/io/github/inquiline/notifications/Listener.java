@@ -110,9 +110,7 @@ public final class Listener extends NotificationListenerService {
                         widgets.scroll(command.getString("scrollWidget"), (float) command.getDouble("x"),
                                 (float) command.getDouble("y"), (float) command.getDouble("lines"));
                     }
-                    if (command.has("launchWidget")) {
-                        widgets.launch(command.getString("launchWidget"), command.getInt("display"));
-                    }
+
                 } catch (org.json.JSONException ignored) {
                 }
             }
