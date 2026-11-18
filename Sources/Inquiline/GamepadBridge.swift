@@ -196,6 +196,9 @@ private final class RawPads {
         let buffer: UnsafeMutablePointer<UInt8>
         let size: Int
         var id: UInt16?
+        /// The last report of each report ID sent: a controller at rest repeats its report
+        /// many times a second, which tells Android nothing new.
+        var last: [UInt8: [UInt8]] = [:]
 
         init?(_ device: IOHIDDevice) {
             func number(_ key: String) -> Int { (IOHIDDeviceGetProperty(device, key as CFString) as? NSNumber)?.intValue ?? 0 }
@@ -269,7 +272,9 @@ private final class RawPads {
     }
 
     private func report(from device: IOHIDDevice, _ bytes: [UInt8]) {
-        guard forwarding, let pad = pads[device], let id = pad.id else { return }
+        guard forwarding, let pad = pads[device], let id = pad.id, let first = bytes.first else { return }
+        guard pad.last[first] != bytes else { return }
+        pad.last[first] = bytes
         // The report ID, where the controller uses them, leads the report as Android expects.
         session.sendHIDInput(id: id, report: bytes)
     }
@@ -280,12 +285,14 @@ private final class RawPads {
         // scrcpy keeps 1 and 2 for a keyboard and mouse; the made-up pads use 3 to 10.
         guard let id = (11...20).map(UInt16.init).first(where: { !used.contains($0) }) else { return }
         pad.id = id
+        pad.last = [:]
         session.sendHIDOpen(id: id, vendor: pad.vendor, product: pad.product, name: pad.name, descriptor: pad.descriptor)
     }
 
     private func unplug(_ pad: Pad) {
         guard let id = pad.id else { return }
         pad.id = nil
+        pad.last = [:]
         session.sendHIDClose(id: id)
     }
 }
