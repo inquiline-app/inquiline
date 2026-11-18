@@ -77,10 +77,15 @@ final class DesktopWidgets {
                              height: max(number("minResizeHeight") > 0 ? number("minResizeHeight") : number("minHeight"), 40))
         let maximum = CGSize(width: number("maxResizeWidth") > 0 ? number("maxResizeWidth") : 1000,
                              height: number("maxResizeHeight") > 0 ? number("maxResizeHeight") : 1000)
-        // Its size on a phone: the cells it asks for, or its smallest.
-        func size(cells: Double, smallest: Double) -> Double { cells > 0 ? max(smallest, cells * 90 - 10) : smallest }
-        let width = min(max(size(cells: number("targetCellWidth"), smallest: number("minWidth")), minimum.width), maximum.width)
-        let height = min(max(size(cells: number("targetCellHeight"), smallest: number("minHeight")), minimum.height), maximum.height)
+        // Its size on a phone's home screen: the cells it asks for, or as many as its smallest
+        // size takes, each a phone's cell of about 96 by 112 dp, less the space between them.
+        func cells(_ asked: Double, smallest: Double, cell: Double) -> Double {
+            asked > 0 ? asked : max(1, ((smallest + 8) / cell).rounded(.up))
+        }
+        let across = cells(number("targetCellWidth"), smallest: number("minWidth"), cell: 96)
+        let down = cells(number("targetCellHeight"), smallest: number("minHeight"), cell: 112)
+        let width = min(max(across * 96 - 8, number("minWidth"), minimum.width), maximum.width)
+        let height = min(max(down * 112 - 8, number("minHeight"), minimum.height), maximum.height)
         let label = info["label"] as? String ?? ""
         let widget = Widget(key: UUID().uuidString, package: package, provider: provider, label: label,
                             frame: freePlace(for: CGSize(width: width.rounded(), height: height.rounded())),
@@ -232,6 +237,32 @@ private final class WidgetView: NSView {
     private static let edge: CGFloat = 6
 
     private enum Gesture { case pending, moving, resizing(left: Bool, right: Bool, bottom: Bool, top: Bool) }
+
+    /// Showing its frame and handles, as a long press does on a phone, until a click elsewhere.
+    private var framed = false {
+        didSet {
+            frameLayer.isHidden = !framed
+            needsLayout = true
+            if framed {
+                outside = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .keyDown]) { [weak self] _ in
+                    self?.framed = false
+                }
+                escape = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+                    if event.keyCode == 53 { self?.framed = false; return nil }
+                    return event
+                }
+            } else {
+                outside.map(NSEvent.removeMonitor)
+                escape.map(NSEvent.removeMonitor)
+                outside = nil
+                escape = nil
+            }
+            window?.invalidateCursorRects(for: self)
+        }
+    }
+    private var outside: Any?
+    private var escape: Any?
+    private let frameLayer = CAShapeLayer()
     private var gesture: Gesture?
     private var start = CGPoint.zero
     private var startFrame = CGRect.zero
@@ -242,6 +273,35 @@ private final class WidgetView: NSView {
         super.init(frame: .zero)
         wantsLayer = true
         layer?.contentsGravity = .resize
+        frameLayer.fillColor = nil
+        frameLayer.isHidden = true
+        layer?.addSublayer(frameLayer)
+    }
+
+    override func layout() {
+        super.layout()
+        guard framed, let widget = owner?.widget(key) else { return }
+        // A rounded frame in the accent, with a round handle on each side it resizes along.
+        let path = CGMutablePath()
+        path.addRoundedRect(in: bounds.insetBy(dx: 2, dy: 2), cornerWidth: 12, cornerHeight: 12)
+        var handles: [CGPoint] = []
+        if widget.resizeMode & 1 != 0 { handles += [CGPoint(x: 2, y: bounds.midY), CGPoint(x: bounds.maxX - 2, y: bounds.midY)] }
+        if widget.resizeMode & 2 != 0 { handles += [CGPoint(x: bounds.midX, y: 2), CGPoint(x: bounds.midX, y: bounds.maxY - 2)] }
+        let dots = CGMutablePath()
+        for handle in handles { dots.addEllipse(in: CGRect(x: handle.x - 5, y: handle.y - 5, width: 10, height: 10)) }
+        frameLayer.frame = bounds
+        frameLayer.path = path
+        frameLayer.lineWidth = 2
+        frameLayer.strokeColor = NSColor.controlAccentColor.cgColor
+        let dotLayer = (frameLayer.sublayers?.first as? CAShapeLayer) ?? {
+            let layer = CAShapeLayer()
+            frameLayer.addSublayer(layer)
+            return layer
+        }()
+        dotLayer.path = dots
+        dotLayer.fillColor = NSColor.white.cgColor
+        dotLayer.strokeColor = NSColor.controlAccentColor.cgColor
+        dotLayer.lineWidth = 2
     }
 
     required init?(coder: NSCoder) { fatalError() }
@@ -257,19 +317,21 @@ private final class WidgetView: NSView {
     private func edges(at point: CGPoint) -> (left: Bool, right: Bool, bottom: Bool, top: Bool) {
         guard let widget = owner?.widget(key) else { return (false, false, false, false) }
         let across = widget.resizeMode & 1 != 0, down = widget.resizeMode & 2 != 0
-        return (across && point.x < Self.edge, across && point.x > bounds.width - Self.edge,
-                down && point.y < Self.edge, down && point.y > bounds.height - Self.edge)
+        let edge = framed ? 14 : Self.edge
+        return (across && point.x < edge, across && point.x > bounds.width - edge,
+                down && point.y < edge, down && point.y > bounds.height - edge)
     }
 
     override func resetCursorRects() {
         guard let widget = owner?.widget(key) else { return }
+        let edge = framed ? 14 : Self.edge
         if widget.resizeMode & 1 != 0 {
-            addCursorRect(NSRect(x: 0, y: 0, width: Self.edge, height: bounds.height), cursor: .resizeLeftRight)
-            addCursorRect(NSRect(x: bounds.width - Self.edge, y: 0, width: Self.edge, height: bounds.height), cursor: .resizeLeftRight)
+            addCursorRect(NSRect(x: 0, y: 0, width: edge, height: bounds.height), cursor: .resizeLeftRight)
+            addCursorRect(NSRect(x: bounds.width - edge, y: 0, width: edge, height: bounds.height), cursor: .resizeLeftRight)
         }
         if widget.resizeMode & 2 != 0 {
-            addCursorRect(NSRect(x: 0, y: 0, width: bounds.width, height: Self.edge), cursor: .resizeUpDown)
-            addCursorRect(NSRect(x: 0, y: bounds.height - Self.edge, width: bounds.width, height: Self.edge), cursor: .resizeUpDown)
+            addCursorRect(NSRect(x: 0, y: 0, width: bounds.width, height: edge), cursor: .resizeUpDown)
+            addCursorRect(NSRect(x: 0, y: bounds.height - edge, width: bounds.width, height: edge), cursor: .resizeUpDown)
         }
     }
 
@@ -321,6 +383,8 @@ private final class WidgetView: NSView {
         guard let window, let gesture else { return }
         self.gesture = nil
         switch gesture {
+        case .pending where framed:
+            framed = false
         case .pending:
             let point = androidPoint(event)
             owner?.touch(key, "down", at: point)
@@ -345,6 +409,9 @@ private final class WidgetView: NSView {
         let appName = AppShortcuts.bundle(of: widget.package).map { FileManager.default.displayName(atPath: $0.path) }
             .map { ($0 as NSString).deletingPathExtension } ?? widget.label
         menu.addItem(withTitle: "Open \(appName)", action: #selector(openApp), keyEquivalent: "").target = self
+        if widget.resizeMode & 3 != 0 {
+            menu.addItem(withTitle: "Resize Widget", action: #selector(resizeWidget), keyEquivalent: "").target = self
+        }
         menu.addItem(.separator())
         menu.addItem(withTitle: "Remove Widget", action: #selector(removeWidget), keyEquivalent: "").target = self
         NSMenu.popUpContextMenu(menu, with: event, for: self)
@@ -352,4 +419,5 @@ private final class WidgetView: NSView {
 
     @objc private func openApp() { owner?.openApp(key) }
     @objc private func removeWidget() { owner?.remove(key: key) }
+    @objc private func resizeWidget() { framed = true }
 }
