@@ -1,0 +1,69 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 880 400" width="880" height="400" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif">
+  <style>
+    .bg { fill: #ffffff; }
+    .box { fill: #f6f8fa; stroke: #d0d7de; }
+    .inner { fill: #ffffff; stroke: #d0d7de; }
+    .accent { fill: #ddf4ff; stroke: #54aeff; }
+    .android { fill: #dafbe1; stroke: #4ac26b; }
+    .title { fill: #1f2328; font-size: 15px; font-weight: 600; }
+    .text { fill: #1f2328; font-size: 13px; }
+    .muted { fill: #59636e; font-size: 12px; }
+    .line { stroke: #8c959f; stroke-width: 1.5; fill: none; }
+    .arrow { fill: #8c959f; }
+    @media (prefers-color-scheme: dark) {
+      .bg { fill: #0d1117; }
+      .box { fill: #151b23; stroke: #3d444d; }
+      .inner { fill: #0d1117; stroke: #3d444d; }
+      .accent { fill: #0c2d4b; stroke: #1f6feb; }
+      .android { fill: #0f2f1a; stroke: #2ea043; }
+      .title, .text { fill: #f0f6fc; }
+      .muted { fill: #9198a1; }
+      .line { stroke: #656c76; }
+      .arrow { fill: #656c76; }
+    }
+  </style>
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path class="arrow" d="M0,0 L10,5 L0,10 z"/>
+    </marker>
+  </defs>
+  <rect class="bg" x="0" y="0" width="880" height="400" rx="12"/>
+
+  <!-- The Mac -->
+  <rect class="box" x="20" y="20" width="840" height="360" rx="12"/>
+  <text class="title" x="40" y="50">Your Mac</text>
+
+  <!-- App windows -->
+  <rect class="inner" x="40" y="70" width="250" height="290" rx="10"/>
+  <text class="title" x="60" y="98">Each app, a Mac app</text>
+  <rect class="accent" x="60" y="114" width="210" height="34" rx="7"/>
+  <text class="text" x="74" y="136">Its own window and Dock icon</text>
+  <rect class="accent" x="60" y="158" width="210" height="34" rx="7"/>
+  <text class="text" x="74" y="180">Launchpad, Spotlight, Finder</text>
+  <rect class="accent" x="60" y="202" width="210" height="34" rx="7"/>
+  <text class="text" x="74" y="224">Notification Center</text>
+  <rect class="accent" x="60" y="246" width="210" height="34" rx="7"/>
+  <text class="text" x="74" y="268">Keyboard, mouse, controllers</text>
+  <rect class="accent" x="60" y="290" width="210" height="34" rx="7"/>
+  <text class="text" x="74" y="312">Sound, copy and paste</text>
+
+  <!-- Arrows between -->
+  <path class="line" d="M300 150 H 420" marker-end="url(#a)"/>
+  <text class="muted" x="312" y="140">touch, keys, files</text>
+  <path class="line" d="M420 250 H 300" marker-end="url(#a)"/>
+  <text class="muted" x="312" y="240">each frame, as drawn</text>
+  <text class="muted" x="312" y="272">sound, notifications</text>
+
+  <!-- The VM -->
+  <rect class="inner" x="430" y="70" width="410" height="290" rx="10"/>
+  <text class="title" x="450" y="98">A small virtual machine</text>
+  <text class="muted" x="450" y="118">Apple's Hypervisor framework, on your Mac's own CPU</text>
+  <rect class="android" x="450" y="134" width="370" height="94" rx="8"/>
+  <text class="title" x="468" y="162">Android 15</text>
+  <text class="text" x="468" y="186">Your apps, unchanged: APKs or Google Play</text>
+  <text class="muted" x="468" y="208">Arm apps run natively, without translation</text>
+  <rect class="accent" x="450" y="244" width="370" height="96" rx="8"/>
+  <text class="title" x="468" y="272">Graphics on your Mac's GPU</text>
+  <text class="text" x="468" y="296">Vulkan 1.3 and OpenGL ES 3.2</text>
+  <text class="muted" x="468" y="318">through gfxstream, MoltenVK and Metal</text>
+</svg>
