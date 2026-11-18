@@ -125,18 +125,21 @@ struct Provider: TimelineProvider {
 
 struct AndroidWidgetView: View {
     let entry: Entry
+    @Environment(\.widgetRenderingMode) private var mode
 
     var body: some View {
         // Android's widget, its empty edges already trimmed, fitted to the box with the Mac's own
         // margins and background, as the Mac's widgets have them.
         Group {
             if let image = entry.image {
-                // With a window in front the Mac draws desktop widgets faded; a picture fades to
-                // grey as the Mac's own photo widgets do, instead of turning into a grey block.
-                if #available(macOS 15, *) {
-                    Image(nsImage: image).resizable().interpolation(.high).widgetAccentedRenderingMode(.desaturated).scaledToFit()
+                let picture = Image(nsImage: image).resizable().interpolation(.high).scaledToFit()
+                if mode == .vibrant {
+                    // With a window in front the Mac draws desktop widgets faded, from their
+                    // shapes alone: a picture would be a grey block. Its brightness becomes its
+                    // shape, so it shows faded, light parts light.
+                    picture.luminanceToAlpha()
                 } else {
-                    Image(nsImage: image).resizable().interpolation(.high).scaledToFit()
+                    picture
                 }
             } else {
                 Image(systemName: "square.dashed").font(.largeTitle).foregroundStyle(.secondary)
