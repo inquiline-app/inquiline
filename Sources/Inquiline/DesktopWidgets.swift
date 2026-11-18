@@ -31,6 +31,8 @@ final class DesktopWidgets {
 
     private var widgets: [Widget] = []
     private var windows: [String: WidgetWindow] = [:]
+    /// Resized by the user: the next picture shows how much of the box the widget fills.
+    private var fitting: Set<String> = []
 
     static var folder: URL {
         AndroidRuntime.shared.home.appendingPathComponent("desktop-widgets")
@@ -135,6 +137,7 @@ final class DesktopWidgets {
             return
         }
         window.widgetView.picture = NSImage(data: png)
+        if fitting.contains(key), fit(key, png: png) { fitting.remove(key) }
         let file = Self.folder.appendingPathComponent("\(key).png")
         DispatchQueue.global(qos: .utility).async { try? png.write(to: file) }
     }
@@ -195,14 +198,62 @@ final class DesktopWidgets {
     fileprivate func widget(_ key: String) -> Widget? { widgets.first { $0.key == key } }
 
     /// Moved or resized: kept, and a new size laid out again by Android.
-    fileprivate func changed(_ key: String, frame: CGRect) {
+    fileprivate func changed(_ key: String, frame: CGRect, byUser: Bool = true) {
         guard let index = widgets.firstIndex(where: { $0.key == key }) else { return }
         let resized = widgets[index].frame.size != frame.size
         widgets[index].frame = frame
         save()
         if resized {
+            if byUser { fitting.insert(key) }
             send?(["resizeWidget": key, "width": Int(frame.width), "height": Int(frame.height)])
         }
+    }
+
+    /// After the user resized it, once: a widget that doesn't fill its box, as one that keeps
+    /// its own size does, gets its box closed around what it draws, where it is. The few points
+    /// Android leaves around every widget stay; it never goes below its smallest size.
+    /// Whether the picture was of the new size; one drawn before it is passed over.
+    private func fit(_ key: String, png: Data) -> Bool {
+        guard let widget = widget(key), let window = windows[key],
+              let source = CGImageSourceCreateWithData(png as CFData, nil),
+              let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else { return true }
+        guard abs(CGFloat(image.width) - widget.frame.width * 2) <= 2,
+              abs(CGFloat(image.height) - widget.frame.height * 2) <= 2 else { return false }
+        guard let drawn = Self.drawnArea(of: image) else { return true }
+        // The picture is drawn at twice the points.
+        let scale = CGFloat(image.width) / widget.frame.width
+        let keep: CGFloat = 8
+        var left = drawn.minX / scale - keep, right = (CGFloat(image.width) - drawn.maxX) / scale - keep
+        var top = drawn.minY / scale - keep, bottom = (CGFloat(image.height) - drawn.maxY) / scale - keep
+        left = max(left, 0); right = max(right, 0); top = max(top, 0); bottom = max(bottom, 0)
+        var frame = widget.frame
+        let width = max(frame.width - left - right, widget.minSize.width)
+        let height = max(frame.height - top - bottom, widget.minSize.height)
+        guard frame.width - width >= 16 || frame.height - height >= 16 else { return true }
+        frame.origin.x += min(left, frame.width - width)
+        frame.origin.y += min(bottom, frame.height - height)
+        frame.size = CGSize(width: width.rounded(), height: height.rounded())
+        window.setFrame(frame, display: true, animate: true)
+        changed(key, frame: frame, byUser: false)
+        return true
+    }
+
+    /// The part of the picture that isn't clear, in its pixels from the top left.
+    private static func drawnArea(of image: CGImage) -> CGRect? {
+        let width = image.width, height = image.height
+        var pixels = [UInt8](repeating: 0, count: width * height * 4)
+        guard let context = CGContext(data: &pixels, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width * 4,
+                                      space: CGColorSpaceCreateDeviceRGB(),
+                                      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
+        context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+        var minX = width, minY = height, maxX = -1, maxY = -1
+        for y in 0..<height {
+            for x in 0..<width where pixels[(y * width + x) * 4 + 3] > 8 {
+                minX = min(minX, x); maxX = max(maxX, x); minY = min(minY, y); maxY = max(maxY, y)
+            }
+        }
+        guard maxX >= minX, maxY >= minY else { return nil }
+        return CGRect(x: minX, y: minY, width: maxX - minX + 1, height: maxY - minY + 1)
     }
 
     fileprivate func touch(_ key: String, _ action: String, at point: CGPoint) {
