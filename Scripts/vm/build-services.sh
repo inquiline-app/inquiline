@@ -13,7 +13,10 @@
 #     screen shows, as such screens come out black on a phone (DisplayContent.getLayerCaptureArgs);
 #   - recording the whole screen (Gemini Live's screen sharing) records the app's screen
 #     (ContentRecorder), and a recording stays on though the main screen is off
-#     (DisplayManagerService.createVirtualDisplayLocked).
+#     (DisplayManagerService.createVirtualDisplayLocked);
+#   - the assistant's own window (Gemini Live's bar) shows on the screen of the app in use, moved
+#     there each time it shows (VoiceInteractionSessionConnection.showLocked), and outlives that
+#     screen when its window closes (DisplayContent.removeImmediately).
 #
 # Changing services.jar invalidates the image's precompiled code for it and for the system
 # server jars compiled against it, so all of them are compiled again with Android's own dex2oat,

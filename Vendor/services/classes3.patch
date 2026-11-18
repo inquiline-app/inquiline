@@ -1,6 +1,6 @@
-diff -ru orig3/com/android/server/wm/ContentRecorder.smali out-classes3.dex/com/android/server/wm/ContentRecorder.smali
---- orig3/com/android/server/wm/ContentRecorder.smali	2026-11-19 02:16:07
-+++ out-classes3.dex/com/android/server/wm/ContentRecorder.smali	2026-11-19 02:16:07
+diff -ru o3/com/android/server/wm/ContentRecorder.smali out-classes3.dex/com/android/server/wm/ContentRecorder.smali
+--- o3/com/android/server/wm/ContentRecorder.smali	2026-11-19 02:40:28
++++ out-classes3.dex/com/android/server/wm/ContentRecorder.smali	2026-11-19 02:42:07
 @@ -1299,10 +1299,23 @@
  
      move-result v1
@@ -25,9 +25,9 @@ diff -ru orig3/com/android/server/wm/ContentRecorder.smali out-classes3.dex/com/
  
      if-nez v0, :cond_ce
  
-diff -ru orig3/com/android/server/wm/DisplayContent.smali out-classes3.dex/com/android/server/wm/DisplayContent.smali
---- orig3/com/android/server/wm/DisplayContent.smali	2026-11-19 02:16:07
-+++ out-classes3.dex/com/android/server/wm/DisplayContent.smali	2026-11-19 02:16:07
+diff -ru o3/com/android/server/wm/DisplayContent.smali out-classes3.dex/com/android/server/wm/DisplayContent.smali
+--- o3/com/android/server/wm/DisplayContent.smali	2026-11-19 02:40:28
++++ out-classes3.dex/com/android/server/wm/DisplayContent.smali	2026-11-19 02:42:07
 @@ -8922,6 +8922,12 @@
  
      if-nez v0, :cond_c
@@ -41,15 +41,10 @@ diff -ru orig3/com/android/server/wm/DisplayContent.smali out-classes3.dex/com/a
      const/4 p0, 0x0
  
      return-object p0
-@@ -8952,6 +8958,28 @@
+@@ -8957,6 +8963,28 @@
  
-     .line 5210
-     invoke-virtual {v0, v2}, Landroid/window/ScreenCapture$LayerCaptureArgs$Builder;->setSourceCrop(Landroid/graphics/Rect;)Landroid/window/ScreenCapture$CaptureArgs$Builder;
-+
-+    move-result-object v0
-+
-+    check-cast v0, Landroid/window/ScreenCapture$LayerCaptureArgs$Builder;
-+
+     check-cast v0, Landroid/window/ScreenCapture$LayerCaptureArgs$Builder;
+ 
 +    # Inquiline: Inquiline's screens are marked secure, so that apps' secure screens show in their
 +    # windows; the assistant gets the screen anyway unless such a screen shows, as on a phone,
 +    # where those come out black.
@@ -67,12 +62,92 @@ diff -ru orig3/com/android/server/wm/DisplayContent.smali out-classes3.dex/com/a
 +    const/4 v2, 0x1
 +
 +    invoke-virtual {v0, v2}, Landroid/window/ScreenCapture$LayerCaptureArgs$Builder;->setCaptureSecureLayers(Z)Landroid/window/ScreenCapture$CaptureArgs$Builder;
++
++    move-result-object v0
++
++    check-cast v0, Landroid/window/ScreenCapture$LayerCaptureArgs$Builder;
++
+     .line 5212
+     invoke-interface {p1}, Ljava/util/Set;->isEmpty()Z
  
-     move-result-object v0
+@@ -16040,7 +16068,73 @@
+ .end method
  
-diff -ru orig3/com/android/server/wm/RootWindowContainer.smali out-classes3.dex/com/android/server/wm/RootWindowContainer.smali
---- orig3/com/android/server/wm/RootWindowContainer.smali	2026-11-19 02:16:07
-+++ out-classes3.dex/com/android/server/wm/RootWindowContainer.smali	2026-11-19 02:16:07
+ .method public removeImmediately()V
+-    .registers 4
++    .registers 5
++
++    # Inquiline: the assistant's own window, which was moved to an app's screen
++    # (inquilineMoveTokenToAppDisplay), goes to another screen when that one goes, as its window
++    # closes; its session goes on.
++    new-instance v0, Ljava/util/ArrayList;
++
++    iget-object v1, p0, Lcom/android/server/wm/DisplayContent;->mTokenMap:Ljava/util/HashMap;
++
++    invoke-virtual {v1}, Ljava/util/HashMap;->values()Ljava/util/Collection;
++
++    move-result-object v1
++
++    invoke-direct {v0, v1}, Ljava/util/ArrayList;-><init>(Ljava/util/Collection;)V
++
++    invoke-virtual {v0}, Ljava/util/ArrayList;->iterator()Ljava/util/Iterator;
++
++    move-result-object v0
++
++    :inquiline_next
++    invoke-interface {v0}, Ljava/util/Iterator;->hasNext()Z
++
++    move-result v1
++
++    if-eqz v1, :inquiline_done
++
++    invoke-interface {v0}, Ljava/util/Iterator;->next()Ljava/lang/Object;
++
++    move-result-object v1
++
++    check-cast v1, Lcom/android/server/wm/WindowToken;
++
++    iget v2, v1, Lcom/android/server/wm/WindowToken;->windowType:I
++
++    const/16 v3, 0x7ef
++
++    if-ne v2, v3, :inquiline_next
++
++    iget-object v2, p0, Lcom/android/server/wm/WindowContainer;->mWmService:Lcom/android/server/wm/WindowManagerService;
++
++    iget-object v2, v2, Lcom/android/server/wm/WindowManagerService;->mRoot:Lcom/android/server/wm/RootWindowContainer;
++
++    invoke-virtual {v2}, Lcom/android/server/wm/RootWindowContainer;->getInquilineAppDisplayContent()Lcom/android/server/wm/DisplayContent;
++
++    move-result-object v2
++
++    if-eqz v2, :inquiline_main
++
++    if-ne v2, p0, :inquiline_move
++
++    :inquiline_main
++    iget-object v2, p0, Lcom/android/server/wm/WindowContainer;->mWmService:Lcom/android/server/wm/WindowManagerService;
++
++    iget-object v2, v2, Lcom/android/server/wm/WindowManagerService;->mRoot:Lcom/android/server/wm/RootWindowContainer;
++
++    invoke-virtual {v2}, Lcom/android/server/wm/RootWindowContainer;->getDefaultDisplay()Lcom/android/server/wm/DisplayContent;
++
++    move-result-object v2
++
++    if-eq v2, p0, :inquiline_next
++
++    :inquiline_move
++    invoke-virtual {v2, v1}, Lcom/android/server/wm/DisplayContent;->reParentWindowToken(Lcom/android/server/wm/WindowToken;)V
++
++    goto :inquiline_next
++
++    :inquiline_done
+ 
+     const/4 v0, 0x0
+ 
+diff -ru o3/com/android/server/wm/RootWindowContainer.smali out-classes3.dex/com/android/server/wm/RootWindowContainer.smali
+--- o3/com/android/server/wm/RootWindowContainer.smali	2026-11-19 02:40:28
++++ out-classes3.dex/com/android/server/wm/RootWindowContainer.smali	2026-11-19 02:42:07
 @@ -12234,3 +12234,47 @@
      :cond_17
      return-void
@@ -121,9 +196,9 @@ diff -ru orig3/com/android/server/wm/RootWindowContainer.smali out-classes3.dex/
 +
 +    return-object v0
 +.end method
-diff -ru orig3/com/android/server/wm/TaskLaunchParamsModifier.smali out-classes3.dex/com/android/server/wm/TaskLaunchParamsModifier.smali
---- orig3/com/android/server/wm/TaskLaunchParamsModifier.smali	2026-11-19 02:16:07
-+++ out-classes3.dex/com/android/server/wm/TaskLaunchParamsModifier.smali	2026-11-19 02:16:15
+diff -ru o3/com/android/server/wm/TaskLaunchParamsModifier.smali out-classes3.dex/com/android/server/wm/TaskLaunchParamsModifier.smali
+--- o3/com/android/server/wm/TaskLaunchParamsModifier.smali	2026-11-19 02:40:28
++++ out-classes3.dex/com/android/server/wm/TaskLaunchParamsModifier.smali	2026-11-19 02:42:07
 @@ -1838,6 +1838,7 @@
  .method public final getFallbackDisplayAreaForActivity(Lcom/android/server/wm/ActivityRecord;Lcom/android/server/wm/ActivityStarter$Request;)Lcom/android/server/wm/TaskDisplayArea;
      .registers 6
@@ -195,9 +270,71 @@ diff -ru orig3/com/android/server/wm/TaskLaunchParamsModifier.smali out-classes3
  
      const/4 v0, 0x0
  
-diff -ru orig3/com/android/server/wm/WindowManagerService.smali out-classes3.dex/com/android/server/wm/WindowManagerService.smali
---- orig3/com/android/server/wm/WindowManagerService.smali	2026-11-19 02:16:07
-+++ out-classes3.dex/com/android/server/wm/WindowManagerService.smali	2026-11-19 02:16:07
+diff -ru o3/com/android/server/wm/WindowManagerInternal.smali out-classes3.dex/com/android/server/wm/WindowManagerInternal.smali
+--- o3/com/android/server/wm/WindowManagerInternal.smali	2026-11-19 02:40:28
++++ out-classes3.dex/com/android/server/wm/WindowManagerInternal.smali	2026-11-19 02:42:07
+@@ -406,3 +406,10 @@
+ 
+ .method public abstract waitForAllWindowsDrawn(Landroid/os/Message;JI)V
+ .end method
++
++# Inquiline: moves a window token, the assistant's own window's, to the screen of the app in use.
++.method public inquilineMoveTokenToAppDisplay(Landroid/os/IBinder;)V
++    .registers 2
++
++    return-void
++.end method
+diff -ru o3/com/android/server/wm/WindowManagerService$LocalService.smali out-classes3.dex/com/android/server/wm/WindowManagerService$LocalService.smali
+--- o3/com/android/server/wm/WindowManagerService$LocalService.smali	2026-11-19 02:40:28
++++ out-classes3.dex/com/android/server/wm/WindowManagerService$LocalService.smali	2026-11-19 02:42:07
+@@ -5184,3 +5184,44 @@
+ 
+     return v3
+ .end method
++
++# Inquiline: the assistant's own window (Gemini's Live bar) goes to the screen of the app in use,
++# which its window shows, not the main screen, which nothing shows.
++.method public inquilineMoveTokenToAppDisplay(Landroid/os/IBinder;)V
++    .registers 5
++
++    iget-object v0, p0, Lcom/android/server/wm/WindowManagerService$LocalService;->this$0:Lcom/android/server/wm/WindowManagerService;
++
++    iget-object v1, v0, Lcom/android/server/wm/WindowManagerService;->mGlobalLock:Lcom/android/server/wm/WindowManagerGlobalLock;
++
++    monitor-enter v1
++
++    :try_start_inquiline
++    iget-object v2, v0, Lcom/android/server/wm/WindowManagerService;->mRoot:Lcom/android/server/wm/RootWindowContainer;
++
++    invoke-virtual {v2}, Lcom/android/server/wm/RootWindowContainer;->getInquilineAppDisplayContent()Lcom/android/server/wm/DisplayContent;
++
++    move-result-object v2
++
++    if-eqz v2, :inquiline_none
++
++    invoke-virtual {v2}, Lcom/android/server/wm/DisplayContent;->getDisplayId()I
++
++    move-result v2
++
++    invoke-virtual {v0, p1, v2}, Lcom/android/server/wm/WindowManagerService;->moveWindowTokenToDisplay(Landroid/os/IBinder;I)V
++
++    :inquiline_none
++    monitor-exit v1
++    :try_end_inquiline
++    .catchall {:try_start_inquiline .. :try_end_inquiline} :catchall_inquiline
++
++    return-void
++
++    :catchall_inquiline
++    move-exception v2
++
++    monitor-exit v1
++
++    throw v2
++.end method
+diff -ru o3/com/android/server/wm/WindowManagerService.smali out-classes3.dex/com/android/server/wm/WindowManagerService.smali
+--- o3/com/android/server/wm/WindowManagerService.smali	2026-11-19 02:40:28
++++ out-classes3.dex/com/android/server/wm/WindowManagerService.smali	2026-11-19 02:42:07
 @@ -33158,9 +33158,8 @@
      :try_start_10
      iget-object p0, p0, Lcom/android/server/wm/WindowManagerService;->mRoot:Lcom/android/server/wm/RootWindowContainer;
