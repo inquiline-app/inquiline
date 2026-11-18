@@ -118,6 +118,10 @@
 	<true/>
 	<key>NSHighResolutionCapable</key>
 	<true/>
+	<key>NSLocationUsageDescription</key>
+	<string>Android apps that ask where you are get your Mac's location, as from a phone's GPS.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Android apps that ask where you are get your Mac's location, as from a phone's GPS.</string>
 	<key>SUEnableAutomaticChecks</key>
 	<true/>
 	<key>SUFeedURL</key>

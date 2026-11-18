@@ -13,7 +13,7 @@ final class NotificationBridge: NSObject, UNUserNotificationCenterDelegate {
     static let shared = NotificationBridge()
 
     static let agent = "io.github.inquiline.notifications"
-    static let agentVersion = 35
+    static let agentVersion = 36
     private static let socket = "localabstract:inquiline-notifications"
 
     /// Opens an app's window, given its package; with true, without starting the app, whose
@@ -41,6 +41,7 @@ final class NotificationBridge: NSObject, UNUserNotificationCenterDelegate {
         super.init()
         let center = UNUserNotificationCenter.current()
         center.delegate = self
+        LocationBridge.shared.send = { [weak self] in self?.send($0) }
         let reply = UNTextInputNotificationAction(identifier: Self.replyCategory, title: "Reply", options: [],
                                                   textInputButtonTitle: "Send", textInputPlaceholder: "")
         center.setNotificationCategories([UNNotificationCategory(identifier: Self.replyCategory, actions: [reply],
@@ -63,6 +64,8 @@ final class NotificationBridge: NSObject, UNUserNotificationCenterDelegate {
             let fd = connection
             Thread.detachNewThread { [self] in
                 read(from: fd)
+                // No helper, no one asking where the Mac is.
+                DispatchQueue.main.async { LocationBridge.shared.set(wanted: false) }
                 queue.async { [self] in
                     if connection == fd { connection = -1 }
                     close(fd)
@@ -125,6 +128,10 @@ final class NotificationBridge: NSObject, UNUserNotificationCenterDelegate {
     }
 
     private func handle(_ message: [String: Any]) {
+        if let location = message["location"] as? String {
+            LocationBridge.shared.set(wanted: location == "start")
+            return
+        }
         let center = UNUserNotificationCenter.current()
         if let key = message["removed"] as? String {
             // Gathered into its group, as Gmail does a second after posting: the group shows
@@ -202,7 +209,7 @@ final class NotificationBridge: NSObject, UNUserNotificationCenterDelegate {
         return (try? png.write(to: file)) != nil ? file : nil
     }
 
-    private func send(_ command: [String: String]) {
+    private func send(_ command: [String: Any]) {
         guard let data = try? JSONSerialization.data(withJSONObject: command) else { return }
         queue.async { [self] in
             guard connection >= 0 else { return }

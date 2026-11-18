@@ -2,7 +2,8 @@
 # Builds the Android VM's disk from nothing, so it holds nothing from the machine
 # that built it. Run as root in a Fedora guest with the same kernel, the guest GPU
 # libraries in $1 (libdrm.so from Mesa, vulkan.gfxstream.so from build-guest-vulkan.sh and
-# audio.primary.redroid.so from build-guest-audio.sh, and Vendor/inquiline-framework-overlay.apk
+# audio.primary.redroid.so from build-guest-audio.sh, android.hardware.gnss-service.inquiline from
+# build-guest-gnss.sh, and Vendor/inquiline-framework-overlay.apk
 # from build-framework-overlay.sh), the Redroid image in podman, and the empty target disk at $2.
 set -eu
 
@@ -54,6 +55,9 @@ chmod 644 "$ROOT"/var/inquiline/*.so
 # Changes to Android's own settings, as a phone maker's overlay (Scripts/vm/framework-overlay).
 cp "$LIBS/inquiline-framework-overlay.apk" "$ROOT/var/inquiline/"
 chmod 644 "$ROOT/var/inquiline/inquiline-framework-overlay.apk"
+# Android's GPS, which reports where the Mac is (build-guest-gnss.sh).
+cp "$LIBS/android.hardware.gnss-service.inquiline" "$ROOT/var/inquiline/"
+chmod 755 "$ROOT/var/inquiline/android.hardware.gnss-service.inquiline"
 # Vulkan goes to the Mac through gfxstream, GLES is Android's own ANGLE on that Vulkan,
 # and buffers come from minigbm (gralloc.cros), which the gfxstream driver understands.
 cat > "$ROOT/var/inquiline/gpu_config.sh" <<'EOF'
@@ -242,6 +246,9 @@ exec podman run --rm $EXTRA --name redroid --ip 10.88.0.2 --privileged --pull=ne
   -v /run/inquiline-input:/dev/input -v $A/gpu_config.sh:/vendor/bin/gpu_config.sh:ro \
   -v $A/libdrm.so:/vendor/lib64/libdrm.so:ro -v $A/vulkan.gfxstream.so:/vendor/lib64/hw/vulkan.gfxstream.so:ro \
   -v $A/audio.primary.redroid.so:/vendor/lib64/hw/audio.primary.redroid.so:ro \
+  -v $A/android.hardware.gnss-service.inquiline:/vendor/bin/hw/android.hardware.gnss-service.inquiline:ro \
+  -v $A/gnss.xml:/vendor/etc/vintf/manifest/gnss-inquiline.xml:ro \
+  -v $A/gps.xml:/vendor/etc/permissions/android.hardware.location.gps.xml:ro \
   -v $A/vulkan-version.xml:/vendor/etc/permissions/android.hardware.vulkan.version-1_1.xml:ro \
   -v $A/no-aep.xml:/vendor/etc/permissions/android.hardware.opengles.aep.xml:ro \
   -v $A/touchscreen.xml:/vendor/etc/permissions/android.hardware.touchscreen.xml:ro \
@@ -262,6 +269,26 @@ on post-fs
     # The tunnel device Android's VPNs use, as its own ueventd rules give it.
     chown system vpn /dev/tun
     chmod 0660 /dev/tun
+
+# Android's GPS, which reports where the Mac is (Vendor/gnss).
+service vendor.gnss-inquiline /vendor/bin/hw/android.hardware.gnss-service.inquiline
+    class hal
+    user root
+    group root
+EOF
+cat > "$ROOT/var/inquiline/gnss.xml" <<'EOF'
+<manifest version="1.0" type="device">
+    <hal format="aidl">
+        <name>android.hardware.gnss</name>
+        <version>3</version>
+        <fqname>IGnss/default</fqname>
+    </hal>
+</manifest>
+EOF
+cat > "$ROOT/var/inquiline/gps.xml" <<'EOF'
+<permissions>
+    <feature name="android.hardware.location.gps" />
+</permissions>
 EOF
 cat > "$ROOT/usr/local/bin/inquiline-input" <<'EOF'
 #!/bin/sh

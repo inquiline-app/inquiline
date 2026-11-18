@@ -30,7 +30,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
  * apps the user let post them, and not the ones an app keeps up while it works (music, downloads).
  * Inquiline may send back {"reply": key, "text": ...}, which answers it as a phone's reply box
  * does. Opening a notification's screen is Open's, which Android allows only to a privileged
- * process.
+ * process. The same connection carries Android's GPS to and from the Mac (Location).
  */
 public final class Listener extends NotificationListenerService {
     private static final String SOCKET = "inquiline-notifications";
@@ -38,6 +38,7 @@ public final class Listener extends NotificationListenerService {
 
     private final List<OutputStream> clients = new CopyOnWriteArrayList<>();
     private LocalServerSocket server;
+    private Location location;
 
     @Override
     public void onListenerConnected() {
@@ -47,6 +48,7 @@ public final class Listener extends NotificationListenerService {
         } catch (IOException e) {
             return;
         }
+        location = new Location(this, this::send);
         Thread accept = new Thread(this::acceptClients, "inquiline-accept");
         accept.setDaemon(true);
         accept.start();
@@ -68,6 +70,7 @@ public final class Listener extends NotificationListenerService {
                 }
                 final OutputStream out = socket.getOutputStream();
                 clients.add(out);
+                location.connected();
                 Thread reader = new Thread(() -> readCommands(socket, out), "inquiline-client");
                 reader.setDaemon(true);
                 reader.start();
@@ -85,6 +88,8 @@ public final class Listener extends NotificationListenerService {
                 try {
                     JSONObject command = new JSONObject(line);
                     if (command.has("reply")) reply(command.getString("reply"), command.getString("text"));
+                    JSONObject fix = command.optJSONObject("location");
+                    if (fix != null) location.fix(fix);
                 } catch (org.json.JSONException ignored) {
                 }
             }

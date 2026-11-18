@@ -106,6 +106,7 @@ final class AndroidRuntime {
         setFullVolume()
         keepLogs()
         turnOffBluetooth()
+        letGoogleLocate()
         nameDevice()
         watchPackages()
         watchSleep()
@@ -163,6 +164,21 @@ final class AndroidRuntime {
     /// The VM has no Bluetooth, and Android's Bluetooth crashes over and over at each start
     /// while it's on, so it's turned off as on a phone: Android remembers it. Controllers
     /// reach Android through the Mac, as USB devices.
+    /// Google Play services is Android's location service once the user adds it, as on a phone,
+    /// where Android lets it know where the phone is from the first start. Added later here, it
+    /// never got that leave, and apps asking it got no location; it's given what a phone gives.
+    private func letGoogleLocate() {
+        let gms = "com.google.android.gms"
+        guard let held = try? shell("dumpsys package \(gms) | grep -E 'ACCESS_(FINE|COARSE|BACKGROUND)_LOCATION: granted=true' | wc -l"),
+              let count = Int(held.trimmingCharacters(in: .whitespacesAndNewlines)), count < 3,
+              (try? shell("pm path \(gms)"))?.contains("package:") == true
+        else { return }
+        let permissions = ["ACCESS_FINE_LOCATION", "ACCESS_COARSE_LOCATION", "ACCESS_BACKGROUND_LOCATION"]
+        let grants = permissions.map { "pm grant \(gms) android.permission.\($0)" }.joined(separator: "; ")
+        _ = try? shell("su 0 sh -c '\(grants); appops set \(gms) COARSE_LOCATION allow; appops set \(gms) FINE_LOCATION allow'")
+        AppLog.write("Google Play services may now locate, as on a phone")
+    }
+
     private func turnOffBluetooth() {
         _ = try? shell("[ \"$(settings get global bluetooth_on)\" = 0 ] || cmd bluetooth_manager disable")
     }
@@ -455,7 +471,9 @@ final class AndroidRuntime {
     /// 20: Android's storage follows the Mac's disk: its file system grows with the disk file
     /// (resize2fs at each start) and gives deleted space back at once (discard).
     /// 21: a tunnel device for Android's VPNs, which ad blocking uses, Android's own (system, vpn).
-    private static let diskRevision = 22
+    /// 22: Android's disk in Finder takes a password only Inquiline knows (Samba).
+    /// 23: a GPS (Vendor/gnss) that reports where the Mac is.
+    private static let diskRevision = 23
     /// The VM's memory map fits the 36-bit (64 GB) address space Apple's M1 and M2 give a VM:
     /// above the RAM, the window for 64-bit device memory, such as the GPU's 2 GB, is 16 GB,
     /// not QEMU's 512 GB, which only M3 and later have room for (see the QEMU patch 0102).
