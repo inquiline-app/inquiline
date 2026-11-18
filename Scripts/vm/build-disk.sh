@@ -192,13 +192,16 @@ mount -o remount,discard /
 fstrim / &
 EOF
 # Android's files for Finder (see AndroidFiles.swift). Samba resolves this machine's name,
-# which takes seconds without an entry.
+# which takes seconds without an entry. Only Inquiline gets in: its password, made for this
+# installation, reaches Samba as a hash Inquiline writes into Android's /data at each mount
+# (root's alone there); without the file no one gets in. 22: no guest access.
 echo "127.0.0.1 inquiline" >> "$ROOT/etc/hosts"
 cat > "$ROOT/etc/samba/smb.conf" <<'EOF'
 [global]
 	server string = Inquiline
 	server role = standalone server
-	map to guest = bad user
+	map to guest = never
+	passdb backend = smbpasswd:/var/inquiline/data/.inquiline-smbpasswd
 	disable netbios = yes
 	smb ports = 445
 	load printers = no
@@ -215,7 +218,8 @@ cat > "$ROOT/etc/samba/smb.conf" <<'EOF'
 	delete veto files = yes
 [Android]
 	path = /var/inquiline/files
-	guest ok = yes
+	guest ok = no
+	valid users = root
 	read only = no
 	force user = root
 	inherit owner = unix only

@@ -455,7 +455,7 @@ final class AndroidRuntime {
     /// 20: Android's storage follows the Mac's disk: its file system grows with the disk file
     /// (resize2fs at each start) and gives deleted space back at once (discard).
     /// 21: a tunnel device for Android's VPNs, which ad blocking uses, Android's own (system, vpn).
-    private static let diskRevision = 21
+    private static let diskRevision = 22
     /// The VM's memory map fits the 36-bit (64 GB) address space Apple's M1 and M2 give a VM:
     /// above the RAM, the window for 64-bit device memory, such as the GPU's 2 GB, is 16 GB,
     /// not QEMU's 512 GB, which only M3 and later have room for (see the QEMU patch 0102).

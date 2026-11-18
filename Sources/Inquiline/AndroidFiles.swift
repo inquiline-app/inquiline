@@ -1,4 +1,5 @@
 import AppKit
+import CommonCrypto
 import DiskArbitration
 import NetFS
 import dnssd
@@ -15,7 +16,7 @@ enum AndroidFiles {
 
     /// Finder names a disk's server after its host, so the host is "Android", a name
     /// that only this Mac knows (see `nameHost`).
-    private static let share = URL(string: "smb://guest@Android.local:\(AndroidRuntime.filesPort)/Android")!
+    private static let share = URL(string: "smb://root@Android.local:\(AndroidRuntime.filesPort)/Android")!
     private static var nameService: DNSServiceRef?
     private static let root = "/data/inquiline-files"
     private static let lock = NSLock()
@@ -59,15 +60,46 @@ enum AndroidFiles {
         lock.lock()
         defer { lock.unlock() }
         if let mountPoint, isMounted { return mountPoint }
+        guard let password = password(), allowIn(password) else { return nil }
         nameHost()
         let open = NSMutableDictionary()
-        open[kNetFSUseGuestKey] = true
+        open[kNetFSUseGuestKey] = false
+        // Never a sign-in window, and the password never goes to the Keychain.
+        open[kNAUIOptionKey] = kNAUIOptionNoUI
         var points: Unmanaged<CFArray>?
-        guard NetFSMountURLSync(share as CFURL, nil, nil, nil, open, nil, &points) == 0,
+        guard NetFSMountURLSync(share as CFURL, nil, "root" as CFString, password as CFString, open, nil, &points) == 0,
               let path = (points?.takeRetainedValue() as? [String])?.first
         else { return nil }
         mountPoint = URL(fileURLWithPath: path)
         return mountPoint
+    }
+
+    /// The disk's password, made for this installation and kept in Inquiline's own folder,
+    /// which only this Mac user opens: apps sandboxed or of other users can't mount the disk.
+    /// Not the Keychain, which may be locked and would then ask for its password.
+    private static func password() -> String? {
+        let file = AndroidRuntime.shared.home.appendingPathComponent("vm/files-password")
+        if let saved = try? String(contentsOf: file, encoding: .utf8), saved.count == 32 { return saved }
+        var bytes = [UInt8](repeating: 0, count: 16)
+        guard SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes) == errSecSuccess else { return nil }
+        let made = bytes.map { String(format: "%02x", $0) }.joined()
+        guard FileManager.default.createFile(atPath: file.path, contents: Data(made.utf8),
+                                             attributes: [.posixPermissions: 0o600]) else { return nil }
+        return made
+    }
+
+    /// Samba takes the password as its NT hash (MD4 of its UTF-16), from a file in Android's
+    /// /data only root reads there, written before each mount: Android and the Mac can't disagree.
+    private static func allowIn(_ password: String) -> Bool {
+        let text = Array(password.utf16).flatMap { [UInt8($0 & 0xFF), UInt8($0 >> 8)] }
+        var digest = [UInt8](repeating: 0, count: Int(CC_MD4_DIGEST_LENGTH))
+        CC_MD4(text, CC_LONG(text.count), &digest)
+        let hash = digest.map { String(format: "%02X", $0) }.joined()
+        // When the password was set, in hex: 0 would mean it must change before use.
+        let set = String(format: "%08X", UInt32(Date().timeIntervalSince1970))
+        let line = "root:0:" + String(repeating: "X", count: 32) + ":\(hash):[U          ]:LCT-\(set):"
+        return (try? AdbClient.shell("su 0 sh -c \"umask 077; echo '\(line)' > /data/.inquiline-smbpasswd\" && echo ok"))?
+            .contains("ok") == true
     }
 
     /// Answers Android.local with this Mac, for this Mac only: the name isn't announced on
