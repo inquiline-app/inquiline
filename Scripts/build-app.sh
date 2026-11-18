@@ -38,13 +38,6 @@ cp Vendor/inquiline-notifications.apk "$APP/Contents/Resources/inquiline-notific
 cp "$CACHE/LICENSE" "$APP/Contents/Resources/scrcpy-LICENSE.txt"
 cp LICENSE "$APP/Contents/Resources/LICENSE.txt"
 cp Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
-# The widget extension each Android app's Mac app gets a copy of (AppShortcuts), signed there.
-WX="$APP/Contents/Resources/Widgets.appex/Contents"
-mkdir -p "$WX/MacOS"
-swiftc -parse-as-library -O -target arm64-apple-macos14.0 -application-extension -framework WidgetKit -framework SwiftUI \
-    Widgets/AndroidWidgets.swift -o "$WX/MacOS/Widgets" -Xlinker -e -Xlinker _NSExtensionMain
-cp Widgets/Info.plist "$WX/Info.plist"
-cp Resources/widgets.entitlements "$APP/Contents/Resources/widgets.entitlements"
 cp "$VM/vmlinux" "$VM/android-disk.json" "$VM/android-disk.xz" "$VM/disk-update.tar" "$APP/Contents/Resources/"
 cp -R "$VM/licenses" "$APP/Contents/Resources/licenses"
 # The VM's engine, from Scripts/vm/build-qemu.sh.

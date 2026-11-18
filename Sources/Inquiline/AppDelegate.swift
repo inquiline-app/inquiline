@@ -120,8 +120,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, SPUSta
         if library.apps.isEmpty {
             statusItem.button?.perform(#selector(NSButton.performClick(_:)), with: nil, afterDelay: 0.5)
         }
-        // Android apps' widgets on the Mac (WidgetBridge).
-        WidgetBridge.shared.start()
         startAndroidInBackground()
     }
 
@@ -521,10 +519,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, SPUSta
         }
         let icons = missingIcons.compactMap { package in runtime.iconPNG(package: package).map { (package, $0) } }
         let versions = runtime.versions()
-        // The apps' widget extensions take their new lists (AppShortcuts names their version after it).
-        if WidgetBridge.shared.updateManifests(packages: installed, versions: versions) {
-            DispatchQueue.main.async { self.updateShortcuts() }
-        }
 
         DispatchQueue.main.sync {
             known.filter { !installed.contains($0.package) }.forEach { library.remove(package: $0.package) }

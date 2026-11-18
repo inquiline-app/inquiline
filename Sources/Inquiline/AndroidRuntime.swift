@@ -1103,16 +1103,6 @@ final class AndroidRuntime {
         return value.isEmpty ? nil : value
     }
 
-    /// The widgets an app offers, as the helper's WidgetList prints them; nil if it couldn't tell.
-    func widgetList(package: String) -> [[String: Any]]? {
-        guard package.range(of: "^[A-Za-z0-9_.]+$", options: .regularExpression) != nil else { return nil }
-        let agent = NotificationBridge.agent
-        guard let output = try? shell("su 0 sh -c 'CLASSPATH=$(pm path \(agent) | cut -d: -f2) app_process / \(agent).WidgetList \(package)'"),
-              let line = output.split(whereSeparator: \.isNewline).last(where: { $0.hasPrefix("[") }),
-              let list = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [[String: Any]] else { return nil }
-        return list
-    }
-
     /// The device's Google Services Framework ID, in decimal as Google's registration page
     /// takes it; nil before Play Store has been signed in to.
     func googleServicesID() -> String? {
