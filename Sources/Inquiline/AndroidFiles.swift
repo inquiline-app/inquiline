@@ -20,7 +20,6 @@ enum AndroidFiles {
     private static var nameService: DNSServiceRef?
     private static let root = "/data/inquiline-files"
     private static let lock = NSLock()
-    private static var mountPoint: URL?
 
     /// Lays the folders out for these apps. Call off the main thread.
     static func update(_ apps: [App]) throws {
@@ -59,19 +58,29 @@ enum AndroidFiles {
     static func mount() -> URL? {
         lock.lock()
         defer { lock.unlock() }
-        if let mountPoint, isMounted { return mountPoint }
-        guard let password = password(), allowIn(password) else { return nil }
+        // Already in Finder, as when an eject didn't go through: where the system has it, not
+        // where this run last put it. Mounting it again would fail as already there.
+        if let point = mounted().first { return point }
+        guard let password = password() else {
+            AppLog.write("Android's disk has no password to mount with")
+            return nil
+        }
+        guard allowIn(password) else {
+            AppLog.write("Android's disk couldn't be opened to this Mac")
+            return nil
+        }
         nameHost()
         let open = NSMutableDictionary()
         open[kNetFSUseGuestKey] = false
         // Never a sign-in window, and the password never goes to the Keychain.
         open[kNAUIOptionKey] = kNAUIOptionNoUI
         var points: Unmanaged<CFArray>?
-        guard NetFSMountURLSync(share as CFURL, nil, "root" as CFString, password as CFString, open, nil, &points) == 0,
-              let path = (points?.takeRetainedValue() as? [String])?.first
-        else { return nil }
-        mountPoint = URL(fileURLWithPath: path)
-        return mountPoint
+        let result = NetFSMountURLSync(share as CFURL, nil, "root" as CFString, password as CFString, open, nil, &points)
+        guard result == 0, let path = (points?.takeRetainedValue() as? [String])?.first else {
+            AppLog.write("Android's disk couldn't be mounted: error \(result)")
+            return nil
+        }
+        return URL(fileURLWithPath: path)
     }
 
     /// The disk's password, made for this installation and kept in Inquiline's own folder,
@@ -126,7 +135,6 @@ enum AndroidFiles {
     static func eject(gone: Bool = false) {
         lock.lock()
         defer { lock.unlock() }
-        mountPoint = nil
         for point in mounted() {
             if gone { forceUnmount(point) } else { eject(at: point) }
         }
@@ -182,8 +190,8 @@ enum AndroidFiles {
 
     /// Mounts the disk and shows it in Finder: an app's own folder when `label` names one.
     /// Blocks until the disk is there, so call it off the main thread.
-    static func show(label: String? = nil) {
-        guard let volume = mount() else { return }
+    static func show(label: String? = nil) throws {
+        guard let volume = mount() else { throw RuntimeError("Android's disk couldn't be opened in Finder. Try again in a moment.") }
         var target = volume
         // Whether the app has its folder is asked of Android: Inquiline looking at files on the
         // disk itself would need the user's leave (macOS's "network volumes"), and Finder opens it.

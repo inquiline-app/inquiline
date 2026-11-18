@@ -189,10 +189,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, SPUSta
                 // An app's own folder on Android's disk, asked for from its window: Inquiline
                 // mounts the disk, as an app's own process would need the user's leave to.
                 let label = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first(where: { $0.name == "label" })?.value
-                run("Starting Android…") {
+                run("Starting Android…", {
                     try self.prepareAndroid()
-                    AndroidFiles.show(label: label)
-                }
+                    try AndroidFiles.show(label: label)
+                }, failure: "Couldn't Show the Files")
             } else if url.scheme == "inquiline" {
                 run("Starting Android…") { try self.prepareAndroid() }
             } else {
@@ -346,10 +346,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, SPUSta
     }
 
     @objc private func showFiles(_ sender: Any?) {
-        run("Starting Android…") {
+        run("Starting Android…", {
             try self.prepareAndroid()
-            AndroidFiles.show()
-        }
+            try AndroidFiles.show()
+        }, failure: "Couldn't Show the Files")
     }
 
     /// Android's Settings in a window of its own, with Android's icon once Android can give it.
