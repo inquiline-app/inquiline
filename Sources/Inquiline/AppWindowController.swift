@@ -250,6 +250,7 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate, 
             AppLog.write(String(format: "First frame %.1f s after the app was started", frames.sinceStart()))
             DispatchQueue.main.async {
                 guard let self else { return }
+                self.loadSettings()
                 self.launchScreen.removeFromSuperview()
                 if self.gamepads == nil {
                     let gamepads = GamepadBridge(session: session, controls: self.displayView.controls)
@@ -690,9 +691,22 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate, 
         popover.show(relativeTo: sender.bounds, of: sender, preferredEdge: sender.isFlipped ? .maxY : .minY)
     }
 
+    /// What the app's settings show, read from Android when the window opens and again as the
+    /// settings close, so they open at once with all of it.
+    private var settingsSnapshot: AppSettingsView.Snapshot?
+
+    private func loadSettings() {
+        let package = package
+        DispatchQueue.global().async { [weak self] in
+            let snapshot = AppSettingsView.Snapshot.load(package: package)
+            DispatchQueue.main.async { self?.settingsSnapshot = snapshot }
+        }
+    }
+
     /// The app's settings, sized to what is open in them as sections open and close.
     private func settingsController(resize: @escaping (NSSize) -> Void) -> NSViewController {
-        let settings = AppSettingsView(package: package, label: window.title)
+        let settings = AppSettingsView(package: package, label: window.title, snapshot: settingsSnapshot)
+        settings.loaded = { [weak self] in self?.settingsSnapshot = $0 }
         settings.clearCache = { [weak self] in self?.settingsPanel?.close(); self?.clearCache() }
         settings.clearData = { [weak self] in self?.settingsPanel?.close(); self?.clearData() }
         settings.onResize = resize
@@ -939,7 +953,8 @@ private final class AppSettingsView: NSView {
     var clearData: (() -> Void)?
     /// Called with the size the settings now need, as sections open and close.
     var onResize: ((NSSize) -> Void)? {
-        didSet { fitToContent() }
+        // Its holder hears the size even if the snapshot already laid the settings out.
+        didSet { fittedSize = nil; fitToContent() }
     }
 
     /// Tells the popover or window holding the settings their size, when it changes: resizing
@@ -987,7 +1002,29 @@ private final class AppSettingsView: NSView {
          "Also cookie notices, social media buttons and annoyances such as newsletter pop-ups."),
     ]
 
-    init(package: String, label: String) {
+    /// All the settings show, as Android has it.
+    struct Snapshot {
+        var allowed: Bool?
+        var blocking: Set<String>?
+        var groups: [AndroidRuntime.PermissionGroup]
+        var storage: (app: Int64, data: Int64, cache: Int64)?
+        var widgets: [[String: Any]]
+        var counts: [String: Int]
+
+        static func load(package: String) -> Snapshot {
+            Snapshot(allowed: AndroidRuntime.shared.notificationsAllowed(package: package),
+                     blocking: AndroidRuntime.shared.adBlocking(package: package),
+                     groups: AndroidRuntime.shared.permissions(package: package) ?? [],
+                     storage: AndroidRuntime.shared.storage(package: package),
+                     widgets: AndroidRuntime.shared.widgetList(package: package) ?? [],
+                     counts: AndroidRuntime.shared.adCounts(package: package))
+        }
+    }
+
+    /// A fresh snapshot, for the next time the settings open.
+    var loaded: ((Snapshot) -> Void)?
+
+    init(package: String, label: String, snapshot: Snapshot?) {
         self.package = package
         self.label = label
         super.init(frame: .zero)
@@ -1091,30 +1128,35 @@ private final class AppSettingsView: NSView {
         constraints.append(clearing.widthAnchor.constraint(equalTo: dataRows.widthAnchor, constant: -18))
         NSLayoutConstraint.activate(constraints)
 
+        // What the window read when it opened, at once; then Android's answer now, which
+        // changes only what changed meanwhile.
+        if let snapshot { apply(snapshot) }
         DispatchQueue.global().async { [weak self] in
-            let allowed = AndroidRuntime.shared.notificationsAllowed(package: package)
-            let blocking = AndroidRuntime.shared.adBlocking(package: package)
-            let groups = AndroidRuntime.shared.permissions(package: package) ?? []
-            let storage = AndroidRuntime.shared.storage(package: package)
-            let widgets = AndroidRuntime.shared.widgetList(package: package) ?? []
+            let fresh = Snapshot.load(package: package)
             DispatchQueue.main.async {
                 guard let self else { return }
-                self.showWidgets(widgets)
-                if let allowed {
-                    self.notifications.state = allowed ? .on : .off
-                    self.notifications.isEnabled = true
-                }
-                if let blocking { self.showCategories(blocking) }
-                if let storage {
-                    let format = ByteCountFormatter()
-                    format.countStyle = .file
-                    self.appSize.stringValue = format.string(fromByteCount: storage.app)
-                    self.dataSize.stringValue = format.string(fromByteCount: storage.data)
-                    self.cacheSize.stringValue = format.string(fromByteCount: storage.cache)
-                }
-                self.show(groups)
+                self.apply(fresh)
+                self.loaded?(fresh)
             }
         }
+    }
+
+    private func apply(_ snapshot: Snapshot) {
+        showWidgets(snapshot.widgets)
+        if let allowed = snapshot.allowed {
+            notifications.state = allowed ? .on : .off
+            notifications.isEnabled = true
+        }
+        if let blocking = snapshot.blocking { showCategories(blocking) }
+        if let storage = snapshot.storage {
+            let format = ByteCountFormatter()
+            format.countStyle = .file
+            appSize.stringValue = format.string(fromByteCount: storage.app)
+            dataSize.stringValue = format.string(fromByteCount: storage.data)
+            cacheSize.stringValue = format.string(fromByteCount: storage.cache)
+        }
+        show(snapshot.groups)
+        showCounts(snapshot.counts)
     }
 
     required init?(coder: NSCoder) { fatalError() }
@@ -1149,10 +1191,16 @@ private final class AppSettingsView: NSView {
 
     /// The app's widgets, two to a row, each its picture and name, ticked when on the desktop:
     /// a click adds it there, another click takes it away.
+    private var shownWidgets: [String]?
+
     private func showWidgets(_ widgets: [[String: Any]]) {
-        guard !widgets.isEmpty else { return }
-        widgetsHeader?.isHidden = false
         let placed = DesktopWidgets.placed(package: package)
+        let providers = widgets.compactMap { $0["provider"] as? String }
+        guard providers + placed.keys.sorted() != shownWidgets else { return }
+        shownWidgets = providers + placed.keys.sorted()
+        widgetRows.arrangedSubviews.forEach { $0.removeFromSuperview() }
+        widgetsHeader?.isHidden = widgets.isEmpty
+        guard !widgets.isEmpty else { return fitToContent() }
         var row: NSStackView?
         for widget in widgets {
             guard let provider = widget["provider"] as? String else { continue }
@@ -1173,7 +1221,11 @@ private final class AppSettingsView: NSView {
     }
 
     private func show(_ groups: [AndroidRuntime.PermissionGroup]) {
+        let same = groups.map { "\($0.name)\($0.allowed)" } == self.groups.map { "\($0.name)\($0.allowed)" }
+        guard !same || permissionRows.arrangedSubviews.count == 1 else { return }
         self.groups = groups
+        // The notifications row stays; the groups are made again.
+        permissionRows.arrangedSubviews.dropFirst().forEach { $0.removeFromSuperview() }
         for (index, group) in groups.enumerated() {
             let toggle = NSSwitch()
             toggle.tag = index
@@ -1190,7 +1242,15 @@ private final class AppSettingsView: NSView {
         super.viewDidMoveToWindow()
         countTimer?.invalidate()
         countTimer = nil
-        guard window != nil else { return }
+        guard window != nil else {
+            // Closed: read again for next time, as what was changed here is now Android's.
+            let package = package, loaded = loaded
+            DispatchQueue.global().async {
+                let fresh = Snapshot.load(package: package)
+                DispatchQueue.main.async { loaded?(fresh) }
+            }
+            return
+        }
         refreshCounts()
         countTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in self?.refreshCounts() }
     }
