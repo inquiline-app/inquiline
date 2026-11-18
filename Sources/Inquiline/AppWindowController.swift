@@ -1537,9 +1537,10 @@ private final class SoundView: NSView {
         presets.addItem(withTitle: "Off")
         presets.lastItem?.tag = Self.offTag
         presets.menu?.addItem(.separator())
+        // Tags from 1: a separator's tag is 0.
         for (index, name) in AndroidRuntime.equalizerPresets.enumerated() {
             presets.addItem(withTitle: name)
-            presets.lastItem?.tag = index
+            presets.lastItem?.tag = index + 1
         }
         presets.menu?.addItem(.separator())
         presets.addItem(withTitle: "Custom")
@@ -1604,7 +1605,7 @@ private final class SoundView: NSView {
     private func show(_ equalizer: String) {
         let parts = equalizer.split(separator: " ")
         switch parts.first {
-        case "preset": presets.selectItem(withTag: Int(parts.dropFirst().first ?? "") ?? Self.offTag)
+        case "preset": presets.selectItem(withTag: (Int(parts.dropFirst().first ?? "") ?? -2) + 1)
         case "bands":
             presets.selectItem(withTag: Self.customTag)
             for (slider, value) in zip(bandSliders, parts.dropFirst()) { slider.doubleValue = Double(value) ?? 0 }
@@ -1627,7 +1628,7 @@ private final class SoundView: NSView {
 
     @objc private func presetChosen() {
         let tag = presets.selectedTag()
-        let choice = tag == Self.offTag ? "off" : tag == Self.customTag ? bands() : "preset \(tag)"
+        let choice = tag == Self.offTag ? "off" : tag == Self.customTag ? bands() : "preset \(tag - 1)"
         apply(choice)
     }
 
