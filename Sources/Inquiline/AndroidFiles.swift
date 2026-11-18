@@ -198,6 +198,8 @@ enum AndroidFiles {
                 .contains("yes") == true
             if there { target = volume.appendingPathComponent("Apps").appendingPathComponent(name) }
         }
-        DispatchQueue.main.async { NSWorkspace.shared.open(target) }
+        // Not on the main thread: macOS may first ask the user to let Inquiline reach a network
+        // volume, and the main thread waiting for the answer would hold up Android's sleep.
+        NSWorkspace.shared.open(target)
     }
 }
