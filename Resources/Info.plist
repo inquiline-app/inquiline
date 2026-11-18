@@ -118,6 +118,8 @@
 	<true/>
 	<key>NSHighResolutionCapable</key>
 	<true/>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Android apps that listen, such as voice assistants and calls, hear your Mac's microphone, as a phone's.</string>
 	<key>NSLocationUsageDescription</key>
 	<string>Android apps that ask where you are get your Mac's location, as from a phone's GPS.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
