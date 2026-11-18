@@ -230,8 +230,10 @@ final class AndroidRuntime {
     func showAssistant(task: Int) {
         let agent = NotificationBridge.agent
         // The assistant reuses its open screen, which is left on another screen when the window it
-        // was over closed (Android moves a closed screen's tasks to the main screen). That one is
-        // closed first, so the assistant opens anew over this app, as on a phone's one screen.
+        // was over closed (Android moves a closed screen's tasks to the main screen), or over
+        // another app's window. That one is closed first, so the assistant opens anew over this
+        // app, as on a phone's one screen. A window's own app, the bottom of its screen, stays,
+        // as the assistant's app (Google) can be open in its own window.
         // Android asks before the assistant shares the screen live (Gemini Live), on the main
         // screen, which nothing shows; so the assistant, which the user calls with this button,
         // may share it, and what it shares is this app's screen (Vendor/services).
@@ -239,9 +241,11 @@ final class AndroidRuntime {
             p=$(settings get secure voice_interaction_service | cut -d/ -f1); \
             appops set $p PROJECT_MEDIA allow; \
             am stack list | awk -v t=\(task) -v p="$p/" '\
-            /^RootTask/ { r = substr($2, 4); for (i = 3; i <= NF; i++) if ($i ~ /^displayId=/) d = substr($i, 11) } \
+            /^RootTask/ { r = substr($2, 4); for (i = 3; i <= NF; i++) if ($i ~ /^displayId=/) d = substr($i, 11); \
+                bottom[d] = r } \
             /^  taskId=/ { if (substr($1, 8) + 0 == t) td = d; if (index($2, p) == 1) s[r] = d } \
-            END { for (r in s) if (td != "" && s[r] != td) print r }' | while read r; do am stack remove $r; done
+            END { for (r in s) if (td != "" && s[r] != td && (s[r] == 0 || bottom[s[r]] != r)) print r }' \
+            | while read r; do am stack remove $r; done
             """
         _ = try? shell(stale + "; CLASSPATH=$(pm path \(agent) | cut -d: -f2) app_process / \(agent).Focus \(task); "
                        + "su 1000 cmd voiceinteraction show >/dev/null 2>&1")
