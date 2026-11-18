@@ -115,6 +115,7 @@ final class DesktopWidgets {
         guard let index = widgets.firstIndex(where: { $0.key == key }) else { return }
         widgets.remove(at: index)
         windows.removeValue(forKey: key)?.close()
+        margins[key] = nil
         try? FileManager.default.removeItem(at: Self.folder.appendingPathComponent("\(key).png"))
         send?(["removeWidget": key])
         save()
@@ -176,8 +177,8 @@ final class DesktopWidgets {
 
     private func show(_ widget: Widget) {
         let window = WidgetWindow(widget: widget)
-        window.widgetView.picture = NSImage(contentsOf: Self.folder.appendingPathComponent("\(widget.key).png"))
         window.widgetView.owner = self
+        window.widgetView.picture = NSImage(contentsOf: Self.folder.appendingPathComponent("\(widget.key).png"))
         windows[widget.key] = window
         window.orderFront(nil)
     }
@@ -211,9 +212,23 @@ final class DesktopWidgets {
         return CGRect(origin: CGPoint(x: screen.minX, y: screen.maxY - size.height), size: size)
     }
 
-    /// Whether the frame would overlap another widget; touching is allowed.
+    /// The clear margin each widget's app leaves around what it draws, so widgets meet at what
+    /// shows, not at their clear edges.
+    private var margins: [String: NSEdgeInsets] = [:]
+
+    fileprivate func setMargins(_ key: String, _ insets: NSEdgeInsets) { margins[key] = insets }
+
+    /// What shows of a widget whose box is at this frame.
+    private func shown(_ key: String, at frame: CGRect) -> CGRect {
+        guard let m = margins[key] else { return frame }
+        return CGRect(x: frame.minX + m.left, y: frame.minY + m.bottom,
+                      width: frame.width - m.left - m.right, height: frame.height - m.top - m.bottom)
+    }
+
+    /// Whether what shows of the widget would overlap what shows of another; touching is allowed.
     fileprivate func overlaps(_ frame: CGRect, except key: String) -> Bool {
-        widgets.contains { $0.key != key && $0.frame.insetBy(dx: 0.5, dy: 0.5).intersects(frame.insetBy(dx: 0.5, dy: 0.5)) }
+        let mine = shown(key, at: frame).insetBy(dx: 0.5, dy: 0.5)
+        return widgets.contains { $0.key != key && shown($0.key, at: $0.frame).insetBy(dx: 0.5, dy: 0.5).intersects(mine) }
     }
 
     fileprivate func widget(_ key: String) -> Widget? { widgets.first { $0.key == key } }
@@ -266,7 +281,35 @@ private final class WidgetView: NSView {
     weak var owner: DesktopWidgets?
 
     var picture: NSImage? {
-        didSet { layer?.contents = picture?.cgImage(forProposedRect: nil, context: nil, hints: nil) }
+        didSet {
+            let image = picture?.cgImage(forProposedRect: nil, context: nil, hints: nil)
+            layer?.contents = image
+            if let image, let drawn = Self.drawnArea(of: image) {
+                // The picture is drawn at twice the points.
+                let scale = CGFloat(image.width) / max(bounds.width, 1)
+                owner?.setMargins(key, NSEdgeInsets(top: drawn.minY / scale, left: drawn.minX / scale,
+                                                    bottom: (CGFloat(image.height) - drawn.maxY) / scale,
+                                                    right: (CGFloat(image.width) - drawn.maxX) / scale))
+            }
+        }
+    }
+
+    /// The part of the picture that isn't clear, in its pixels from the top left.
+    private static func drawnArea(of image: CGImage) -> CGRect? {
+        let width = image.width, height = image.height
+        var pixels = [UInt8](repeating: 0, count: width * height * 4)
+        guard let context = CGContext(data: &pixels, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width * 4,
+                                      space: CGColorSpaceCreateDeviceRGB(),
+                                      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
+        context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+        var minX = width, minY = height, maxX = -1, maxY = -1
+        for y in 0..<height {
+            for x in 0..<width where pixels[(y * width + x) * 4 + 3] > 8 {
+                minX = min(minX, x); maxX = max(maxX, x); minY = min(minY, y); maxY = max(maxY, y)
+            }
+        }
+        guard maxX >= minX, maxY >= minY else { return nil }
+        return CGRect(x: minX, y: minY, width: maxX - minX + 1, height: maxY - minY + 1)
     }
 
     private var pressed = false
