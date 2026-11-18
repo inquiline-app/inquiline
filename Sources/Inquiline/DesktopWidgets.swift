@@ -270,7 +270,44 @@ private final class WidgetView: NSView {
     weak var owner: DesktopWidgets?
 
     var picture: NSImage? {
-        didSet { layer?.contents = picture?.cgImage(forProposedRect: nil, context: nil, hints: nil) }
+        didSet {
+            let image = picture?.cgImage(forProposedRect: nil, context: nil, hints: nil)
+            layer?.contents = image
+            drawn = image.flatMap(Self.drawnArea)
+            if framed { needsLayout = true }
+        }
+    }
+
+    /// The part of the picture the widget draws, in its pixels from the top left: its frame goes
+    /// around this, not the clear space a widget may leave in its box.
+    private var drawn: CGRect?
+
+    private static func drawnArea(of image: CGImage) -> CGRect? {
+        let width = image.width, height = image.height
+        var pixels = [UInt8](repeating: 0, count: width * height * 4)
+        guard let context = CGContext(data: &pixels, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width * 4,
+                                      space: CGColorSpaceCreateDeviceRGB(),
+                                      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
+        context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+        var minX = width, minY = height, maxX = -1, maxY = -1
+        for y in 0..<height {
+            for x in 0..<width where pixels[(y * width + x) * 4 + 3] > 8 {
+                minX = min(minX, x); maxX = max(maxX, x); minY = min(minY, y); maxY = max(maxY, y)
+            }
+        }
+        guard maxX >= minX, maxY >= minY else { return nil }
+        return CGRect(x: minX, y: minY, width: maxX - minX + 1, height: maxY - minY + 1)
+    }
+
+    /// Where the frame shows, in the view: around what the widget draws.
+    private var frameRect: CGRect {
+        let whole = bounds.insetBy(dx: 9, dy: 9)
+        guard let drawn, let image = layer?.contents, CFGetTypeID(image as CFTypeRef) == CGImage.typeID else { return whole }
+        // The picture fills the view, stretched while a resize waits for Android's new one.
+        let picture = image as! CGImage
+        let sx = CGFloat(picture.width) / max(bounds.width, 1), sy = CGFloat(picture.height) / max(bounds.height, 1)
+        let rect = CGRect(x: drawn.minX / sx, y: bounds.height - drawn.maxY / sy, width: drawn.width / sx, height: drawn.height / sy)
+        return rect.insetBy(dx: -4, dy: -4).intersection(whole)
     }
 
     private enum Gesture { case pending, moving, resizing(left: Bool, right: Bool, bottom: Bool, top: Bool) }
@@ -331,10 +368,11 @@ private final class WidgetView: NSView {
         guard framed, let widget = owner?.widget(key) else { return }
         // A rounded frame in the accent, with a round handle on each side it resizes along.
         let path = CGMutablePath()
-        path.addRoundedRect(in: bounds.insetBy(dx: 9, dy: 9), cornerWidth: 12, cornerHeight: 12)
+        let box = frameRect
+        path.addRoundedRect(in: box, cornerWidth: 12, cornerHeight: 12)
         var handles: [CGPoint] = []
-        if widget.resizeMode & 1 != 0 { handles += [CGPoint(x: 9, y: bounds.midY), CGPoint(x: bounds.maxX - 9, y: bounds.midY)] }
-        if widget.resizeMode & 2 != 0 { handles += [CGPoint(x: bounds.midX, y: 9), CGPoint(x: bounds.midX, y: bounds.maxY - 9)] }
+        if widget.resizeMode & 1 != 0 { handles += [CGPoint(x: box.minX, y: box.midY), CGPoint(x: box.maxX, y: box.midY)] }
+        if widget.resizeMode & 2 != 0 { handles += [CGPoint(x: box.midX, y: box.minY), CGPoint(x: box.midX, y: box.maxY)] }
         let dots = CGMutablePath()
         for handle in handles { dots.addEllipse(in: CGRect(x: handle.x - 7, y: handle.y - 7, width: 14, height: 14)) }
         frameLayer.frame = bounds
@@ -394,22 +432,11 @@ private final class WidgetView: NSView {
         // Only in its frame, as on a phone only after a long press.
         guard framed else { return (false, false, false, false) }
         let across = widget.resizeMode & 1 != 0, down = widget.resizeMode & 2 != 0
-        let edge: CGFloat = 18
-        return (across && point.x < edge, across && point.x > bounds.width - edge,
-                down && point.y < edge, down && point.y > bounds.height - edge)
-    }
-
-    override func resetCursorRects() {
-        guard framed, let widget = owner?.widget(key) else { return }
-        let edge: CGFloat = 18
-        if widget.resizeMode & 1 != 0 {
-            addCursorRect(NSRect(x: 0, y: 0, width: edge, height: bounds.height), cursor: .resizeLeftRight)
-            addCursorRect(NSRect(x: bounds.width - edge, y: 0, width: edge, height: bounds.height), cursor: .resizeLeftRight)
-        }
-        if widget.resizeMode & 2 != 0 {
-            addCursorRect(NSRect(x: 0, y: 0, width: bounds.width, height: edge), cursor: .resizeUpDown)
-            addCursorRect(NSRect(x: 0, y: bounds.height - edge, width: bounds.width, height: edge), cursor: .resizeUpDown)
-        }
+        let box = frameRect, grip: CGFloat = 10
+        let inside = box.insetBy(dx: -grip, dy: -grip).contains(point)
+        guard inside else { return (false, false, false, false) }
+        return (across && abs(point.x - box.minX) < grip, across && abs(point.x - box.maxX) < grip,
+                down && abs(point.y - box.minY) < grip, down && abs(point.y - box.maxY) < grip)
     }
 
     override func mouseDown(with event: NSEvent) {
