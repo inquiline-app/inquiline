@@ -13,7 +13,7 @@ final class NotificationBridge: NSObject, UNUserNotificationCenterDelegate {
     static let shared = NotificationBridge()
 
     static let agent = "io.github.inquiline.notifications"
-    static let agentVersion = 40
+    static let agentVersion = 41
     private static let socket = "localabstract:inquiline-notifications"
 
     /// Opens an app's window, given its package; with true, without starting the app, whose
@@ -139,6 +139,11 @@ final class NotificationBridge: NSObject, UNUserNotificationCenterDelegate {
         if let key = message["widgetOpen"] as? String, let package = message["package"] as? String {
             DesktopWidgets.shared.tapped(key: key, package: package, opensApp: message["activity"] as? Bool ?? true,
                                          display: message["display"] as? Int ?? 0)
+            return
+        }
+        if let key = message["widgetBound"] as? String, let id = message["id"] as? Int {
+            DesktopWidgets.shared.bound(key: key, id: id, setup: message["configure"] as? String,
+                                        package: message["package"] as? String)
             return
         }
         if let key = message["widgetDone"] as? String {

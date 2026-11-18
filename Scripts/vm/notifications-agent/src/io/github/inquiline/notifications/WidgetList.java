@@ -20,8 +20,7 @@ import java.util.List;
  * same in the Mac's widget gallery. Run with app_process:
  *   app_process / io.github.inquiline.notifications.WidgetList <package>
  * Prints one JSON array: each widget's provider, name, smallest and resizable size in dp, and
- * its preview picture as PNG in base64 when it has one. Widgets that must be set up before they
- * show anything (a configuration screen that isn't optional) are left out for now.
+ * its preview picture as PNG in base64 when it has one, and whether it must be set up first.
  */
 public final class WidgetList {
     public static void main(String[] args) throws Exception {
@@ -35,8 +34,8 @@ public final class WidgetList {
             for (AppWidgetProviderInfo info : providers) {
                 boolean mustConfigure = info.configure != null
                         && (info.widgetFeatures & AppWidgetProviderInfo.WIDGET_FEATURE_CONFIGURATION_OPTIONAL) == 0;
-                if (mustConfigure) continue;
                 JSONObject widget = new JSONObject();
+                if (mustConfigure) widget.put("configure", true);
                 widget.put("provider", info.provider.flattenToString());
                 widget.put("label", info.loadLabel(system.getPackageManager()));
                 float density = system.getResources().getDisplayMetrics().density;

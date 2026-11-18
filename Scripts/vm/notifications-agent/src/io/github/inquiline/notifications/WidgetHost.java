@@ -52,8 +52,11 @@ import java.util.Map;
  * refresh) run at once. Reaching the tap's action takes two members Android keeps for its own
  * launchers, which Inquiline lets the helper use (hidden_api_blacklist_exemptions).
  *
- * Inquiline is the one that knows which widgets are on the Mac; after Android restarts it places
- * them again, so the host starts empty each time.
+ * Inquiline is the one that knows which widgets are on the Mac, and the Android id each one
+ * has; after Android restarts it places them again under those ids, so a widget keeps what it
+ * was set up with, and the helper lets go of any it no longer shows (prune). A widget its app
+ * must set up first gets its setup screen opened in the app's window, as a phone's home screen
+ * opens it when the widget is dropped there.
  */
 final class WidgetHost {
     interface Sink {
@@ -129,24 +132,32 @@ final class WidgetHost {
                 }
             }
         }, screen, null, main);
-        // What a previous run bound is let go: Inquiline places what the Mac shows again.
-        host.deleteHost();
         host.startListening();
         current = this;
     }
 
-    /** Shows the provider's widget at this size in dp, under the Mac's key for it. */
-    void place(String key, String provider, int widthDp, int heightDp) {
+    /**
+     * Shows the provider's widget at this size in dp, under the Mac's key for it: under the
+     * Android id it had if that is still its own, else a new one, which Inquiline is told.
+     */
+    void place(String key, String provider, int widthDp, int heightDp, int knownId) {
         main.post(() -> {
-            removeNow(key);
+            hide(key);
             ComponentName component = ComponentName.unflattenFromString(provider);
             if (component == null) return;
-            int id = host.allocateAppWidgetId();
             Bundle options = sizeOptions(widthDp, heightDp);
-            if (!manager.bindAppWidgetIdIfAllowed(id, component, options)) {
-                host.deleteAppWidgetId(id);
-                android.util.Log.w("InquilineWidgets", "Not allowed to show " + provider);
-                return;
+            int id = knownId;
+            AppWidgetProviderInfo known = id > 0 && contains(host.getAppWidgetIds(), id) ? manager.getAppWidgetInfo(id) : null;
+            boolean fresh = known == null || !component.equals(known.provider);
+            if (fresh) {
+                id = host.allocateAppWidgetId();
+                if (!manager.bindAppWidgetIdIfAllowed(id, component, options)) {
+                    host.deleteAppWidgetId(id);
+                    android.util.Log.w("InquilineWidgets", "Not allowed to show " + provider);
+                    return;
+                }
+            } else {
+                manager.updateAppWidgetOptions(id, options);
             }
             AppWidgetProviderInfo info = manager.getAppWidgetInfo(id);
             Placed widget = new Placed();
@@ -173,6 +184,36 @@ final class WidgetHost {
             // Drawn now in any case; kept on only while Android's screen is.
             widget.once = !screenOn;
             if (!screenOn) light(widget, true);
+            if (!fresh) return;
+            try {
+                JSONObject bound = new JSONObject().put("widgetBound", key).put("id", id);
+                // One its app must set up first: its setup screen, in the app's window.
+                if (info.configure != null
+                        && (info.widgetFeatures & AppWidgetProviderInfo.WIDGET_FEATURE_CONFIGURATION_OPTIONAL) == 0) {
+                    bound.put("configure", info.configure.flattenToString()).put("package", info.provider.getPackageName());
+                }
+                sink.send(bound);
+            } catch (org.json.JSONException ignored) {
+            }
+        });
+    }
+
+    private static boolean contains(int[] ids, int id) {
+        if (ids == null) return false;
+        for (int each : ids) if (each == id) return true;
+        return false;
+    }
+
+    /** After Inquiline placed all it shows: any other widget this host still has goes. */
+    void prune() {
+        main.post(() -> {
+            int[] ids = host.getAppWidgetIds();
+            if (ids == null) return;
+            java.util.Set<Integer> shown = new java.util.HashSet<>();
+            synchronized (placed) {
+                for (Placed widget : placed.values()) shown.add(widget.id);
+            }
+            for (int id : ids) if (!shown.contains(id)) host.deleteAppWidgetId(id);
         });
     }
 
@@ -200,8 +241,12 @@ final class WidgetHost {
         });
     }
 
+    /** Taken off the Mac: the widget goes, and its app is told, as when one is removed on a phone. */
     void remove(String key) {
-        main.post(() -> removeNow(key));
+        main.post(() -> {
+            Placed widget = hide(key);
+            if (widget != null) host.deleteAppWidgetId(widget.id);
+        });
     }
 
     /** A click's touch, at a point in dp: "down", "move" or "up". */
@@ -299,14 +344,14 @@ final class WidgetHost {
         }
     }
 
-    /** On the main thread. */
-    private void removeNow(String key) {
+    /** Its screen goes; the widget, under its id, stays its app's. On the main thread. */
+    private Placed hide(String key) {
         Placed widget = placed.remove(key);
-        if (widget == null) return;
+        if (widget == null) return null;
         widget.presentation.dismiss();
         widget.display.release();
         widget.reader.close();
-        host.deleteAppWidgetId(widget.id);
+        return widget;
     }
 
     /** A widget's screen on or off: without its surface it's off, and Android may sleep. */

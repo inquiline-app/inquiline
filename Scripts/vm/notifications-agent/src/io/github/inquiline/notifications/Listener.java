@@ -96,12 +96,13 @@ public final class Listener extends NotificationListenerService {
                     // The Mac's desktop widgets: sizes and points in points, which are dp here.
                     if (command.has("placeWidget")) {
                         widgets.place(command.getString("placeWidget"), command.getString("provider"),
-                                command.getInt("width"), command.getInt("height"));
+                                command.getInt("width"), command.getInt("height"), command.optInt("id", 0));
                     }
                     if (command.has("resizeWidget")) {
                         widgets.resize(command.getString("resizeWidget"), command.getInt("width"), command.getInt("height"));
                     }
                     if (command.has("removeWidget")) widgets.remove(command.getString("removeWidget"));
+                    if (command.has("pruneWidgets")) widgets.prune();
                     if (command.has("touchWidget")) {
                         widgets.touch(command.getString("touchWidget"), command.getString("action"),
                                 (float) command.getDouble("x"), (float) command.getDouble("y"));

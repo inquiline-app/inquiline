@@ -20,6 +20,8 @@ final class DesktopWidgets {
         let label: String
         /// In the Mac's screen coordinates, in points, which are Android's dp.
         var frame: CGRect
+        /// Its id in Android, so it keeps what it was set up with when Android starts again.
+        var androidID: Int?
     }
 
     /// Sends a message to the helper inside Android.
@@ -71,6 +73,8 @@ final class DesktopWidgets {
                 }
                 self.save()
                 for widget in self.widgets { self.place(widget) }
+                // Any widget the helper still holds that the Mac no longer shows goes.
+                self.send?(["pruneWidgets": true])
             }
         }
     }
@@ -183,8 +187,22 @@ final class DesktopWidgets {
     }
 
     private func place(_ widget: Widget) {
-        send?(["placeWidget": widget.key, "provider": widget.provider,
+        send?(["placeWidget": widget.key, "provider": widget.provider, "id": widget.androidID ?? 0,
                "width": Int(widget.frame.width), "height": Int(widget.frame.height)])
+    }
+
+    /// Android gave the widget an id; one its app must set up first gets its setup screen, in
+    /// the app's window, as a phone's home screen opens it when the widget is dropped there.
+    func bound(key: String, id: Int, setup: String?, package: String?) {
+        guard let index = widgets.firstIndex(where: { $0.key == key }) else { return }
+        widgets[index].androidID = id
+        save()
+        guard let setup, let package,
+              setup.range(of: "^[A-Za-z0-9_.]+/[A-Za-z0-9_.$]+$", options: .regularExpression) != nil else { return }
+        NotificationBridge.shared.openWindow(package: package) { display in
+            _ = try? AdbClient.shell("su 0 am start --display \(display) -a android.appwidget.action.APPWIDGET_CONFIGURE "
+                                     + "-n '\(setup)' --ei appWidgetId \(id)")
+        }
     }
 
     private func save() {
