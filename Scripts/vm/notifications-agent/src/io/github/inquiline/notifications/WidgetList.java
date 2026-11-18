@@ -45,6 +45,11 @@ public final class WidgetList {
                 widget.put("minResizeWidth", Math.round(info.minResizeWidth / density));
                 widget.put("minResizeHeight", Math.round(info.minResizeHeight / density));
                 widget.put("resizeMode", info.resizeMode);
+                widget.put("maxResizeWidth", Math.round(info.maxResizeWidth / density));
+                widget.put("maxResizeHeight", Math.round(info.maxResizeHeight / density));
+                // The home screen cells it asks for (Android 12 on); 0 when it doesn't say.
+                widget.put("targetCellWidth", info.targetCellWidth);
+                widget.put("targetCellHeight", info.targetCellHeight);
                 Drawable preview = info.loadPreviewImage(system, 320);
                 if (preview != null) widget.put("preview", png(preview));
                 out.put(widget);

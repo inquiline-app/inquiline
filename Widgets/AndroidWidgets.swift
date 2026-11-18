@@ -103,14 +103,17 @@ struct AndroidWidgetView: View {
     let entry: Entry
 
     var body: some View {
+        // Android's widget, its empty edges already trimmed, fitted to the box with the Mac's own
+        // margins and background, as the Mac's widgets have them.
         Group {
             if let image = entry.image {
-                Image(nsImage: image).resizable().scaledToFit()
+                Image(nsImage: image).resizable().interpolation(.high).scaledToFit()
             } else {
                 Image(systemName: "square.dashed").font(.largeTitle).foregroundStyle(.secondary)
             }
         }
-        .containerBackground(.clear, for: .widget)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .containerBackground(.fill.tertiary, for: .widget)
     }
 }
 
@@ -124,7 +127,6 @@ enum Slot {
             .configurationDisplayName(widget?.label ?? "")
             .description("")
             .supportedFamilies((widget?.families ?? []).compactMap(WidgetFamily.init(name:)))
-            .contentMarginsDisabled()
     }
 }
 

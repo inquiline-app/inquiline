@@ -286,6 +286,10 @@ enum AppShortcuts {
             programKey: fingerprint,
         ]
         if let home = AndroidRuntime.testHome { info.setValue(home.path, forKey: homeKey) }
+        // Its widgets as Android lists them now: a change makes the app anew, and its widget
+        // extension's new version has the Mac read the list again.
+        let widgets = widgetsVersion(app.package)
+        info.setValue(widgets, forKey: "InquilineWidgets")
         // A game is one to macOS too: in full screen it gets Game Mode, as Mac games do.
         if app.isGame {
             info.setValue("public.app-category.games", forKey: "LSApplicationCategoryType")
@@ -313,7 +317,7 @@ enum AppShortcuts {
             try files.copyItem(at: frames, to: framesFile)
             try icon.write(to: iconFile)
             try info.write(to: infoFile)
-            try addWidgets(to: contents, identifier: identifier)
+            try addWidgets(to: contents, identifier: identifier, version: widgets)
         } catch {
             try? files.removeItem(at: bundle)
             return false
@@ -337,7 +341,16 @@ enum AppShortcuts {
 
     /// The widget extension (WidgetBridge), named after this app, with its own sandbox: the Mac
     /// lists an extension's widgets under the app it's in.
-    private static func addWidgets(to contents: URL, identifier: String) throws {
+    /// A number for the app's widget manifest (WidgetBridge), as a bundle version: 1 without one.
+    private static func widgetsVersion(_ package: String) -> String {
+        let file = WidgetBridge.shared.folder.appendingPathComponent("\(package)/manifest.json")
+        guard let data = try? Data(contentsOf: file) else { return "1" }
+        var hash: UInt32 = 2_166_136_261
+        for byte in data { hash = (hash ^ UInt32(byte)) &* 16_777_619 }
+        return String(hash % 1_000_000_000 + 2)
+    }
+
+    private static func addWidgets(to contents: URL, identifier: String, version: String) throws {
         guard let template = Bundle.main.url(forResource: "Widgets", withExtension: "appex"),
               let entitlements = Bundle.main.url(forResource: "widgets", withExtension: "entitlements") else { return }
         let plugin = contents.appendingPathComponent("PlugIns/Widgets.appex")
@@ -346,6 +359,7 @@ enum AppShortcuts {
         let infoFile = plugin.appendingPathComponent("Contents/Info.plist")
         guard let info = NSMutableDictionary(contentsOf: infoFile) else { return }
         info["CFBundleIdentifier"] = identifier + ".widgets"
+        info["CFBundleVersion"] = version
         try info.write(to: infoFile)
         let codesign = Process()
         codesign.executableURL = URL(fileURLWithPath: "/usr/bin/codesign")
