@@ -1103,6 +1103,15 @@ final class AndroidRuntime {
         return value.isEmpty ? nil : value
     }
 
+    /// The device's Google Services Framework ID, in decimal as Google's registration page
+    /// takes it; nil before Play Store has been signed in to.
+    func googleServicesID() -> String? {
+        let output = try? shell("su 0 sqlite3 /data/data/com.google.android.gsf/databases/gservices.db "
+                                + "\"select value from main where name='android_id'\"")
+        let id = output?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return id.range(of: "^[0-9]+$", options: .regularExpression) != nil ? id : nil
+    }
+
     private func shell(_ command: String) throws -> String {
         try AdbClient.shell(command)
     }

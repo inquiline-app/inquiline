@@ -17,19 +17,10 @@ You can delete the zip afterwards. Installing closes any open apps.
 
 ### If Google says the device isn't certified
 
-If Play Store says "This device isn't Play Protect certified", or a tab shows "Something went wrong", register the device with Google. You need Android's platform tools (`brew install android-platform-tools`).
+If Play Store says "This device isn't Play Protect certified", or a tab shows "Something went wrong", register the device with Google.
 
-1. With Inquiline running, get the device's Google Services Framework ID in Terminal:
-
-   ```bash
-   adb connect 127.0.0.1:5556
-   ```
-
-   ```bash
-   adb -s 127.0.0.1:5556 shell "sqlite3 /data/data/com.google.android.gsf/databases/gservices.db \"select value from main where name='android_id'\""
-   ```
-
-2. Open Google's [registration page](https://www.google.com/android/uncertified), sign in with the same Google account, and enter that number.
+1. Choose **Register with Google…** from Inquiline in the menu bar. It shows the device's Google Services Framework ID; click **Copy Number and Open Page**.
+2. On Google's [registration page](https://www.google.com/android/uncertified), sign in with the same Google account and paste the number.
 3. Wait. Google can take from a few minutes to a few hours. Then quit and reopen Play Store.
 
 The registration belongs to this Android. If you remove Google Play and install it again, you get a new ID and register again.

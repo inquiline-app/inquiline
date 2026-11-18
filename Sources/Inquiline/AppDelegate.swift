@@ -277,6 +277,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, SPUSta
         menu.addItem(withTitle: "Add APK…", action: #selector(addAPK(_:)), keyEquivalent: "").target = self
         menu.addItem(withTitle: hasGooglePlay ? "Remove Google Play…" : "Install Google Play…",
                      action: #selector(changeGooglePlay(_:)), keyEquivalent: "").target = self
+        if hasGooglePlay {
+            menu.addItem(withTitle: "Register with Google…", action: #selector(registerWithGoogle(_:)), keyEquivalent: "").target = self
+        }
         menu.addItem(.separator())
         menu.addItem(withTitle: "Show Files in Finder", action: #selector(showFiles(_:)), keyEquivalent: "").target = self
         // For those who know to look, as the Mac's own menus keep their extra items: shown when
@@ -350,6 +353,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, SPUSta
     }
 
     /// Android's Settings in a window of its own, with Android's icon once Android can give it.
+    /// Google lists a device it hasn't certified once its owner enters the device's Google
+    /// Services Framework ID on Google's page. Inquiline reads the ID for them, so no Terminal.
+    @objc private func registerWithGoogle(_ sender: Any?) {
+        var id: String?
+        run("Reading this device's ID for Google…", {
+            try self.prepareAndroid()
+            id = AndroidRuntime.shared.googleServicesID()
+        }, failure: "Could Not Read the Device ID") {
+            let alert = NSAlert()
+            let page = URL(string: "https://www.google.com/android/uncertified")!
+            guard let id else {
+                alert.messageText = "Sign In to Play Store First"
+                alert.informativeText = "Android gets its ID for Google when you first sign in to Play Store. Open Play Store, sign in, then choose Register with Google… again."
+                alert.runModal()
+                return
+            }
+            alert.messageText = "Register This Device with Google"
+            alert.informativeText = "If Play Store says this device isn't Play Protect certified, enter this number on Google's registration page, signed in with the same Google account:\n\n\(id)\n\nGoogle can take from a few minutes to a few hours. Then quit and reopen Play Store."
+            alert.addButton(withTitle: "Copy Number and Open Page")
+            alert.addButton(withTitle: "Close")
+            guard alert.runModal() == .alertFirstButtonReturn else { return }
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(id, forType: .string)
+            NSWorkspace.shared.open(page)
+        }
+    }
+
     @objc private func openAndroidSettings(_ sender: Any?) {
         launchQueue.async {
             let icon = AndroidRuntime.shared.isRunning
