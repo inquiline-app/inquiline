@@ -246,11 +246,17 @@ private final class WidgetView: NSView {
             frameLayer.isHidden = !framed
             needsLayout = true
             if framed {
-                outside = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .keyDown]) { [weak self] _ in
+                outside = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
                     self?.framed = false
                 }
-                escape = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-                    if event.keyCode == 53 { self?.framed = false; return nil }
+                // Inquiline's own windows, another widget among them, and Esc while it's in front.
+                escape = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .leftMouseDown, .rightMouseDown]) { [weak self] event in
+                    guard let self else { return event }
+                    if event.type == .keyDown {
+                        if event.keyCode == 53 { self.framed = false; return nil }
+                    } else if event.window !== self.window {
+                        self.framed = false
+                    }
                     return event
                 }
             } else {
@@ -310,6 +316,33 @@ private final class WidgetView: NSView {
 
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
+    // The widget's window never comes to the front, where cursor rects work: the cursor follows
+    // the mouse here, as a window's edge shows it can be resized.
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        trackingAreas.forEach(removeTrackingArea)
+        addTrackingArea(NSTrackingArea(rect: .zero, options: [.mouseMoved, .mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+                                       owner: self))
+    }
+
+    override func mouseMoved(with event: NSEvent) {
+        guard gesture == nil else { return }
+        cursor(for: edges(at: convert(event.locationInWindow, from: nil))).set()
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        if gesture == nil { NSCursor.arrow.set() }
+    }
+
+    private func cursor(for at: (left: Bool, right: Bool, bottom: Bool, top: Bool)) -> NSCursor {
+        let across = at.left || at.right, down = at.bottom || at.top
+        if across && down, #available(macOS 15, *) {
+            let position: NSCursor.FrameResizePosition = at.top ? (at.left ? .topLeft : .topRight) : (at.left ? .bottomLeft : .bottomRight)
+            return .frameResize(position: position, directions: .all)
+        }
+        return across ? .resizeLeftRight : down ? .resizeUpDown : .arrow
+    }
+
     /// The point in the widget as Android has it: from the top left, in dp.
     private func androidPoint(_ event: NSEvent) -> CGPoint {
         let point = convert(event.locationInWindow, from: nil)
@@ -319,14 +352,14 @@ private final class WidgetView: NSView {
     private func edges(at point: CGPoint) -> (left: Bool, right: Bool, bottom: Bool, top: Bool) {
         guard let widget = owner?.widget(key) else { return (false, false, false, false) }
         let across = widget.resizeMode & 1 != 0, down = widget.resizeMode & 2 != 0
-        let edge = framed ? 14 : Self.edge
+        let edge = framed ? 18 : Self.edge
         return (across && point.x < edge, across && point.x > bounds.width - edge,
                 down && point.y < edge, down && point.y > bounds.height - edge)
     }
 
     override func resetCursorRects() {
         guard let widget = owner?.widget(key) else { return }
-        let edge = framed ? 14 : Self.edge
+        let edge = framed ? 18 : Self.edge
         if widget.resizeMode & 1 != 0 {
             addCursorRect(NSRect(x: 0, y: 0, width: edge, height: bounds.height), cursor: .resizeLeftRight)
             addCursorRect(NSRect(x: bounds.width - edge, y: 0, width: edge, height: bounds.height), cursor: .resizeLeftRight)
@@ -386,7 +419,8 @@ private final class WidgetView: NSView {
         self.gesture = nil
         switch gesture {
         case .pending where framed:
-            framed = false
+            // Inside its frame a click does nothing; outside, or Esc, ends it.
+            break
         case .pending:
             let point = androidPoint(event)
             owner?.touch(key, "down", at: point)
