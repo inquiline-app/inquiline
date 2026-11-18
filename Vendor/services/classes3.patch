@@ -1,6 +1,6 @@
 diff -ru orig3/com/android/server/wm/ContentRecorder.smali out-classes3.dex/com/android/server/wm/ContentRecorder.smali
---- orig3/com/android/server/wm/ContentRecorder.smali	2026-11-19 01:12:25
-+++ out-classes3.dex/com/android/server/wm/ContentRecorder.smali	2026-11-19 01:44:59
+--- orig3/com/android/server/wm/ContentRecorder.smali	2026-11-19 02:16:07
++++ out-classes3.dex/com/android/server/wm/ContentRecorder.smali	2026-11-19 02:16:07
 @@ -1299,10 +1299,23 @@
  
      move-result v1
@@ -26,8 +26,8 @@ diff -ru orig3/com/android/server/wm/ContentRecorder.smali out-classes3.dex/com/
      if-nez v0, :cond_ce
  
 diff -ru orig3/com/android/server/wm/DisplayContent.smali out-classes3.dex/com/android/server/wm/DisplayContent.smali
---- orig3/com/android/server/wm/DisplayContent.smali	2026-11-19 01:12:25
-+++ out-classes3.dex/com/android/server/wm/DisplayContent.smali	2026-11-19 00:58:24
+--- orig3/com/android/server/wm/DisplayContent.smali	2026-11-19 02:16:07
++++ out-classes3.dex/com/android/server/wm/DisplayContent.smali	2026-11-19 02:16:07
 @@ -8922,6 +8922,12 @@
  
      if-nez v0, :cond_c
@@ -71,8 +71,8 @@ diff -ru orig3/com/android/server/wm/DisplayContent.smali out-classes3.dex/com/a
      move-result-object v0
  
 diff -ru orig3/com/android/server/wm/RootWindowContainer.smali out-classes3.dex/com/android/server/wm/RootWindowContainer.smali
---- orig3/com/android/server/wm/RootWindowContainer.smali	2026-11-19 01:12:25
-+++ out-classes3.dex/com/android/server/wm/RootWindowContainer.smali	2026-11-19 01:28:52
+--- orig3/com/android/server/wm/RootWindowContainer.smali	2026-11-19 02:16:07
++++ out-classes3.dex/com/android/server/wm/RootWindowContainer.smali	2026-11-19 02:16:07
 @@ -12234,3 +12234,47 @@
      :cond_17
      return-void
@@ -122,8 +122,8 @@ diff -ru orig3/com/android/server/wm/RootWindowContainer.smali out-classes3.dex/
 +    return-object v0
 +.end method
 diff -ru orig3/com/android/server/wm/TaskLaunchParamsModifier.smali out-classes3.dex/com/android/server/wm/TaskLaunchParamsModifier.smali
---- orig3/com/android/server/wm/TaskLaunchParamsModifier.smali	2026-11-19 01:12:25
-+++ out-classes3.dex/com/android/server/wm/TaskLaunchParamsModifier.smali	2026-11-19 01:28:52
+--- orig3/com/android/server/wm/TaskLaunchParamsModifier.smali	2026-11-19 02:16:07
++++ out-classes3.dex/com/android/server/wm/TaskLaunchParamsModifier.smali	2026-11-19 02:16:15
 @@ -1838,6 +1838,7 @@
  .method public final getFallbackDisplayAreaForActivity(Lcom/android/server/wm/ActivityRecord;Lcom/android/server/wm/ActivityStarter$Request;)Lcom/android/server/wm/TaskDisplayArea;
      .registers 6
@@ -132,14 +132,26 @@ diff -ru orig3/com/android/server/wm/TaskLaunchParamsModifier.smali out-classes3
      if-eqz p1, :cond_30
  
      .line 534
-@@ -2022,6 +2023,50 @@
+@@ -2022,6 +2023,62 @@
  
  .method public final getPreferredLaunchTaskDisplayArea(Lcom/android/server/wm/Task;Landroid/app/ActivityOptions;Lcom/android/server/wm/ActivityRecord;Lcom/android/server/wm/LaunchParamsController$LaunchParams;Lcom/android/server/wm/ActivityRecord;Lcom/android/server/wm/ActivityStarter$Request;)Lcom/android/server/wm/TaskDisplayArea;
      .registers 14
 +
 +    # Inquiline: the assistant's own screens open on the screen of the app in use, over the app it
-+    # reads, whatever screen they ask for or last were on.
++    # reads, unless they are asked for on an app's own screen, as Inquiline opens the assistant's
++    # app (Google) in its window; the main screen, which nothing shows, or none, or the one they
++    # last were on, is not that.
 +    if-eqz p5, :inquiline_choose
++
++    if-eqz p2, :inquiline_assistant
++
++    invoke-virtual {p2}, Landroid/app/ActivityOptions;->getLaunchDisplayId()I
++
++    move-result v0
++
++    if-gtz v0, :inquiline_choose
++
++    :inquiline_assistant
 +
 +    iget-object v0, p0, Lcom/android/server/wm/TaskLaunchParamsModifier;->mSupervisor:Lcom/android/server/wm/ActivityTaskSupervisor;
 +
@@ -184,8 +196,8 @@ diff -ru orig3/com/android/server/wm/TaskLaunchParamsModifier.smali out-classes3
      const/4 v0, 0x0
  
 diff -ru orig3/com/android/server/wm/WindowManagerService.smali out-classes3.dex/com/android/server/wm/WindowManagerService.smali
---- orig3/com/android/server/wm/WindowManagerService.smali	2026-11-19 01:12:26
-+++ out-classes3.dex/com/android/server/wm/WindowManagerService.smali	2026-11-19 01:28:52
+--- orig3/com/android/server/wm/WindowManagerService.smali	2026-11-19 02:16:07
++++ out-classes3.dex/com/android/server/wm/WindowManagerService.smali	2026-11-19 02:16:07
 @@ -33158,9 +33158,8 @@
      :try_start_10
      iget-object p0, p0, Lcom/android/server/wm/WindowManagerService;->mRoot:Lcom/android/server/wm/RootWindowContainer;
