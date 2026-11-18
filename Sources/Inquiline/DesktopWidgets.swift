@@ -2,9 +2,9 @@ import AppKit
 
 /// Android's widgets on the Mac's desktop, each as Android draws it, in a window of its own
 /// that sits on the desktop below every other window: as a phone's home screen has them, not
-/// fitted to the Mac's own widgets. A click is a tap, a scroll scrolls its lists, a drag moves
-/// it as a window, its edges resize it within the sizes the widget allows, and widgets never
-/// overlap. A right-click gives what a long press gives on a phone.
+/// fitted to the Mac's own widgets, at the size its app gives it. A click is a tap, a scroll
+/// scrolls its lists, a drag moves it as a window, and widgets never overlap. A right-click gives
+/// what a long press gives on a phone.
 ///
 /// Inquiline keeps where they are (desktop-widgets.json) and their last pictures, so they show
 /// at once when Inquiline starts; the helper inside Android hosts them (WidgetHost) and sends a
@@ -20,10 +20,6 @@ final class DesktopWidgets {
         let label: String
         /// In the Mac's screen coordinates, in points, which are Android's dp.
         var frame: CGRect
-        let minSize: CGSize
-        let maxSize: CGSize
-        /// Android's resize mode: 1 across, 2 down.
-        let resizeMode: Int
     }
 
     /// Sends a message to the helper inside Android.
@@ -48,7 +44,6 @@ final class DesktopWidgets {
 
     /// At launch: the widgets where they were, with their last pictures.
     func start() {
-        Self.setCursorInBackground()
         if let data = try? Data(contentsOf: Self.listFile),
            let list = try? JSONDecoder().decode([Widget].self, from: data) {
             widgets = list
@@ -56,22 +51,43 @@ final class DesktopWidgets {
         for widget in widgets { show(widget) }
     }
 
-    /// The Mac lets only the app in front set the cursor, and Inquiline never is while the
-    /// mouse is over a widget on the desktop: it's let set it from behind, as desktop tools are,
-    /// so a widget's edges show the resize cursor as a window's do.
-    private static func setCursorInBackground() {
-        typealias Connection = @convention(c) () -> Int32
-        typealias SetProperty = @convention(c) (Int32, Int32, CFString, CFTypeRef) -> Int32
-        guard let skyLight = dlopen("/System/Library/Frameworks/ApplicationServices.framework/ApplicationServices", RTLD_LAZY),
-              let connection = dlsym(skyLight, "_CGSDefaultConnection"),
-              let setProperty = dlsym(skyLight, "CGSSetConnectionProperty") else { return }
-        let id = unsafeBitCast(connection, to: Connection.self)()
-        _ = unsafeBitCast(setProperty, to: SetProperty.self)(id, id, "SetsCursorInBackground" as CFString, kCFBooleanTrue)
+    /// The helper connected: Android hosts each widget again, at the size its app gives it now.
+    func connected() {
+        let packages = Set(widgets.map(\.package))
+        DispatchQueue.global().async {
+            var sizes: [String: CGSize] = [:]
+            for package in packages {
+                for info in AndroidRuntime.shared.widgetList(package: package) ?? [] {
+                    if let provider = info["provider"] as? String { sizes[provider] = Self.size(of: info) }
+                }
+            }
+            DispatchQueue.main.async {
+                for index in self.widgets.indices {
+                    guard let size = sizes[self.widgets[index].provider], size != self.widgets[index].frame.size else { continue }
+                    // Its top left stays where it is.
+                    let old = self.widgets[index].frame
+                    self.widgets[index].frame = CGRect(x: old.minX, y: old.maxY - size.height, width: size.width, height: size.height)
+                    self.windows[self.widgets[index].key]?.setFrame(self.widgets[index].frame, display: true)
+                }
+                self.save()
+                for widget in self.widgets { self.place(widget) }
+            }
+        }
     }
 
-    /// The helper connected: Android hosts each widget again at its size.
-    func connected() {
-        for widget in widgets { place(widget) }
+    /// Its size on a phone's home screen: the cells its app asks for, or as many as its smallest
+    /// size takes, each a phone's cell of about 96 by 112 dp, less the space between them.
+    private static func size(of info: [String: Any]) -> CGSize {
+        func number(_ key: String) -> Double { Double(info[key] as? Int ?? 0) }
+        func cells(_ asked: Double, smallest: Double, cell: Double) -> Double {
+            asked > 0 ? asked : max(1, ((smallest + 8) / cell).rounded(.up))
+        }
+        let across = cells(number("targetCellWidth"), smallest: number("minWidth"), cell: 96)
+        let down = cells(number("targetCellHeight"), smallest: number("minHeight"), cell: 112)
+        var width = max(across * 96 - 8, number("minWidth")), height = max(down * 112 - 8, number("minHeight"))
+        if number("maxResizeWidth") > 0 { width = min(width, number("maxResizeWidth")) }
+        if number("maxResizeHeight") > 0 { height = min(height, number("maxResizeHeight")) }
+        return CGSize(width: width.rounded(), height: height.rounded())
     }
 
     /// From an app's settings: one of its widgets onto the desktop, at its own default size, in
@@ -86,24 +102,8 @@ final class DesktopWidgets {
 
     private func add(package: String, provider: String, info: [String: Any]) {
         guard !widgets.contains(where: { $0.provider == provider }) else { return }
-        func number(_ key: String) -> Double { Double(info[key] as? Int ?? 0) }
-        let minimum = CGSize(width: max(number("minResizeWidth") > 0 ? number("minResizeWidth") : number("minWidth"), 40),
-                             height: max(number("minResizeHeight") > 0 ? number("minResizeHeight") : number("minHeight"), 40))
-        let maximum = CGSize(width: number("maxResizeWidth") > 0 ? number("maxResizeWidth") : 1000,
-                             height: number("maxResizeHeight") > 0 ? number("maxResizeHeight") : 1000)
-        // Its size on a phone's home screen: the cells it asks for, or as many as its smallest
-        // size takes, each a phone's cell of about 96 by 112 dp, less the space between them.
-        func cells(_ asked: Double, smallest: Double, cell: Double) -> Double {
-            asked > 0 ? asked : max(1, ((smallest + 8) / cell).rounded(.up))
-        }
-        let across = cells(number("targetCellWidth"), smallest: number("minWidth"), cell: 96)
-        let down = cells(number("targetCellHeight"), smallest: number("minHeight"), cell: 112)
-        let width = min(max(across * 96 - 8, number("minWidth"), minimum.width), maximum.width)
-        let height = min(max(down * 112 - 8, number("minHeight"), minimum.height), maximum.height)
-        let label = info["label"] as? String ?? ""
-        let widget = Widget(key: UUID().uuidString, package: package, provider: provider, label: label,
-                            frame: freePlace(for: CGSize(width: width.rounded(), height: height.rounded())),
-                            minSize: minimum, maxSize: maximum, resizeMode: info["resizeMode"] as? Int ?? 0)
+        let widget = Widget(key: UUID().uuidString, package: package, provider: provider,
+                            label: info["label"] as? String ?? "", frame: freePlace(for: Self.size(of: info)))
         widgets.append(widget)
         save()
         show(widget)
@@ -218,15 +218,11 @@ final class DesktopWidgets {
 
     fileprivate func widget(_ key: String) -> Widget? { widgets.first { $0.key == key } }
 
-    /// Moved or resized: kept, and a new size laid out again by Android.
-    fileprivate func changed(_ key: String, frame: CGRect) {
+    /// Moved: kept where it is.
+    fileprivate func moved(_ key: String, to frame: CGRect) {
         guard let index = widgets.firstIndex(where: { $0.key == key }) else { return }
-        let resized = widgets[index].frame.size != frame.size
         widgets[index].frame = frame
         save()
-        if resized {
-            send?(["resizeWidget": key, "width": Int(frame.width), "height": Int(frame.height)])
-        }
     }
 
     fileprivate func touch(_ key: String, _ action: String, at point: CGPoint) {
@@ -257,7 +253,6 @@ private final class WidgetWindow: NSPanel {
         hasShadow = false
         hidesOnDeactivate = false
         isReleasedWhenClosed = false
-        acceptsMouseMovedEvents = true
         contentView = widgetView
     }
 
@@ -265,86 +260,17 @@ private final class WidgetWindow: NSPanel {
     override var canBecomeMain: Bool { false }
 }
 
+/// The widget as Android draws it. Its clear parts are the desktop's: clicks there go through.
 private final class WidgetView: NSView {
     let key: String
     weak var owner: DesktopWidgets?
 
     var picture: NSImage? {
-        didSet {
-            let image = picture?.cgImage(forProposedRect: nil, context: nil, hints: nil)
-            layer?.contents = image
-            drawn = image.flatMap(Self.drawnArea)
-            if framed { needsLayout = true }
-        }
+        didSet { layer?.contents = picture?.cgImage(forProposedRect: nil, context: nil, hints: nil) }
     }
 
-    /// The part of the picture the widget draws, in its pixels from the top left: its frame goes
-    /// around this, not the clear space a widget may leave in its box.
-    private var drawn: CGRect?
-
-    private static func drawnArea(of image: CGImage) -> CGRect? {
-        let width = image.width, height = image.height
-        var pixels = [UInt8](repeating: 0, count: width * height * 4)
-        guard let context = CGContext(data: &pixels, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width * 4,
-                                      space: CGColorSpaceCreateDeviceRGB(),
-                                      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
-        context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
-        var minX = width, minY = height, maxX = -1, maxY = -1
-        for y in 0..<height {
-            for x in 0..<width where pixels[(y * width + x) * 4 + 3] > 8 {
-                minX = min(minX, x); maxX = max(maxX, x); minY = min(minY, y); maxY = max(maxY, y)
-            }
-        }
-        guard maxX >= minX, maxY >= minY else { return nil }
-        return CGRect(x: minX, y: minY, width: maxX - minX + 1, height: maxY - minY + 1)
-    }
-
-    /// Where the frame shows, in the view: around what the widget draws.
-    private var frameRect: CGRect {
-        let whole = bounds.insetBy(dx: 9, dy: 9)
-        guard let drawn, let image = layer?.contents, CFGetTypeID(image as CFTypeRef) == CGImage.typeID else { return whole }
-        // The picture fills the view, stretched while a resize waits for Android's new one.
-        let picture = image as! CGImage
-        let sx = CGFloat(picture.width) / max(bounds.width, 1), sy = CGFloat(picture.height) / max(bounds.height, 1)
-        let rect = CGRect(x: drawn.minX / sx, y: bounds.height - drawn.maxY / sy, width: drawn.width / sx, height: drawn.height / sy)
-        return rect.insetBy(dx: -4, dy: -4).intersection(whole)
-    }
-
-    private enum Gesture { case pending, moving, resizing(left: Bool, right: Bool, bottom: Bool, top: Bool) }
-
-    /// Showing its frame and handles, as a long press does on a phone, until a click elsewhere.
-    private var framed = false {
-        didSet {
-            frameLayer.isHidden = !framed
-            needsLayout = true
-            if framed {
-                outside = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
-                    self?.framed = false
-                }
-                // Inquiline's own windows, another widget among them, and Esc while it's in front.
-                escape = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .leftMouseDown, .rightMouseDown]) { [weak self] event in
-                    guard let self else { return event }
-                    if event.type == .keyDown {
-                        if event.keyCode == 53 { self.framed = false; return nil }
-                    } else if event.window !== self.window {
-                        self.framed = false
-                    }
-                    return event
-                }
-            } else {
-                outside.map(NSEvent.removeMonitor)
-                escape.map(NSEvent.removeMonitor)
-                outside = nil
-                escape = nil
-            }
-            window?.invalidateCursorRects(for: self)
-            if !framed { NSCursor.arrow.set() }
-        }
-    }
-    private var outside: Any?
-    private var escape: Any?
-    private let frameLayer = CAShapeLayer()
-    private var gesture: Gesture?
+    private var pressed = false
+    private var moving = false
     private var start = CGPoint.zero
     private var startFrame = CGRect.zero
     private var scrolled: CGFloat = 0
@@ -354,89 +280,16 @@ private final class WidgetView: NSView {
         super.init(frame: .zero)
         wantsLayer = true
         layer?.contentsGravity = .resize
-        // The Mac passes clicks on a window's clear pixels through to what is behind it; widgets'
-        // edges are often clear. A fill too faint to see makes all of the widget's box take them,
-        // as its whole cell does on a phone, and its edges resize it as a window's do.
-        layer?.backgroundColor = NSColor(white: 0, alpha: 0.004).cgColor
-        frameLayer.fillColor = nil
-        frameLayer.isHidden = true
-        layer?.addSublayer(frameLayer)
-    }
-
-    override func layout() {
-        super.layout()
-        guard framed, let widget = owner?.widget(key) else { return }
-        // A rounded frame in the accent, with a round handle on each side it resizes along.
-        let path = CGMutablePath()
-        let box = frameRect
-        path.addRoundedRect(in: box, cornerWidth: 12, cornerHeight: 12)
-        var handles: [CGPoint] = []
-        if widget.resizeMode & 1 != 0 { handles += [CGPoint(x: box.minX, y: box.midY), CGPoint(x: box.maxX, y: box.midY)] }
-        if widget.resizeMode & 2 != 0 { handles += [CGPoint(x: box.midX, y: box.minY), CGPoint(x: box.midX, y: box.maxY)] }
-        let dots = CGMutablePath()
-        for handle in handles { dots.addEllipse(in: CGRect(x: handle.x - 7, y: handle.y - 7, width: 14, height: 14)) }
-        frameLayer.frame = bounds
-        frameLayer.path = path
-        frameLayer.lineWidth = 2
-        frameLayer.strokeColor = NSColor.controlAccentColor.cgColor
-        let dotLayer = (frameLayer.sublayers?.first as? CAShapeLayer) ?? {
-            let layer = CAShapeLayer()
-            frameLayer.addSublayer(layer)
-            return layer
-        }()
-        dotLayer.path = dots
-        dotLayer.fillColor = NSColor.controlAccentColor.cgColor
-        dotLayer.strokeColor = NSColor.white.cgColor
-        dotLayer.lineWidth = 2
     }
 
     required init?(coder: NSCoder) { fatalError() }
 
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
-    // The widget's window never comes to the front, where cursor rects work: the cursor follows
-    // the mouse here, as a window's edge shows it can be resized.
-    override func updateTrackingAreas() {
-        super.updateTrackingAreas()
-        trackingAreas.forEach(removeTrackingArea)
-        addTrackingArea(NSTrackingArea(rect: .zero, options: [.mouseMoved, .mouseEnteredAndExited, .activeAlways, .inVisibleRect],
-                                       owner: self))
-    }
-
-    override func mouseMoved(with event: NSEvent) {
-        guard gesture == nil else { return }
-        cursor(for: edges(at: convert(event.locationInWindow, from: nil))).set()
-    }
-
-    override func mouseExited(with event: NSEvent) {
-        if gesture == nil { NSCursor.arrow.set() }
-    }
-
-    private func cursor(for at: (left: Bool, right: Bool, bottom: Bool, top: Bool)) -> NSCursor {
-        let across = at.left || at.right, down = at.bottom || at.top
-        if across && down, #available(macOS 15, *) {
-            let position: NSCursor.FrameResizePosition = at.top ? (at.left ? .topLeft : .topRight) : (at.left ? .bottomLeft : .bottomRight)
-            return .frameResize(position: position, directions: .all)
-        }
-        return across ? .resizeLeftRight : down ? .resizeUpDown : .arrow
-    }
-
     /// The point in the widget as Android has it: from the top left, in dp.
     private func androidPoint(_ event: NSEvent) -> CGPoint {
         let point = convert(event.locationInWindow, from: nil)
         return CGPoint(x: point.x, y: bounds.height - point.y)
-    }
-
-    private func edges(at point: CGPoint) -> (left: Bool, right: Bool, bottom: Bool, top: Bool) {
-        guard let widget = owner?.widget(key) else { return (false, false, false, false) }
-        // Only in its frame, as on a phone only after a long press.
-        guard framed else { return (false, false, false, false) }
-        let across = widget.resizeMode & 1 != 0, down = widget.resizeMode & 2 != 0
-        let box = frameRect, grip: CGFloat = 10
-        let inside = box.insetBy(dx: -grip, dy: -grip).contains(point)
-        guard inside else { return (false, false, false, false) }
-        return (across && abs(point.x - box.minX) < grip, across && abs(point.x - box.maxX) < grip,
-                down && abs(point.y - box.minY) < grip, down && abs(point.y - box.maxY) < grip)
     }
 
     override func mouseDown(with event: NSEvent) {
@@ -445,45 +298,26 @@ private final class WidgetView: NSView {
         guard let window else { return }
         start = NSEvent.mouseLocation
         startFrame = window.frame
-        let at = edges(at: convert(event.locationInWindow, from: nil))
-        gesture = at.left || at.right || at.bottom || at.top
-            ? .resizing(left: at.left, right: at.right, bottom: at.bottom, top: at.top) : .pending
+        pressed = true
+        moving = false
     }
 
     override func mouseDragged(with event: NSEvent) {
-        guard let window, let owner, let widget = owner.widget(key), let gesture else { return }
+        guard pressed, let window, let owner else { return }
         let now = NSEvent.mouseLocation
         let dx = now.x - start.x, dy = now.y - start.y
-        switch gesture {
-        case .pending:
-            // A drag, not a tap: the widget moves, as a window does.
-            if hypot(dx, dy) > 3 { self.gesture = .moving; mouseDragged(with: event) }
-        case .moving:
-            let current = window.frame
-            var proposed = Self.onScreen(startFrame.offsetBy(dx: dx, dy: dy), at: now)
-            // Blocked by another widget, it slides along it.
-            if owner.overlaps(proposed, except: key) {
-                let across = CGRect(origin: CGPoint(x: proposed.minX, y: current.minY), size: current.size)
-                let down = CGRect(origin: CGPoint(x: current.minX, y: proposed.minY), size: current.size)
-                proposed = !owner.overlaps(across, except: key) ? across : !owner.overlaps(down, except: key) ? down : current
-            }
-            window.setFrameOrigin(proposed.origin)
-        case let .resizing(left, right, bottom, top):
-            var frame = startFrame
-            if right { frame.size.width = startFrame.width + dx }
-            if left { frame.size.width = startFrame.width - dx }
-            if top { frame.size.height = startFrame.height + dy }
-            if bottom { frame.size.height = startFrame.height - dy }
-            frame.size.width = min(max(frame.width, widget.minSize.width), widget.maxSize.width).rounded()
-            frame.size.height = min(max(frame.height, widget.minSize.height), widget.maxSize.height).rounded()
-            if left { frame.origin.x = startFrame.maxX - frame.width }
-            if bottom { frame.origin.y = startFrame.maxY - frame.height }
-            // Not past the screen's edge.
-            if let screen = NSScreen.screens.first(where: { $0.frame.contains(now) })?.visibleFrame,
-               !screen.contains(frame) { return }
-            // Stops at a neighbour.
-            if !owner.overlaps(frame, except: key) { window.setFrame(frame, display: true) }
+        // A drag, not a tap: the widget moves, as a window does.
+        if !moving, hypot(dx, dy) <= 3 { return }
+        moving = true
+        let current = window.frame
+        var proposed = Self.onScreen(startFrame.offsetBy(dx: dx, dy: dy), at: now)
+        // Blocked by another widget, it slides along it.
+        if owner.overlaps(proposed, except: key) {
+            let across = CGRect(origin: CGPoint(x: proposed.minX, y: current.minY), size: current.size)
+            let down = CGRect(origin: CGPoint(x: current.minX, y: proposed.minY), size: current.size)
+            proposed = !owner.overlaps(across, except: key) ? across : !owner.overlaps(down, except: key) ? down : current
         }
+        window.setFrameOrigin(proposed.origin)
     }
 
     /// Kept whole on the screen the mouse is on, below the menu bar and beside the Dock.
@@ -496,19 +330,14 @@ private final class WidgetView: NSView {
     }
 
     override func mouseUp(with event: NSEvent) {
-        guard let window, let gesture else { return }
-        self.gesture = nil
-        switch gesture {
-        case .pending where framed:
-            // Inside its frame a click does nothing; outside, or Esc, ends it.
-            break
-        case .pending:
+        guard pressed, let window else { return }
+        pressed = false
+        if moving {
+            owner?.moved(key, to: window.frame)
+        } else {
             let point = androidPoint(event)
             owner?.touch(key, "down", at: point)
             owner?.touch(key, "up", at: point)
-        case .moving, .resizing:
-            owner?.changed(key, frame: window.frame)
-            window.invalidateCursorRects(for: self)
         }
     }
 
@@ -526,9 +355,6 @@ private final class WidgetView: NSView {
         let appName = AppShortcuts.bundle(of: widget.package).map { FileManager.default.displayName(atPath: $0.path) }
             .map { ($0 as NSString).deletingPathExtension } ?? widget.label
         menu.addItem(withTitle: "Open \(appName)", action: #selector(openApp), keyEquivalent: "").target = self
-        if widget.resizeMode & 3 != 0 {
-            menu.addItem(withTitle: "Resize Widget", action: #selector(resizeWidget), keyEquivalent: "").target = self
-        }
         menu.addItem(.separator())
         menu.addItem(withTitle: "Remove Widget", action: #selector(removeWidget), keyEquivalent: "").target = self
         NSMenu.popUpContextMenu(menu, with: event, for: self)
@@ -536,5 +362,4 @@ private final class WidgetView: NSView {
 
     @objc private func openApp() { owner?.openApp(key) }
     @objc private func removeWidget() { owner?.remove(key: key) }
-    @objc private func resizeWidget() { framed = true }
 }
