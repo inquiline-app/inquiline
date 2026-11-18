@@ -20,3 +20,23 @@ diff -ru orig1/com/android/server/display/DisplayManagerService.smali out-classe
      .line 2078
      iget-object v0, p0, Lcom/android/server/display/DisplayManagerService;->mVirtualDisplayAdapter:Lcom/android/server/display/VirtualDisplayAdapter;
  
+diff -ru orig1/com/android/server/display/VirtualDisplayAdapter$VirtualDisplayDevice.smali out-classes1.dex/com/android/server/display/VirtualDisplayAdapter$VirtualDisplayDevice.smali
+--- orig1/com/android/server/display/VirtualDisplayAdapter$VirtualDisplayDevice.smali	2026-11-19 02:01:38
++++ out-classes1.dex/com/android/server/display/VirtualDisplayAdapter$VirtualDisplayDevice.smali	2026-11-19 02:07:23
+@@ -659,6 +659,16 @@
+ 
+     iput v3, v0, Lcom/android/server/display/DisplayDeviceInfo;->flags:I
+ 
++    # Inquiline: a mirroring screen may have its own display group too, as a screen recording does
++    # (DisplayManagerService.createVirtualDisplayLocked), so its power is not the main screen's.
++    and-int/lit16 v5, v2, 0x800
++
++    if-eqz v5, :goto_84
++
++    or-int/lit16 v3, v3, 0x4000
++
++    iput v3, v0, Lcom/android/server/display/DisplayDeviceInfo;->flags:I
++
+     goto :goto_84
+ 
+     .line 562
