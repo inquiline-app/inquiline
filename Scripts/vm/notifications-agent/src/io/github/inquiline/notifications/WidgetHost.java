@@ -35,6 +35,11 @@ import java.util.Map;
  * screen of its own that nobody sees. Each new picture of it goes to Inquiline as a PNG, at most
  * once a second, as the Mac only redraws widgets now and then anyway.
  *
+ * As a phone's home screen draws its widgets only while its screen is on, these screens are on
+ * only while Android's is: with them off, Android sleeps as it would with none. A widget that
+ * gets news while Android sleeps (an alarm woke it) is drawn once, and its screen goes off again;
+ * the Mac shows the last picture meanwhile.
+ *
  * Inquiline is the one that knows which widgets are on the Mac; after Android restarts it places
  * them again, so the host starts empty each time.
  */
@@ -54,6 +59,8 @@ final class WidgetHost {
         ImageReader reader;
         Presentation presentation;
         long lastSent;
+        /** Drawn once while Android's screen is off; its screen goes off after this picture. */
+        boolean once;
         int width, height;
         boolean sendQueued;
         Bitmap latest;
@@ -66,6 +73,8 @@ final class WidgetHost {
     private final AppWidgetHost host;
     private final AppWidgetManager manager;
     private final Map<String, Placed> placed = Collections.synchronizedMap(new HashMap<>());
+    /** Android's screen, which the widgets' own follow; on the main thread. */
+    private boolean screenOn;
 
     WidgetHost(Context context, Sink sink) {
         this.context = context;
@@ -74,7 +83,33 @@ final class WidgetHost {
         thread.start();
         frames = new Handler(thread.getLooper());
         manager = AppWidgetManager.getInstance(context);
-        host = new AppWidgetHost(context, HOST_ID);
+        host = new AppWidgetHost(context, HOST_ID) {
+            @Override
+            protected AppWidgetHostView onCreateView(Context context, int id, AppWidgetProviderInfo info) {
+                return new AppWidgetHostView(context) {
+                    @Override
+                    public void updateAppWidget(android.widget.RemoteViews views) {
+                        super.updateAppWidget(views);
+                        drawOnce(getAppWidgetId());
+                    }
+                };
+            }
+        };
+        screenOn = context.getSystemService(android.os.PowerManager.class).isInteractive();
+        android.content.IntentFilter screen = new android.content.IntentFilter(android.content.Intent.ACTION_SCREEN_ON);
+        screen.addAction(android.content.Intent.ACTION_SCREEN_OFF);
+        context.registerReceiver(new android.content.BroadcastReceiver() {
+            @Override
+            public void onReceive(Context ignored, android.content.Intent intent) {
+                screenOn = android.content.Intent.ACTION_SCREEN_ON.equals(intent.getAction());
+                synchronized (placed) {
+                    for (Placed widget : placed.values()) {
+                        widget.once = false;
+                        light(widget, screenOn);
+                    }
+                }
+            }
+        }, screen, null, main);
         // What a previous run bound is let go: Inquiline places what the Mac shows again.
         host.deleteHost();
         host.startListening();
@@ -115,6 +150,8 @@ final class WidgetHost {
                     (window, metrics, dropped) -> copy(key, widget), frames);
             widget.presentation.show();
             placed.put(key, widget);
+            // Drawn now in any case; kept on only while Android's screen is.
+            widget.once = !screenOn;
             android.util.Log.i("InquilineWidgets", "Showing a widget at " + widthDp + "x" + heightDp + " dp");
         });
     }
@@ -131,6 +168,25 @@ final class WidgetHost {
         widget.display.release();
         widget.reader.close();
         host.deleteAppWidgetId(widget.id);
+    }
+
+    /** A widget's screen on or off: without its surface it's off, and Android may sleep. */
+    private static void light(Placed widget, boolean on) {
+        widget.display.setSurface(on ? widget.reader.getSurface() : null);
+    }
+
+    /** News for a widget while Android's screen is off: its screen comes on for one picture. */
+    private void drawOnce(int id) {
+        main.post(() -> {
+            if (screenOn) return;
+            synchronized (placed) {
+                for (Placed widget : placed.values()) {
+                    if (widget.id != id) continue;
+                    widget.once = true;
+                    light(widget, true);
+                }
+            }
+        });
     }
 
     private static Bundle sizeOptions(int widthDp, int heightDp) {
@@ -155,6 +211,10 @@ final class WidgetHost {
                 return;
             }
             widget.latest = picture;
+            if (widget.once) {
+                widget.once = false;
+                main.post(() -> { if (!screenOn) light(widget, false); });
+            }
             if (widget.sendQueued) return;
             long wait = widget.lastSent + MIN_INTERVAL - SystemClock.uptimeMillis();
             widget.sendQueued = true;

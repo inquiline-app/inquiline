@@ -141,9 +141,6 @@ enum AndroidFiles {
     }
 
     /// Where Android's disk is mounted now, found from the system, not remembered.
-    /// Whether the disk is in Finder: Android stays awake meanwhile, as a phone does while a
-    /// computer has its files open, until the user ejects it.
-    static var isMounted: Bool { !mounted().isEmpty }
 
     private static func mounted() -> [URL] {
         var list: UnsafeMutablePointer<statfs>?
