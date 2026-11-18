@@ -232,8 +232,12 @@ final class AndroidRuntime {
         // The assistant reuses its open screen, which is left on another screen when the window it
         // was over closed (Android moves a closed screen's tasks to the main screen). That one is
         // closed first, so the assistant opens anew over this app, as on a phone's one screen.
+        // Android asks before the assistant shares the screen live (Gemini Live), on the main
+        // screen, which nothing shows; so the assistant, which the user calls with this button,
+        // may share it, and what it shares is this app's screen (Vendor/services).
         let stale = """
             p=$(settings get secure voice_interaction_service | cut -d/ -f1); \
+            appops set $p PROJECT_MEDIA allow; \
             am stack list | awk -v t=\(task) -v p="$p/" '\
             /^RootTask/ { r = substr($2, 4); for (i = 3; i <= NF; i++) if ($i ~ /^displayId=/) d = substr($i, 11) } \
             /^  taskId=/ { if (substr($1, 8) + 0 == t) td = d; if (index($2, p) == 1) s[r] = d } \

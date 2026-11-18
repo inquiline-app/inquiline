@@ -1,3 +1,30 @@
+diff -ru orig3/com/android/server/wm/ContentRecorder.smali out-classes3.dex/com/android/server/wm/ContentRecorder.smali
+--- orig3/com/android/server/wm/ContentRecorder.smali	2026-11-19 01:12:25
++++ out-classes3.dex/com/android/server/wm/ContentRecorder.smali	2026-11-19 01:44:59
+@@ -1299,10 +1299,23 @@
+ 
+     move-result v1
+ 
++    # Inquiline: sharing the whole screen shares the screen of the app in use, which its window
++    # shows, as the main screen shows nothing.
++    if-nez v1, :inquiline_display
++
++    invoke-virtual {v0}, Lcom/android/server/wm/RootWindowContainer;->getInquilineAppDisplayContent()Lcom/android/server/wm/DisplayContent;
++
++    move-result-object v0
++
++    goto :inquiline_found
++
++    :inquiline_display
+     .line 459
+     invoke-virtual {v0, v1}, Lcom/android/server/wm/RootWindowContainer;->getDisplayContent(I)Lcom/android/server/wm/DisplayContent;
+ 
+     move-result-object v0
++
++    :inquiline_found
+ 
+     if-nez v0, :cond_ce
+ 
 diff -ru orig3/com/android/server/wm/DisplayContent.smali out-classes3.dex/com/android/server/wm/DisplayContent.smali
 --- orig3/com/android/server/wm/DisplayContent.smali	2026-11-19 01:12:25
 +++ out-classes3.dex/com/android/server/wm/DisplayContent.smali	2026-11-19 00:58:24
