@@ -169,7 +169,10 @@ public final class AdBlock extends VpnService {
             updates = new Thread(() -> {
                 while (true) {
                     try {
-                        if (Lists.update(this)) proxy.setFilter(filter());
+                        if (Lists.update(this)) {
+                            proxy.setFilter(filter());
+                            blocked = names();
+                        }
                     } catch (Exception e) {
                         android.util.Log.w("InquilineAdBlock", "The lists could not be updated", e);
                     }
@@ -356,8 +359,29 @@ public final class AdBlock extends VpnService {
     }
 
     private void loadList() {
-        if (blocked != null) return;
+        if (blocked == null) blocked = names();
+    }
+
+    /**
+     * The names whose lookups fail: the hosts list, and every whole domain the app ad networks'
+     * list (AdGuard Mobile, "||name^") blocks. Ad SDKs fetch their ads over connections the
+     * proxy doesn't see; the lookup is where they can be stopped, before an ad wins an auction
+     * and opens over the app with nothing to show.
+     */
+    private Set<String> names() {
         Set<String> names = new HashSet<>(100_000);
+        for (Lists.List list : Lists.ALL) {
+            if (!list.file.equals("adguard-mobile.txt")) continue;
+            try (BufferedReader in = Lists.open(this, list)) {
+                String line;
+                while (in != null && (line = in.readLine()) != null) {
+                    if (line.startsWith("||") && line.endsWith("^") && line.matches("\\|\\|[a-z0-9.-]+\\^")) {
+                        names.add(line.substring(2, line.length() - 1));
+                    }
+                }
+            } catch (Exception ignored) {
+            }
+        }
         try (BufferedReader in = new BufferedReader(new InputStreamReader(getAssets().open("blocklist.txt"), StandardCharsets.UTF_8))) {
             String line;
             while ((line = in.readLine()) != null) {
@@ -365,7 +389,7 @@ public final class AdBlock extends VpnService {
             }
         } catch (Exception ignored) {
         }
-        blocked = names;
+        return names;
     }
 
     /** The network's own DNS server, from before this VPN. */
