@@ -108,6 +108,7 @@ final class AndroidRuntime {
         turnOffBluetooth()
         letGoogleLocate()
         letGoogleFill()
+        keepUnlocked()
         letHelperHostWidgets()
         nameDevice()
         watchPackages()
@@ -206,6 +207,20 @@ final class AndroidRuntime {
         if unset(1) {
             _ = try? shell("settings put secure credential_service \(passkeys); settings put secure credential_service_primary \(passkeys)")
         }
+    }
+
+    /// Android here never has a screen lock: its lock screen is on a screen no window shows, so
+    /// with one its apps' windows would stay black, and after each start its apps' data would
+    /// stay locked until it's unlocked. The Mac's own login guards it instead. Settings' screens
+    /// that set a lock are turned off, as is the one other apps ask for (passkeys do).
+    private func keepUnlocked() {
+        let screens = ["ChooseLockGeneric", "ChooseLockGeneric\\$InternalActivity", "ChooseLockPassword", "ChooseLockPattern",
+                       "SetNewPasswordActivity", "ScreenLockSuggestionActivity", "SetupChooseLockGeneric",
+                       "SetupChooseLockPassword", "SetupChooseLockPattern"]
+        guard let disabled = try? shell("dumpsys package com.android.settings | sed -n '/disabledComponents:/,/enabledComponents:/p'"),
+              !disabled.contains("password.SetupChooseLockPattern") else { return }
+        let commands = screens.map { "pm disable 'com.android.settings/.password.\($0)'" }.joined(separator: "; ")
+        _ = try? shell("su 0 sh -c \"\(commands)\" >/dev/null 2>&1")
     }
 
     private func letGoogleLocate() {
