@@ -433,7 +433,7 @@ private final class WidgetView: NSView {
             if hypot(dx, dy) > 3 { self.gesture = .moving; mouseDragged(with: event) }
         case .moving:
             let current = window.frame
-            var proposed = startFrame.offsetBy(dx: dx, dy: dy)
+            var proposed = Self.onScreen(startFrame.offsetBy(dx: dx, dy: dy), at: now)
             // Blocked by another widget, it slides along it.
             if owner.overlaps(proposed, except: key) {
                 let across = CGRect(origin: CGPoint(x: proposed.minX, y: current.minY), size: current.size)
@@ -451,9 +451,21 @@ private final class WidgetView: NSView {
             frame.size.height = min(max(frame.height, widget.minSize.height), widget.maxSize.height).rounded()
             if left { frame.origin.x = startFrame.maxX - frame.width }
             if bottom { frame.origin.y = startFrame.maxY - frame.height }
+            // Not past the screen's edge.
+            if let screen = NSScreen.screens.first(where: { $0.frame.contains(now) })?.visibleFrame,
+               !screen.contains(frame) { return }
             // Stops at a neighbour.
             if !owner.overlaps(frame, except: key) { window.setFrame(frame, display: true) }
         }
+    }
+
+    /// Kept whole on the screen the mouse is on, below the menu bar and beside the Dock.
+    private static func onScreen(_ frame: CGRect, at point: CGPoint) -> CGRect {
+        guard let screen = (NSScreen.screens.first { $0.frame.contains(point) } ?? NSScreen.main)?.visibleFrame else { return frame }
+        var frame = frame
+        frame.origin.x = min(max(frame.minX, screen.minX), screen.maxX - frame.width)
+        frame.origin.y = min(max(frame.minY, screen.minY), screen.maxY - frame.height)
+        return frame
     }
 
     override func mouseUp(with event: NSEvent) {
