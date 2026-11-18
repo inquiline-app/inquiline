@@ -49,7 +49,7 @@ final class WidgetBridge {
             let app = folder.appendingPathComponent(package)
             let source = app.appendingPathComponent("version")
             // The manifest's own format too, so a new Inquiline writes it again.
-            let version = "4 " + (versions[package] ?? "")
+            let version = "5 " + (versions[package] ?? "")
             if (try? String(contentsOf: source, encoding: .utf8)) == version { continue }
             guard let list = AndroidRuntime.shared.widgetList(package: package) else { continue }
             try? files.createDirectory(at: app, withIntermediateDirectories: true)
@@ -61,7 +61,7 @@ final class WidgetBridge {
                                             "label": widget["label"] as? String ?? "",
                                             "families": families(widget)]
                 if let preview = (widget["preview"] as? String).flatMap({ Data(base64Encoded: $0) }) {
-                    try? Self.trimmed(preview).write(to: app.appendingPathComponent("\(kind)-preview.png"))
+                    write(preview, named: "\(kind)-preview", in: app)
                     entry["preview"] = "\(kind)-preview.png"
                 }
                 manifest.append(entry)
@@ -78,60 +78,74 @@ final class WidgetBridge {
         return changed
     }
 
-    /// The Mac sizes in a phone's home screen cells, as a 4-column launcher lays widgets out:
-    /// small 2×2, medium 4×2, large 4×4.
-    private static let familyCells: [(name: String, columns: Int, rows: Int)] = [
-        ("small", 2, 2), ("medium", 4, 2), ("large", 4, 4),
+    /// The Mac's widget sizes in points, which are dp in Android.
+    private static let familySizes: [(name: String, width: Double, height: Double)] = [
+        ("small", 170, 170), ("medium", 364, 170), ("large", 364, 382),
     ]
 
-    /// The Mac sizes a widget suits, from the cells it asks for and how far it resizes, as a
-    /// launcher would place it: one it can't shrink into, or would sit small in, isn't offered.
+    /// The Mac sizes a widget looks right in, from its own default size, as Android lays it out
+    /// first: never smaller than that, as it would be cut; one it doesn't resize toward only a
+    /// little larger; and of a shape close to its own, as what it says about resizing often isn't
+    /// what its layout does. When none quite is, the closest in shape it fits.
     private func families(_ widget: [String: Any]) -> [String] {
         let mode = widget["resizeMode"] as? Int ?? 0
-        func int(_ key: String) -> Int { widget[key] as? Int ?? 0 }
-        /// Cells for a size in dp, as a phone's home screen sizes them today: 73 dp a cell, less 16.
-        func cells(_ dp: Int) -> Int { max(1, Int(((Double(dp) + 16) / 73).rounded(.up))) }
-        func range(_ axis: Int, target: String, min: String, minResize: String, maxResize: String) -> (Int, Int) {
-            let wanted = int(target) > 0 ? int(target) : cells(int(min))
-            guard mode & axis != 0 else { return (wanted, wanted) }
-            let smallest = cells(int(minResize) > 0 ? int(minResize) : int(min))
-            let largest = int(maxResize) > 0 ? cells(int(maxResize)) : 99
-            return (Swift.min(smallest, wanted), Swift.max(largest, wanted))
+        let width = Double(max(widget["minWidth"] as? Int ?? 1, 1)), height = Double(max(widget["minHeight"] as? Int ?? 1, 1))
+        let fits = Self.familySizes.filter { $0.width >= width * 0.95 && $0.height >= height * 0.95 }
+        func shape(_ family: (name: String, width: Double, height: Double)) -> Double {
+            abs(log(family.width / family.height / (width / height)))
         }
-        let columns = range(1, target: "targetCellWidth", min: "minWidth", minResize: "minResizeWidth", maxResize: "maxResizeWidth")
-        let rows = range(2, target: "targetCellHeight", min: "minHeight", minResize: "minResizeHeight", maxResize: "maxResizeHeight")
-        // A cell short of the box is fine, as on a home screen; more leaves it looking lost.
-        func suits(_ span: (Int, Int), _ box: Int) -> Bool { span.0 <= box && span.1 >= box - 1 }
-        let suited = Self.familyCells.filter { suits(columns, $0.columns) && suits(rows, $0.rows) }.map(\.name)
-        if !suited.isEmpty { return suited }
-        // None quite: the one it fits into with the least room left over.
-        let fitting = Self.familyCells.filter { columns.0 <= $0.columns && rows.0 <= $0.rows }
-        return fitting.min { ($0.columns * $0.rows) < ($1.columns * $1.rows) }.map { [$0.name] } ?? []
+        let right = fits.filter { family in
+            (mode & 1 != 0 || family.width <= width * 1.7) && (mode & 2 != 0 || family.height <= height * 1.7) && shape(family) <= 0.5
+        }
+        if !right.isEmpty { return right.map(\.name) }
+        return fits.min { shape($0) < shape($1) }.map { [$0.name] } ?? []
     }
 
     /// The picture without the transparent edges Android leaves around a widget, so the Mac
-    /// can fit what's drawn to its box.
-    static func trimmed(_ png: Data) -> Data {
+    /// can fit what's drawn to its box, and the widget's own background colour, as "rrggbb":
+    /// the commonest opaque colour along the middles of its edges (its corners are rounded).
+    static func trimmed(_ png: Data) -> (png: Data, color: String?) {
         guard let source = CGImageSourceCreateWithData(png as CFData, nil),
-              let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else { return png }
+              let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else { return (png, nil) }
         let width = image.width, height = image.height
         guard let context = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width * 4,
                                       space: CGColorSpaceCreateDeviceRGB(),
                                       bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue),
-              let pixels = context.data?.assumingMemoryBound(to: UInt8.self) else { return png }
+              let pixels = context.data?.assumingMemoryBound(to: UInt8.self) else { return (png, nil) }
         context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+        func alpha(_ x: Int, _ y: Int) -> UInt8 { pixels[(y * width + x) * 4 + 3] }
         var left = width, right = -1, top = height, bottom = -1
         for y in 0..<height {
-            for x in 0..<width where pixels[(y * width + x) * 4 + 3] > 8 {
+            for x in 0..<width where alpha(x, y) > 8 {
                 left = min(left, x); right = max(right, x); top = min(top, y); bottom = max(bottom, y)
             }
         }
-        guard right >= left, bottom >= top, right - left + 1 < width || bottom - top + 1 < height,
-              let cropped = image.cropping(to: CGRect(x: left, y: top, width: right - left + 1, height: bottom - top + 1)) else { return png }
+        guard right >= left, bottom >= top else { return (png, nil) }
+        var counts: [Int: Int] = [:]
+        func sample(_ x: Int, _ y: Int) {
+            let i = (y * width + x) * 4
+            guard pixels[i + 3] >= 250 else { return }
+            counts[Int(pixels[i] >> 3) << 10 | Int(pixels[i + 1] >> 3) << 5 | Int(pixels[i + 2] >> 3), default: 0] += 1
+        }
+        let w = right - left, h = bottom - top
+        for x in stride(from: left + w / 4, to: right - w / 4, by: 1) { sample(x, top + 2); sample(x, bottom - 2) }
+        for y in stride(from: top + h / 4, to: bottom - h / 4, by: 1) { sample(left + 2, y); sample(right - 2, y) }
+        let color = counts.max { $0.value < $1.value }.map { key, _ in
+            String(format: "%02x%02x%02x", (key >> 10 & 31) << 3 | 4, (key >> 5 & 31) << 3 | 4, (key & 31) << 3 | 4)
+        }
+        guard w + 1 < width || h + 1 < height,
+              let cropped = image.cropping(to: CGRect(x: left, y: top, width: w + 1, height: h + 1)) else { return (png, color) }
         let out = NSMutableData()
-        guard let destination = CGImageDestinationCreateWithData(out, "public.png" as CFString, 1, nil) else { return png }
+        guard let destination = CGImageDestinationCreateWithData(out, "public.png" as CFString, 1, nil) else { return (png, color) }
         CGImageDestinationAddImage(destination, cropped, nil)
-        return CGImageDestinationFinalize(destination) ? out as Data : png
+        return (CGImageDestinationFinalize(destination) ? out as Data : png, color)
+    }
+
+    /// Writes a picture and its background colour beside it, for the extension.
+    private func write(_ png: Data, named name: String, in app: URL) {
+        let picture = Self.trimmed(png)
+        try? picture.png.write(to: app.appendingPathComponent("\(name).png"), options: .atomic)
+        try? (picture.color ?? "").write(to: app.appendingPathComponent("\(name).color"), atomically: true, encoding: .utf8)
     }
 
     private func manifest(_ package: String) -> [[String: Any]] {
@@ -220,7 +234,7 @@ final class WidgetBridge {
             let parts = key.split(separator: "|").map(String.init)
             guard parts.count == 3, placed[key] != nil else { return }
             let app = folder.appendingPathComponent(parts[0])
-            try? Self.trimmed(png).write(to: app.appendingPathComponent("\(parts[1])-\(parts[2]).png"), options: .atomic)
+            write(png, named: "\(parts[1])-\(parts[2])", in: app)
             reload(package: parts[0])
         }
     }

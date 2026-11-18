@@ -37,6 +37,14 @@ enum Folder {
         package.map { home.appendingPathComponent("Library/Application Support/Inquiline/widgets/\($0)") }
     }
 
+    /// The background colour Inquiline read from a picture, "rrggbb".
+    static func color(_ name: String) -> Color? {
+        guard let file = widgets?.appendingPathComponent(name),
+              let text = try? String(contentsOf: file, encoding: .utf8), text.count == 6,
+              let value = Int(text, radix: 16) else { return nil }
+        return Color(red: Double(value >> 16 & 255) / 255, green: Double(value >> 8 & 255) / 255, blue: Double(value & 255) / 255)
+    }
+
     static func manifest() -> [ManifestWidget] {
         guard let file = widgets?.appendingPathComponent("manifest.json"), let data = try? Data(contentsOf: file) else { return [] }
         return (try? JSONDecoder().decode([ManifestWidget].self, from: data)) ?? []
@@ -81,15 +89,20 @@ extension WidgetFamily {
 struct Entry: TimelineEntry {
     let date: Date
     let image: NSImage?
+    /// The Android widget's own background, which the Mac widget takes, so the two are one.
+    var background: Color?
 }
 
 struct Provider: TimelineProvider {
     let kind: String
 
-    private func entry(_ context: Context, live: Bool) -> Entry {
+    private func entry(_ context: Context, live liveWanted: Bool) -> Entry {
         let size = context.displaySize
-        let drawn = live ? Folder.image("\(kind)-\(context.family.name).png", fitting: size) : nil
-        return Entry(date: .now, image: drawn ?? Folder.image("\(kind)-preview.png", fitting: size))
+        let live = "\(kind)-\(context.family.name)"
+        if liveWanted, let drawn = Folder.image("\(live).png", fitting: size) {
+            return Entry(date: .now, image: drawn, background: Folder.color("\(live).color"))
+        }
+        return Entry(date: .now, image: Folder.image("\(kind)-preview.png", fitting: size), background: Folder.color("\(kind)-preview.color"))
     }
 
     func placeholder(in context: Context) -> Entry { entry(context, live: false) }
@@ -124,7 +137,9 @@ struct AndroidWidgetView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .containerBackground(.fill.tertiary, for: .widget)
+        .containerBackground(for: .widget) {
+            if let background = entry.background { background } else { Rectangle().fill(.fill.tertiary) }
+        }
     }
 }
 
