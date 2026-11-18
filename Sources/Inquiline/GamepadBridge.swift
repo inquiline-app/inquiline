@@ -1,11 +1,8 @@
 import AppKit
 import GameController
-import IOKit.hid
 
-/// Game controllers connected to the Mac reach the Android app as they are: each one's own
-/// reports, with its own name and ids, as if paired with the phone, so Android's own drivers
-/// and layouts know it, the Mac's or not (RawPads). One the Mac can't hand over that way
-/// reaches it as an Xbox 360 pad, made from what the Mac makes of it. As a keyboard does,
+/// Game controllers connected to the Mac reach the Android app as Xbox 360 pads plugged
+/// into it, so games that support controllers use them as on a phone. As a keyboard does,
 /// they stay plugged in while the app runs and drive the app in front: when another app is,
 /// this one sees them at rest, with nothing pressed.
 ///
@@ -21,12 +18,10 @@ final class GamepadBridge {
     /// The HID id each controller has in Android. scrcpy keeps 1 and 2 for a keyboard and mouse.
     private var plugged: [ObjectIdentifier: UInt16] = [:]
     private var observers: [NSObjectProtocol] = []
-    private var raw: RawPads?
 
     init(session: ScrcpySession, controls: KeyControlPlayer) {
         self.session = session
         self.controls = controls
-        raw = RawPads(session: session) { [weak self] in self?.update() }
         let center = NotificationCenter.default
         observers = [
             center.addObserver(forName: .GCControllerDidConnect, object: nil, queue: .main) { [weak self] _ in self?.update() },
@@ -43,8 +38,6 @@ final class GamepadBridge {
 
     /// Unplugs every controller, as when the app's window closes.
     func stop() {
-        raw?.stop()
-        raw = nil
         for (_, id) in plugged { session.sendHIDClose(id: id) }
         plugged = [:]
         for key in held.keys { release(key) }
@@ -53,21 +46,17 @@ final class GamepadBridge {
 
     /// Called again when the controls change, as they decide who gets the controller.
     func update() {
-        let usesPad = controls?.set.usesPad == true
-        // Handed over as they are, while the game takes controllers: then none is made up.
-        let rawPads = !usesPad && raw?.hasPads == true
-        raw?.forwarding = rawPads && NSApp.isActive
-        raw?.plugged = rawPads
         let wanted = GCController.controllers().filter { $0.extendedGamepad != nil }
+        let usesPad = controls?.set.usesPad == true
         let wantedKeys = Set(wanted.map(ObjectIdentifier.init))
-        for (key, id) in plugged where !wantedKeys.contains(key) || usesPad || rawPads {
+        for (key, id) in plugged where !wantedKeys.contains(key) || usesPad {
             session.sendHIDClose(id: id)
             plugged[key] = nil
         }
         for controller in wanted {
             let key = ObjectIdentifier(controller)
             guard let pad = controller.extendedGamepad else { continue }
-            if !usesPad, !rawPads, plugged[key] == nil,
+            if !usesPad, plugged[key] == nil,
                let id = (3...10).map(UInt16.init).first(where: { !plugged.values.contains($0) }) {
                 plugged[key] = id
                 session.sendHIDOpen(id: id, vendor: 0x045E, product: 0x028E, name: "Microsoft X-Box 360 Pad",
@@ -175,117 +164,5 @@ final class GamepadBridge {
         }
         report.append(hat)
         return report
-    }
-}
-
-/// The controllers the Mac sees, read as their own reports (IOKit's HID manager) and handed to
-/// Android unchanged, under their own name and vendor and product ids: Android's kernel and its
-/// controller layouts then know each one as when it's paired with a phone. Reports pass only
-/// while the app is in front, as the Mac's other controls do.
-private final class RawPads {
-    private let session: ScrcpySession
-    private let changed: () -> Void
-    private let manager = IOHIDManagerCreate(kCFAllocatorDefault, IOOptionBits(kIOHIDOptionsTypeNone))
-    private var pads: [IOHIDDevice: Pad] = [:]
-
-    private final class Pad {
-        let device: IOHIDDevice
-        let vendor: UInt16, product: UInt16
-        let name: String
-        let descriptor: [UInt8]
-        let buffer: UnsafeMutablePointer<UInt8>
-        let size: Int
-        var id: UInt16?
-
-        init?(_ device: IOHIDDevice) {
-            func number(_ key: String) -> Int { (IOHIDDeviceGetProperty(device, key as CFString) as? NSNumber)?.intValue ?? 0 }
-            guard let descriptor = IOHIDDeviceGetProperty(device, kIOHIDReportDescriptorKey as CFString) as? Data,
-                  !descriptor.isEmpty else { return nil }
-            self.device = device
-            vendor = UInt16(truncatingIfNeeded: number(kIOHIDVendorIDKey))
-            product = UInt16(truncatingIfNeeded: number(kIOHIDProductIDKey))
-            name = IOHIDDeviceGetProperty(device, kIOHIDProductKey as CFString) as? String ?? "Gamepad"
-            self.descriptor = [UInt8](descriptor)
-            size = max(number(kIOHIDMaxInputReportSizeKey), 64)
-            buffer = .allocate(capacity: size)
-        }
-
-        deinit { buffer.deallocate() }
-    }
-
-    /// Whether the game sees them: plugged into Android, each under an HID id of its own.
-    var plugged = false {
-        didSet { if plugged != oldValue { pads.values.forEach(plugged ? plug : unplug) } }
-    }
-    /// Whether their reports pass now.
-    var forwarding = false
-    var hasPads: Bool { !pads.isEmpty }
-
-    init(session: ScrcpySession, changed: @escaping () -> Void) {
-        self.session = session
-        self.changed = changed
-        let usages: [[String: Int]] = [
-            [kIOHIDDeviceUsagePageKey: kHIDPage_GenericDesktop, kIOHIDDeviceUsageKey: kHIDUsage_GD_GamePad],
-            [kIOHIDDeviceUsagePageKey: kHIDPage_GenericDesktop, kIOHIDDeviceUsageKey: kHIDUsage_GD_Joystick],
-        ]
-        IOHIDManagerSetDeviceMatchingMultiple(manager, usages as CFArray)
-        let me = Unmanaged.passUnretained(self).toOpaque()
-        IOHIDManagerRegisterDeviceMatchingCallback(manager, { context, _, _, device in
-            guard let context else { return }
-            Unmanaged<RawPads>.fromOpaque(context).takeUnretainedValue().added(device)
-        }, me)
-        IOHIDManagerRegisterDeviceRemovalCallback(manager, { context, _, _, device in
-            guard let context else { return }
-            Unmanaged<RawPads>.fromOpaque(context).takeUnretainedValue().removed(device)
-        }, me)
-        IOHIDManagerScheduleWithRunLoop(manager, CFRunLoopGetMain(), CFRunLoopMode.defaultMode.rawValue)
-        IOHIDManagerOpen(manager, IOOptionBits(kIOHIDOptionsTypeNone))
-    }
-
-    func stop() {
-        plugged = false
-        IOHIDManagerUnscheduleFromRunLoop(manager, CFRunLoopGetMain(), CFRunLoopMode.defaultMode.rawValue)
-        IOHIDManagerClose(manager, IOOptionBits(kIOHIDOptionsTypeNone))
-        pads = [:]
-    }
-
-    private func added(_ device: IOHIDDevice) {
-        guard pads[device] == nil, let pad = Pad(device) else { return }
-        pads[device] = pad
-        let me = Unmanaged.passUnretained(self).toOpaque()
-        IOHIDDeviceRegisterInputReportCallback(device, pad.buffer, pad.size, { context, _, sender, _, _, report, length in
-            guard let context, let sender else { return }
-            let pads = Unmanaged<RawPads>.fromOpaque(context).takeUnretainedValue()
-            pads.report(from: Unmanaged<IOHIDDevice>.fromOpaque(sender).takeUnretainedValue(), Array(UnsafeBufferPointer(start: report, count: length)))
-        }, me)
-        if plugged { plug(pad) }
-        changed()
-    }
-
-    private func removed(_ device: IOHIDDevice) {
-        guard let pad = pads.removeValue(forKey: device) else { return }
-        unplug(pad)
-        changed()
-    }
-
-    private func report(from device: IOHIDDevice, _ bytes: [UInt8]) {
-        guard forwarding, let pad = pads[device], let id = pad.id else { return }
-        // The report ID, where the controller uses them, leads the report as Android expects.
-        session.sendHIDInput(id: id, report: bytes)
-    }
-
-    private func plug(_ pad: Pad) {
-        guard pad.id == nil else { return }
-        let used = Set(pads.values.compactMap(\.id))
-        // scrcpy keeps 1 and 2 for a keyboard and mouse; the made-up pads use 3 to 10.
-        guard let id = (11...20).map(UInt16.init).first(where: { !used.contains($0) }) else { return }
-        pad.id = id
-        session.sendHIDOpen(id: id, vendor: pad.vendor, product: pad.product, name: pad.name, descriptor: pad.descriptor)
-    }
-
-    private func unplug(_ pad: Pad) {
-        guard let id = pad.id else { return }
-        pad.id = nil
-        session.sendHIDClose(id: id)
     }
 }
