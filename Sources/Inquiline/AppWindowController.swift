@@ -1422,7 +1422,9 @@ private final class WidgetTile: NSView {
     private func showState() {
         let on = key != nil
         tick.isHidden = !on
-        well.layer?.backgroundColor = NSColor.quaternarySystemFill.cgColor
+        // A faint fill, as the Mac's own pickers have: lighter on dark, darker on light.
+        let dark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        well.layer?.backgroundColor = NSColor(white: dark ? 1 : 0, alpha: dark ? 0.07 : 0.05).cgColor
         well.layer?.borderWidth = on ? 2 : 0
         well.layer?.borderColor = NSColor.controlAccentColor.cgColor
         toolTip = on ? "Remove from the Desktop" : "Add to the Desktop"
