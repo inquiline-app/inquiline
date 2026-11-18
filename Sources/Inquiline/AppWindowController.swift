@@ -617,9 +617,10 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate, 
             item.view = fpsLabel
         case Self.muteItem:
             item.label = "Sound"
-            item.target = self
-            item.action = #selector(toggleMute)
-            item.isBordered = true
+            // A button of its own, so the sound popover can point at it.
+            let button = NSButton(image: NSImage(), target: self, action: #selector(showSound(_:)))
+            button.bezelStyle = .toolbar
+            item.view = button
             setMuteImage(of: item)
         case Self.rotateItem:
             item.label = "Rotate"
@@ -660,9 +661,23 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate, 
     }
 
     private func setMuteImage(of item: NSToolbarItem) {
-        item.image = NSImage(systemSymbolName: isMuted ? "speaker.slash.fill" : "speaker.wave.2.fill",
-                             accessibilityDescription: isMuted ? "Unmute" : "Mute")
-        item.toolTip = isMuted ? "Unmute" : "Mute"
+        (item.view as? NSButton)?.image = NSImage(systemSymbolName: isMuted ? "speaker.slash.fill" : "speaker.wave.2.fill",
+                                                  accessibilityDescription: "Sound")
+        item.toolTip = "Sound"
+    }
+
+    /// The app's sound: Android's music volume, which all its apps share as on a phone, and
+    /// this app's own mute.
+    @objc private func showSound(_ sender: Any?) {
+        let popover = NSPopover()
+        popover.behavior = .transient
+        let view = SoundView(muted: isMuted)
+        view.toggled = { [weak self] in self?.toggleMute() }
+        let controller = NSViewController()
+        controller.view = view
+        popover.contentViewController = controller
+        guard let anchor = sender as? NSView else { return }
+        popover.show(relativeTo: anchor.bounds, of: anchor, preferredEdge: anchor.isFlipped ? .maxY : .minY)
     }
 
     @objc private func toggleMute() {
@@ -696,6 +711,7 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate, 
     private var settingsSnapshot: AppSettingsView.Snapshot?
 
     private func loadSettings() {
+        SoundView.prefetch()
         let package = package
         DispatchQueue.global().async { [weak self] in
             let snapshot = AppSettingsView.Snapshot.load(package: package)
@@ -1493,4 +1509,76 @@ private final class WidgetTile: NSView {
     }
 
     override func mouseDown(with event: NSEvent) {}
+}
+
+/// The sound popover: a volume slider, as a Mac's sound menu has, and the app's mute.
+private final class SoundView: NSView {
+    var toggled: (() -> Void)?
+    /// The level last read or set, so the slider opens where it is at once.
+    private static var lastLevel: Int?
+
+    /// Read when the window opens, as the app's settings are.
+    static func prefetch() {
+        DispatchQueue.global().async {
+            guard let level = AndroidRuntime.shared.mediaVolume() else { return }
+            DispatchQueue.main.async { lastLevel = level }
+        }
+    }
+    private let slider = NSSlider(value: Double(SoundView.lastLevel ?? AndroidRuntime.mediaVolumeSteps), minValue: 0,
+                                  maxValue: Double(AndroidRuntime.mediaVolumeSteps), target: nil, action: nil)
+    private let mute = NSSwitch()
+
+    init(muted: Bool) {
+        super.init(frame: .zero)
+        slider.isEnabled = Self.lastLevel != nil
+        slider.target = self
+        slider.action = #selector(volumeChanged)
+        slider.numberOfTickMarks = 0
+        let quiet = NSImageView(image: NSImage(systemSymbolName: "speaker.fill", accessibilityDescription: nil)!)
+        let loud = NSImageView(image: NSImage(systemSymbolName: "speaker.wave.3.fill", accessibilityDescription: nil)!)
+        for icon in [quiet, loud] { icon.contentTintColor = .secondaryLabelColor }
+        let volume = NSStackView(views: [quiet, slider, loud])
+        volume.orientation = .horizontal
+        volume.spacing = 8
+        mute.state = muted ? .on : .off
+        mute.target = self
+        mute.action = #selector(muteChanged)
+        let muteRow = NSStackView(views: [NSTextField(labelWithString: "Mute This App"), NSView(), mute])
+        muteRow.orientation = .horizontal
+        let title = NSTextField(labelWithString: "Sound")
+        title.font = .boldSystemFont(ofSize: NSFont.systemFontSize)
+        let stack = NSStackView(views: [title, volume, muteRow])
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 12
+        stack.edgeInsets = NSEdgeInsets(top: 14, left: 16, bottom: 14, right: 16)
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.leadingAnchor.constraint(equalTo: leadingAnchor), stack.trailingAnchor.constraint(equalTo: trailingAnchor),
+            stack.topAnchor.constraint(equalTo: topAnchor), stack.bottomAnchor.constraint(equalTo: bottomAnchor),
+            widthAnchor.constraint(equalToConstant: 260),
+            volume.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -32),
+            muteRow.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -32),
+        ])
+        DispatchQueue.global().async { [weak self] in
+            let level = AndroidRuntime.shared.mediaVolume()
+            DispatchQueue.main.async {
+                guard let self, let level else { return }
+                Self.lastLevel = level
+                self.slider.integerValue = level
+                self.slider.isEnabled = true
+            }
+        }
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    @objc private func volumeChanged() {
+        let level = slider.integerValue
+        Self.lastLevel = level
+        DispatchQueue.global().async { AndroidRuntime.shared.setMediaVolume(level) }
+    }
+
+    @objc private func muteChanged() { toggled?() }
 }

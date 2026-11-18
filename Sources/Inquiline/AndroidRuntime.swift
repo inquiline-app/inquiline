@@ -255,11 +255,27 @@ final class AndroidRuntime {
     }
 
     /// The Mac's volume is the one that counts, as for iPhone apps on a Mac, so Android's own
-    /// volumes stay at their highest: music and games, ringtones, alarms and system sounds.
-    /// Android's sound card plays at the level these leave. Notifications are silent in
-    /// Android: the Mac plays their sound (NotificationBridge), so Focus applies to them.
+    /// volumes stay at their highest: ringtones, alarms and system sounds. Music and games
+    /// start at their highest too, and then stay where the user puts them in an app's window
+    /// (mediaVolume), as Android keeps them. Notifications are silent in Android: the Mac plays
+    /// their sound (NotificationBridge), so Focus applies to them.
     private func setFullVolume() {
-        _ = try? shell("for v in '1 7' '2 7' '3 15' '4 7' '5 0'; do cmd audio set-volume $v >/dev/null; done")
+        _ = try? shell("for v in '1 7' '2 7' '4 7' '5 0'; do cmd audio set-volume $v >/dev/null; done; "
+                       + "[ \"$(settings get global inquiline_media_volume)\" = set ] || "
+                       + "{ cmd audio set-volume 3 15 >/dev/null; settings put global inquiline_media_volume set; }")
+    }
+
+    static let mediaVolumeSteps = 15
+
+    /// Android's music and game volume, from 0 to mediaVolumeSteps; nil if Android can't say.
+    func mediaVolume() -> Int? {
+        guard let output = try? shell("dumpsys audio | sed -n '/- STREAM_MUSIC:/,/Current:/p' | grep 'Current:'"),
+              let match = output.range(of: #"\): (\d+)"#, options: .regularExpression) else { return nil }
+        return Int(output[match].filter(\.isNumber))
+    }
+
+    func setMediaVolume(_ volume: Int) {
+        _ = try? shell("cmd audio set-volume 3 \(min(max(volume, 0), Self.mediaVolumeSteps))")
     }
 
     /// Called on a background thread when an app is installed or removed inside Android,
