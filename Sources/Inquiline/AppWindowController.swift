@@ -1520,7 +1520,7 @@ private final class SoundView: NSView {
                                          speaker("speaker.wave.3.fill", "Full Volume", #selector(full))])
         volume.orientation = .horizontal
         volume.spacing = 8
-        volume.edgeInsets = NSEdgeInsets(top: 14, left: 16, bottom: 14, right: 16)
+        volume.edgeInsets = NSEdgeInsets(top: 22, left: 18, bottom: 22, right: 18)
         volume.translatesAutoresizingMaskIntoConstraints = false
         addSubview(volume)
         NSLayoutConstraint.activate([
