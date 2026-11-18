@@ -295,6 +295,10 @@ private final class WidgetView: NSView {
         super.init(frame: .zero)
         wantsLayer = true
         layer?.contentsGravity = .resize
+        // The Mac passes clicks on a window's clear pixels through to what is behind it; widgets'
+        // edges are often clear. A fill too faint to see makes all of the widget's box take them,
+        // as its whole cell does on a phone, and its edges resize it as a window's do.
+        layer?.backgroundColor = NSColor(white: 0, alpha: 0.004).cgColor
         frameLayer.fillColor = nil
         frameLayer.isHidden = true
         layer?.addSublayer(frameLayer)
