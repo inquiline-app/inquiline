@@ -107,6 +107,7 @@ final class AndroidRuntime {
         keepLogs()
         turnOffBluetooth()
         letGoogleLocate()
+        letGoogleFill()
         letHelperHostWidgets()
         nameDevice()
         watchPackages()
@@ -188,6 +189,23 @@ final class AndroidRuntime {
               let line = output.split(whereSeparator: \.isNewline).last(where: { $0.hasPrefix("[") }),
               let list = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [[String: Any]] else { return nil }
         return list
+    }
+
+    /// Google's passwords and passkeys fill in apps' sign-in screens, as a phone with Google Play
+    /// has them from the start: Google Play services is Android's autofill and passkey provider
+    /// unless the user chose another in Android's Settings.
+    private func letGoogleFill() {
+        let autofill = "com.google.android.gms/.autofill.service.AutofillService"
+        let passkeys = "com.google.android.gms/.auth.api.credentials.credman.service.PasswordAndPasskeyService"
+        guard (try? shell("pm path com.google.android.gms"))?.contains("package:") == true,
+              let current = try? shell("settings get secure autofill_service; settings get secure credential_service")
+        else { return }
+        let values = current.split(whereSeparator: \.isNewline).map { $0.trimmingCharacters(in: .whitespaces) }
+        func unset(_ index: Int) -> Bool { index >= values.count || values[index].isEmpty || values[index] == "null" }
+        if unset(0) { _ = try? shell("settings put secure autofill_service \(autofill)") }
+        if unset(1) {
+            _ = try? shell("settings put secure credential_service \(passkeys); settings put secure credential_service_primary \(passkeys)")
+        }
     }
 
     private func letGoogleLocate() {
