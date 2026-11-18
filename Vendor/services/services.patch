@@ -1,0 +1,122 @@
+diff -ru orig3/com/android/server/wm/DisplayContent.smali out-classes3.dex/com/android/server/wm/DisplayContent.smali
+--- orig3/com/android/server/wm/DisplayContent.smali	2026-11-19 01:12:25
++++ out-classes3.dex/com/android/server/wm/DisplayContent.smali	2026-11-19 00:58:24
+@@ -8922,6 +8922,12 @@
+ 
+     if-nez v0, :cond_c
+ 
++    # Inquiline: the main screen's power counts for the main screen only; an app's own screen,
++    # which its window shows, is on while the main one, which nothing shows, is off.
++    iget v0, p0, Lcom/android/server/wm/DisplayContent;->mDisplayId:I
++
++    if-nez v0, :cond_c
++
+     const/4 p0, 0x0
+ 
+     return-object p0
+@@ -8952,6 +8958,28 @@
+ 
+     .line 5210
+     invoke-virtual {v0, v2}, Landroid/window/ScreenCapture$LayerCaptureArgs$Builder;->setSourceCrop(Landroid/graphics/Rect;)Landroid/window/ScreenCapture$CaptureArgs$Builder;
++
++    move-result-object v0
++
++    check-cast v0, Landroid/window/ScreenCapture$LayerCaptureArgs$Builder;
++
++    # Inquiline: Inquiline's screens are marked secure, so that apps' secure screens show in their
++    # windows; the assistant gets the screen anyway unless such a screen shows, as on a phone,
++    # where those come out black.
++    invoke-virtual {p0}, Lcom/android/server/wm/DisplayContent;->hasSecureWindowOnScreen()Z
++
++    move-result v2
++
++    if-eqz v2, :inquiline_capture
++
++    const/4 p0, 0x0
++
++    return-object p0
++
++    :inquiline_capture
++    const/4 v2, 0x1
++
++    invoke-virtual {v0, v2}, Landroid/window/ScreenCapture$LayerCaptureArgs$Builder;->setCaptureSecureLayers(Z)Landroid/window/ScreenCapture$CaptureArgs$Builder;
+ 
+     move-result-object v0
+ 
+diff -ru orig3/com/android/server/wm/TaskLaunchParamsModifier.smali out-classes3.dex/com/android/server/wm/TaskLaunchParamsModifier.smali
+--- orig3/com/android/server/wm/TaskLaunchParamsModifier.smali	2026-11-19 01:12:25
++++ out-classes3.dex/com/android/server/wm/TaskLaunchParamsModifier.smali	2026-11-19 01:12:38
+@@ -1838,6 +1838,7 @@
+ .method public final getFallbackDisplayAreaForActivity(Lcom/android/server/wm/ActivityRecord;Lcom/android/server/wm/ActivityStarter$Request;)Lcom/android/server/wm/TaskDisplayArea;
+     .registers 6
+ 
++
+     if-eqz p1, :cond_30
+ 
+     .line 534
+@@ -2022,6 +2023,50 @@
+ 
+ .method public final getPreferredLaunchTaskDisplayArea(Lcom/android/server/wm/Task;Landroid/app/ActivityOptions;Lcom/android/server/wm/ActivityRecord;Lcom/android/server/wm/LaunchParamsController$LaunchParams;Lcom/android/server/wm/ActivityRecord;Lcom/android/server/wm/ActivityStarter$Request;)Lcom/android/server/wm/TaskDisplayArea;
+     .registers 14
++
++    # Inquiline: the assistant's own screens open on the screen in focus, over the app it reads,
++    # whatever screen they ask for or last were on.
++    if-eqz p5, :inquiline_choose
++
++    iget-object v0, p0, Lcom/android/server/wm/TaskLaunchParamsModifier;->mSupervisor:Lcom/android/server/wm/ActivityTaskSupervisor;
++
++    iget-object v0, v0, Lcom/android/server/wm/ActivityTaskSupervisor;->mService:Lcom/android/server/wm/ActivityTaskManagerService;
++
++    iget-object v0, v0, Lcom/android/server/wm/ActivityTaskManagerService;->mActiveVoiceInteractionServiceComponent:Landroid/content/ComponentName;
++
++    if-eqz v0, :inquiline_choose
++
++    invoke-virtual {v0}, Landroid/content/ComponentName;->getPackageName()Ljava/lang/String;
++
++    move-result-object v0
++
++    iget-object v1, p5, Lcom/android/server/wm/ActivityRecord;->packageName:Ljava/lang/String;
++
++    invoke-virtual {v0, v1}, Ljava/lang/String;->equals(Ljava/lang/Object;)Z
++
++    move-result v0
++
++    if-eqz v0, :inquiline_choose
++
++    iget-object v0, p0, Lcom/android/server/wm/TaskLaunchParamsModifier;->mSupervisor:Lcom/android/server/wm/ActivityTaskSupervisor;
++
++    iget-object v0, v0, Lcom/android/server/wm/ActivityTaskSupervisor;->mRootWindowContainer:Lcom/android/server/wm/RootWindowContainer;
++
++    invoke-virtual {v0}, Lcom/android/server/wm/RootWindowContainer;->getTopFocusedDisplayContent()Lcom/android/server/wm/DisplayContent;
++
++    move-result-object v0
++
++    if-eqz v0, :inquiline_choose
++
++    invoke-virtual {v0}, Lcom/android/server/wm/DisplayContent;->getDefaultTaskDisplayArea()Lcom/android/server/wm/TaskDisplayArea;
++
++    move-result-object v0
++
++    if-eqz v0, :inquiline_choose
++
++    return-object v0
++
++    :inquiline_choose
+ 
+     const/4 v0, 0x0
+ 
+diff -ru orig3/com/android/server/wm/WindowManagerService.smali out-classes3.dex/com/android/server/wm/WindowManagerService.smali
+--- orig3/com/android/server/wm/WindowManagerService.smali	2026-11-19 01:12:26
++++ out-classes3.dex/com/android/server/wm/WindowManagerService.smali	2026-11-19 00:38:33
+@@ -33158,9 +33158,8 @@
+     :try_start_10
+     iget-object p0, p0, Lcom/android/server/wm/WindowManagerService;->mRoot:Lcom/android/server/wm/RootWindowContainer;
+ 
+-    const/4 v1, 0x0
+-
+-    invoke-virtual {p0, v1}, Lcom/android/server/wm/RootWindowContainer;->getDisplayContent(I)Lcom/android/server/wm/DisplayContent;
++    # Inquiline: the screen in focus, where the app the assistant reads is, not always the main one.
++    invoke-virtual {p0}, Lcom/android/server/wm/RootWindowContainer;->getTopFocusedDisplayContent()Lcom/android/server/wm/DisplayContent;
+ 
+     move-result-object p0
+ 

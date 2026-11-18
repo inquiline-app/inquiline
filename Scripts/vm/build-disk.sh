@@ -3,7 +3,7 @@
 # that built it. Run as root in a Fedora guest with the same kernel, the guest GPU
 # libraries in $1 (libdrm.so from Mesa, vulkan.gfxstream.so from build-guest-vulkan.sh and
 # audio.primary.redroid.so from build-guest-audio.sh, android.hardware.gnss-service.inquiline from
-# build-guest-gnss.sh, and Vendor/inquiline-framework-overlay.apk
+# build-guest-gnss.sh, services.jar and oat-arm64 from build-services.sh, and Vendor/inquiline-framework-overlay.apk
 # from build-framework-overlay.sh), the Redroid image in podman, and the empty target disk at $2.
 set -eu
 
@@ -55,6 +55,11 @@ chmod 644 "$ROOT"/var/inquiline/*.so
 # Changes to Android's own settings, as a phone maker's overlay (Scripts/vm/framework-overlay).
 cp "$LIBS/inquiline-framework-overlay.apk" "$ROOT/var/inquiline/"
 chmod 644 "$ROOT/var/inquiline/inquiline-framework-overlay.apk"
+# Android's system services, patched so its assistant works in an app's own window, and their
+# precompiled code (build-services.sh).
+cp "$LIBS/services.jar" "$ROOT/var/inquiline/"
+cp -R "$LIBS/oat-arm64" "$ROOT/var/inquiline/"
+chmod 644 "$ROOT/var/inquiline/services.jar" "$ROOT"/var/inquiline/oat-arm64/*
 # Android's GPS, which reports where the Mac is (build-guest-gnss.sh).
 cp "$LIBS/android.hardware.gnss-service.inquiline" "$ROOT/var/inquiline/"
 chmod 755 "$ROOT/var/inquiline/android.hardware.gnss-service.inquiline"
@@ -246,6 +251,7 @@ exec podman run --rm $EXTRA --name redroid --ip 10.88.0.2 --privileged --pull=ne
   -v /run/inquiline-input:/dev/input -v $A/gpu_config.sh:/vendor/bin/gpu_config.sh:ro \
   -v $A/libdrm.so:/vendor/lib64/libdrm.so:ro -v $A/vulkan.gfxstream.so:/vendor/lib64/hw/vulkan.gfxstream.so:ro \
   -v $A/audio.primary.redroid.so:/vendor/lib64/hw/audio.primary.redroid.so:ro \
+  -v $A/services.jar:/system/framework/services.jar:ro -v $A/oat-arm64:/system/framework/oat/arm64:ro \
   -v $A/android.hardware.gnss-service.inquiline:/vendor/bin/hw/android.hardware.gnss-service.inquiline:ro \
   -v $A/gnss.xml:/vendor/etc/vintf/manifest/gnss-inquiline.xml:ro \
   -v $A/gps.xml:/vendor/etc/permissions/android.hardware.location.gps.xml:ro \

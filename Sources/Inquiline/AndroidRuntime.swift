@@ -109,7 +109,6 @@ final class AndroidRuntime {
         letGoogleLocate()
         letGoogleFill()
         keepUnlocked()
-        letAssistantRead()
         letHelperHostWidgets()
         nameDevice()
         watchPackages()
@@ -224,28 +223,14 @@ final class AndroidRuntime {
         _ = try? shell("su 0 sh -c \"\(commands)\" >/dev/null 2>&1")
     }
 
-    /// Android's assistant (Gemini, once installed) reads what the app in front shows, as on a
-    /// phone, from its views, not a screenshot: Android takes its screenshot of its own main
-    /// screen, which no window shows, and the assistant would lay that behind itself.
-    private func letAssistantRead() {
-        _ = try? shell("settings put secure assist_structure_enabled 1; settings put secure assist_screenshot_enabled 0")
-    }
-
-    /// Opens Android's assistant over the app in the window showing `display`, as holding a
-    /// phone's power button does: the app's task comes into focus, so the assistant reads it, and
-    /// the assistant, which Android opens on its own main screen, moves onto the window's.
-    func showAssistant(task: Int, display: Int) {
+    /// Opens Android's assistant (Gemini, once installed) over an app, as holding a phone's power
+    /// button does: the app's task comes into focus, as touching it does, and Android opens the
+    /// assistant on the screen in focus, the app's window, and gives it that screen (its system
+    /// services are patched for that: Scripts/vm/build-services.sh).
+    func showAssistant(task: Int) {
         let agent = NotificationBridge.agent
-        let script = """
-        holder=$(cmd role get-role-holders android.app.role.ASSISTANT | head -1); [ -n "$holder" ] || exit 0; \
-        CLASSPATH=$(pm path \(agent) | cut -d: -f2) app_process / \(agent).Focus \(task); \
-        su 1000 cmd voiceinteraction show >/dev/null 2>&1; \
-        for i in $(seq 40); do \
-          t=$(dumpsys activity activities | awk -v h="$holder/" '/^Display #/ {d=$2} d=="#0" && index($0, h) && /Hist/ {match($0, / t[0-9]+/); print substr($0, RSTART+2, RLENGTH-2); exit}'); \
-          [ -n "$t" ] && { am display move-stack $t \(display); break; }; sleep 0.1; \
-        done
-        """
-        _ = try? shell(script)
+        _ = try? shell("CLASSPATH=$(pm path \(agent) | cut -d: -f2) app_process / \(agent).Focus \(task); "
+                       + "su 1000 cmd voiceinteraction show >/dev/null 2>&1")
     }
 
     private func letGoogleLocate() {

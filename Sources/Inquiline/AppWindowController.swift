@@ -514,6 +514,7 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate, 
     private static let clearCacheItem = NSToolbarItem.Identifier("clearCache")
     private static let clearDataItem = NSToolbarItem.Identifier("clearData")
     private static let settingsItem = NSToolbarItem.Identifier("settings")
+    private static let assistantItem = NSToolbarItem.Identifier("assistant")
 
     /// The frame rate, sound and orientation, in the Mac's own toolbar.
     private func addToolbar() {
@@ -560,7 +561,7 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate, 
                 self.showLoading(true)
             }
         }
-        let toolbar = NSToolbar(identifier: "AppWindowToolbar4")
+        let toolbar = NSToolbar(identifier: "AppWindowToolbar5")
         toolbar.delegate = self
         toolbar.displayMode = .iconOnly
         toolbar.allowsUserCustomization = true
@@ -573,14 +574,14 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate, 
         // The space keeps the buttons clear of the window's rounded corner. Android's Settings
         // is no app to set up or clear.
         package == AppShortcuts.settingsPackage ? [.flexibleSpace, Self.rotateItem, .space]
-            : [.flexibleSpace, Self.fpsItem, Self.controlsItem, Self.muteItem, Self.rotateItem, Self.settingsItem, .space]
+            : [.flexibleSpace, Self.fpsItem, Self.assistantItem, Self.controlsItem, Self.muteItem, Self.rotateItem, Self.settingsItem, .space]
     }
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
         // Clearing is in App Settings and the app's menu; these are there for those who want
         // them at hand.
         package == AppShortcuts.settingsPackage ? [.flexibleSpace, .space, Self.rotateItem]
-            : [.flexibleSpace, .space, Self.fpsItem, Self.controlsItem, Self.muteItem, Self.rotateItem, Self.settingsItem,
+            : [.flexibleSpace, .space, Self.fpsItem, Self.assistantItem, Self.controlsItem, Self.muteItem, Self.rotateItem, Self.settingsItem,
                Self.clearCacheItem, Self.clearDataItem]
     }
 
@@ -621,6 +622,14 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate, 
             button.bezelStyle = .toolbar
             item.view = button
             item.toolTip = "Sound"
+        case Self.assistantItem:
+            // Android's assistant (Gemini) over the app, as holding a phone's power button opens it.
+            item.label = "Assistant"
+            item.toolTip = "Ask Assistant"
+            item.image = NSImage(systemSymbolName: "sparkles", accessibilityDescription: "Ask Assistant")
+            item.target = self
+            item.action = #selector(askAssistant)
+            item.isBordered = true
         case Self.rotateItem:
             item.label = "Rotate"
             item.toolTip = "Rotate"
@@ -655,9 +664,10 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate, 
 
     /// Android's assistant (Gemini) over this app, reading what it shows.
     @objc func askAssistant() {
-        guard let task = watchedTask, let display = watchedDisplay.flatMap({ Int($0) }) else { return }
-        DispatchQueue.global().async { AndroidRuntime.shared.showAssistant(task: task, display: display) }
+        guard let task = watchedTask else { return }
+        DispatchQueue.global().async { AndroidRuntime.shared.showAssistant(task: task) }
     }
+
 
     /// The app's sound: Android's music volume, which all its apps share as on a phone, its
     /// effects, and this app's own mute, so a game can be quiet while music plays.
