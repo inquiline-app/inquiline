@@ -232,12 +232,11 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate, 
                 self.fitWindow()
             }
         }
-        // Apps were once muted one by one; one left muted plays again, as the volume is the
-        // one control now.
-        let package = package, mutedKey = "Muted.\(package)"
-        if UserDefaults.standard.bool(forKey: mutedKey) {
-            UserDefaults.standard.removeObject(forKey: mutedKey)
-            session.beforeLaunch = { AndroidRuntime.shared.setMuted(false, package: package) }
+        // The Mac remembers whether the app is muted: Android saves its app ops only now and
+        // then, and loses the latest when the engine stops.
+        let package = package, mutedKey = mutedKey
+        session.beforeLaunch = {
+            AndroidRuntime.shared.setMuted(UserDefaults.standard.bool(forKey: mutedKey), package: package)
         }
         let renderer = displayView.renderer
         let frames = frameCount
@@ -652,11 +651,19 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate, 
         return item
     }
 
-    /// The app's sound: Android's music volume, which all its apps share as on a phone.
+    private var mutedKey: String { "Muted.\(package)" }
+
+    /// The app's sound: Android's music volume, which all its apps share as on a phone, its
+    /// effects, and this app's own mute, so a game can be quiet while music plays.
     @objc private func showSound(_ sender: Any?) {
         let popover = NSPopover()
         popover.behavior = .transient
-        let view = SoundView()
+        let mutedKey = mutedKey, package = package
+        let view = SoundView(muted: UserDefaults.standard.bool(forKey: mutedKey))
+        view.muteChanged = { muted in
+            UserDefaults.standard.set(muted, forKey: mutedKey)
+            DispatchQueue.global().async { AndroidRuntime.shared.setMuted(muted, package: package) }
+        }
         let controller = NSViewController()
         controller.view = view
         popover.contentViewController = controller
@@ -1489,9 +1496,8 @@ private final class WidgetTile: NSView {
     override func mouseDown(with event: NSEvent) {}
 }
 
-/// The sound popover: a volume slider, as a Mac's sound menu has, its speakers setting it to
-/// silent and to full; and Android's equalizer, as a phone's sound settings have it: off, its
-/// presets, or the user's own five bands.
+/// The sound popover: a volume slider, as a Mac's sound menu has; the app's own mute; and
+/// Android's equalizer and loudness, as a phone's sound settings have them.
 private final class SoundView: NSView {
     /// What was last read or set, so the popover opens as it is at once.
     private static var lastLevel: Int?
@@ -1520,21 +1526,20 @@ private final class SoundView: NSView {
     private let loudness = NSSlider(value: Double(SoundView.lastLoudness ?? 0), minValue: 0, maxValue: 100, target: nil, action: nil)
     private static let customTag = 1000, offTag = -1
     var onResize: ((NSSize) -> Void)?
+    var muteChanged: ((Bool) -> Void)?
+    private let mute = NSSwitch()
 
-    init() {
+    init(muted: Bool) {
         super.init(frame: .zero)
         slider.isEnabled = Self.lastLevel != nil
         slider.target = self
         slider.action = #selector(volumeChanged)
-        func speaker(_ symbol: String, _ name: String, _ action: Selector) -> NSButton {
-            let button = NSButton(image: NSImage(systemSymbolName: symbol, accessibilityDescription: name)!, target: self, action: action)
-            button.isBordered = false
-            button.contentTintColor = .secondaryLabelColor
-            button.toolTip = name
-            return button
+        func speaker(_ symbol: String) -> NSImageView {
+            let icon = NSImageView(image: NSImage(systemSymbolName: symbol, accessibilityDescription: nil)!)
+            icon.contentTintColor = .secondaryLabelColor
+            return icon
         }
-        let volume = NSStackView(views: [speaker("speaker.fill", "Silent", #selector(silent)), slider,
-                                         speaker("speaker.wave.3.fill", "Full Volume", #selector(full))])
+        let volume = NSStackView(views: [speaker("speaker.fill"), slider, speaker("speaker.wave.3.fill")])
         volume.orientation = .horizontal
         volume.spacing = 8
 
@@ -1581,7 +1586,13 @@ private final class SoundView: NSView {
         let loudnessRow = NSStackView(views: [NSTextField(labelWithString: "Loudness"), loudness])
         loudnessRow.orientation = .horizontal
 
-        let stack = NSStackView(views: [volume, equalizerRow, bandRow, loudnessRow])
+        mute.state = muted ? .on : .off
+        mute.target = self
+        mute.action = #selector(muteToggled)
+        let muteRow = NSStackView(views: [NSTextField(labelWithString: "Mute This App"), NSView(), mute])
+        muteRow.orientation = .horizontal
+
+        let stack = NSStackView(views: [volume, muteRow, equalizerRow, bandRow, loudnessRow])
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 16
@@ -1596,6 +1607,7 @@ private final class SoundView: NSView {
             equalizerRow.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -36),
             bandRow.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -36),
             loudnessRow.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -36),
+            muteRow.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -36),
         ])
         if let equalizer = Self.lastEqualizer { show(equalizer) }
         DispatchQueue.global().async { [weak self] in
@@ -1637,9 +1649,8 @@ private final class SoundView: NSView {
         DispatchQueue.global().async { AndroidRuntime.shared.setLoudness(level) }
     }
 
-    @objc private func silent() { set(0) }
-    @objc private func full() { set(AndroidRuntime.mediaVolumeSteps) }
     @objc private func volumeChanged() { set(slider.integerValue) }
+    @objc private func muteToggled() { muteChanged?(mute.state == .on) }
 
     private func set(_ level: Int) {
         slider.integerValue = level
