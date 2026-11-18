@@ -229,7 +229,17 @@ final class AndroidRuntime {
     /// services are patched for that: Scripts/vm/build-services.sh).
     func showAssistant(task: Int) {
         let agent = NotificationBridge.agent
-        _ = try? shell("CLASSPATH=$(pm path \(agent) | cut -d: -f2) app_process / \(agent).Focus \(task); "
+        // The assistant reuses its open screen, which is left on another screen when the window it
+        // was over closed (Android moves a closed screen's tasks to the main screen). That one is
+        // closed first, so the assistant opens anew over this app, as on a phone's one screen.
+        let stale = """
+            p=$(settings get secure voice_interaction_service | cut -d/ -f1); \
+            for r in $(am stack list | awk -v t=\(task) -v p="$p/" '\
+            /^RootTask/ { r = substr($2, 4); for (i = 3; i <= NF; i++) if ($i ~ /^displayId=/) d = substr($i, 11) } \
+            /^  taskId=/ { if (substr($1, 8) + 0 == t) td = d; if (index($2, p) == 1) s[r] = d } \
+            END { for (r in s) if (s[r] != td) print r }'); do am stack remove $r; done
+            """
+        _ = try? shell(stale + "; CLASSPATH=$(pm path \(agent) | cut -d: -f2) app_process / \(agent).Focus \(task); "
                        + "su 1000 cmd voiceinteraction show >/dev/null 2>&1")
     }
 
