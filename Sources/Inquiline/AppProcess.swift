@@ -102,6 +102,11 @@ final class AppProcess: NSObject, NSApplicationDelegate {
         viewMenu.addItem(.separator())
         AppWindowController.addControlsItems(to: viewMenu, target: controller)
         viewMenu.addItem(.separator())
+        // Android's assistant over the app, as holding a phone's power button opens it.
+        let assistant = viewMenu.addItem(withTitle: "Ask Assistant", action: #selector(AppWindowController.askAssistant), keyEquivalent: " ")
+        assistant.keyEquivalentModifierMask = [.option]
+        assistant.target = controller
+        viewMenu.addItem(.separator())
         let fullScreen = viewMenu.addItem(withTitle: "Enter Full Screen", action: #selector(NSWindow.toggleFullScreen(_:)), keyEquivalent: "f")
         fullScreen.keyEquivalentModifierMask = [.command, .control]
         viewItem.submenu = viewMenu

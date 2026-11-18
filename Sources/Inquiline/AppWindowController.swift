@@ -653,6 +653,12 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate, 
 
     private var mutedKey: String { "Muted.\(package)" }
 
+    /// Android's assistant (Gemini) over this app, reading what it shows.
+    @objc func askAssistant() {
+        guard let task = watchedTask, let display = watchedDisplay.flatMap({ Int($0) }) else { return }
+        DispatchQueue.global().async { AndroidRuntime.shared.showAssistant(task: task, display: display) }
+    }
+
     /// The app's sound: Android's music volume, which all its apps share as on a phone, its
     /// effects, and this app's own mute, so a game can be quiet while music plays.
     @objc private func showSound(_ sender: Any?) {
