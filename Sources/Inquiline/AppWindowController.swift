@@ -1011,13 +1011,48 @@ private final class AppSettingsView: NSView {
         var widgets: [[String: Any]]
         var counts: [String: Int]
 
+        /// Asked of Android all at once, so none waits for another: the storage takes a second.
         static func load(package: String) -> Snapshot {
-            Snapshot(allowed: AndroidRuntime.shared.notificationsAllowed(package: package),
-                     blocking: AndroidRuntime.shared.adBlocking(package: package),
-                     groups: AndroidRuntime.shared.permissions(package: package) ?? [],
-                     storage: AndroidRuntime.shared.storage(package: package),
-                     widgets: AndroidRuntime.shared.widgetList(package: package) ?? [],
-                     counts: AndroidRuntime.shared.adCounts(package: package))
+            var snapshot = Snapshot(allowed: nil, blocking: nil, groups: [], storage: nil, widgets: [], counts: [:])
+            let lock = NSLock()
+            func set(_ change: (inout Snapshot) -> Void) { lock.lock(); change(&snapshot); lock.unlock() }
+            DispatchQueue.concurrentPerform(iterations: 6) { part in
+                let runtime = AndroidRuntime.shared
+                switch part {
+                case 0: let value = runtime.notificationsAllowed(package: package); set { $0.allowed = value }
+                case 1: let value = runtime.adBlocking(package: package); set { $0.blocking = value }
+                case 2: let value = runtime.permissions(package: package) ?? []; set { $0.groups = value }
+                case 3: let value = runtime.storage(package: package); set { $0.storage = value }
+                case 4:
+                    let value = runtime.widgetList(package: package)
+                    if let value { saveWidgets(value, package: package) }
+                    set { $0.widgets = value ?? cachedWidgets(package: package) }
+                default: let value = runtime.adCounts(package: package); set { $0.counts = value }
+                }
+            }
+            return snapshot
+        }
+
+        /// What the app's widgets were when last read, which changes only with the app: shown
+        /// at once even before Android answers.
+        static func cached(package: String) -> Snapshot {
+            Snapshot(allowed: nil, blocking: nil, groups: [], storage: nil, widgets: cachedWidgets(package: package), counts: [:])
+        }
+
+        private static func widgetsFile(_ package: String) -> URL {
+            AndroidRuntime.shared.home.appendingPathComponent("widget-lists/\(package).json")
+        }
+
+        private static func cachedWidgets(package: String) -> [[String: Any]] {
+            guard let data = try? Data(contentsOf: widgetsFile(package)),
+                  let list = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else { return [] }
+            return list
+        }
+
+        private static func saveWidgets(_ list: [[String: Any]], package: String) {
+            let file = widgetsFile(package)
+            try? FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+            if let data = try? JSONSerialization.data(withJSONObject: list) { try? data.write(to: file, options: .atomic) }
         }
     }
 
@@ -1130,7 +1165,7 @@ private final class AppSettingsView: NSView {
 
         // What the window read when it opened, at once; then Android's answer now, which
         // changes only what changed meanwhile.
-        if let snapshot { apply(snapshot) }
+        apply(snapshot ?? .cached(package: package))
         DispatchQueue.global().async { [weak self] in
             let fresh = Snapshot.load(package: package)
             DispatchQueue.main.async {

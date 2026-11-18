@@ -109,6 +109,8 @@ final class DesktopWidgets {
     /// An app was removed: its widgets go with it.
     func remove(package: String) {
         for widget in widgets where widget.package == package { remove(key: widget.key) }
+        // The list of its widgets its settings kept.
+        try? FileManager.default.removeItem(at: AndroidRuntime.shared.home.appendingPathComponent("widget-lists/\(package).json"))
     }
 
     /// A new picture from Android.
