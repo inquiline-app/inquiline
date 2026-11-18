@@ -10,22 +10,29 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 
 /**
- * Android's equalizer on all its sound, as the sound settings of many phones have it: off, one
- * of its own presets, or the user's five bands. Inquiline's sound popover sets it:
+ * Android's own sound effects on all its sound, as the sound settings of many phones have them:
+ * its equalizer (off, one of its presets, or the user's five bands), bass boost, surround
+ * (its virtualizer) and loudness. Inquiline's sound popover sets them:
  *   su 0 am broadcast -n io.github.inquiline.notifications/.Sound --es eq "off" | "preset <n>" | "bands <b1> … <b5>"
- * (band levels in millibels). The choice is kept in files/eq and set again when the helper
- * starts, as Android forgets effects when it restarts.
+ *   su 0 am broadcast -n io.github.inquiline.notifications/.Sound --es effects "<bass> <surround> <loudness>"
+ * (band levels in millibels; the others from 0 to 100). The choices are kept in files/eq and
+ * files/effects and set again when the helper starts, as Android forgets effects on a restart.
  */
 public final class Sound extends BroadcastReceiver {
     private static Equalizer equalizer;
+    private static android.media.audiofx.BassBoost bass;
+    private static android.media.audiofx.Virtualizer surround;
+    private static android.media.audiofx.LoudnessEnhancer loudness;
 
     @Override
     public void onReceive(Context context, Intent intent) {
-        String choice = intent.getStringExtra("eq");
-        if (choice == null) return;
-        try {
-            Files.write(file(context).toPath(), choice.getBytes(StandardCharsets.UTF_8));
-        } catch (Exception ignored) {
+        for (String name : new String[] { "eq", "effects" }) {
+            String choice = intent.getStringExtra(name);
+            if (choice == null) continue;
+            try {
+                Files.write(new File(context.getFilesDir(), name).toPath(), choice.getBytes(StandardCharsets.UTF_8));
+            } catch (Exception ignored) {
+            }
         }
         apply(context);
     }
@@ -34,8 +41,39 @@ public final class Sound extends BroadcastReceiver {
         return new File(context.getFilesDir(), "eq");
     }
 
-    /** What files/eq says, on all of Android's sound. */
+    /** What files/eq and files/effects say, on all of Android's sound. */
     static synchronized void apply(Context context) {
+        applyEqualizer(context);
+        int[] levels = { 0, 0, 0 };
+        try {
+            String[] parts = new String(Files.readAllBytes(new File(context.getFilesDir(), "effects").toPath()),
+                    StandardCharsets.UTF_8).trim().split(" ");
+            for (int i = 0; i < 3 && i < parts.length; i++) levels[i] = Math.max(0, Math.min(100, Integer.parseInt(parts[i])));
+        } catch (Exception ignored) {
+        }
+        try {
+            if (levels[0] > 0 && bass == null) bass = new android.media.audiofx.BassBoost(0, 0);
+            if (bass != null) {
+                bass.setStrength((short) (levels[0] * 10));
+                bass.setEnabled(levels[0] > 0);
+            }
+            if (levels[1] > 0 && surround == null) surround = new android.media.audiofx.Virtualizer(0, 0);
+            if (surround != null) {
+                surround.setStrength((short) (levels[1] * 10));
+                surround.setEnabled(levels[1] > 0);
+            }
+            // Up to 10 dB louder, for apps and videos that play quiet.
+            if (levels[2] > 0 && loudness == null) loudness = new android.media.audiofx.LoudnessEnhancer(0);
+            if (loudness != null) {
+                loudness.setTargetGain(levels[2] * 10);
+                loudness.setEnabled(levels[2] > 0);
+            }
+        } catch (Exception e) {
+            android.util.Log.w("InquilineSound", "No sound effect", e);
+        }
+    }
+
+    private static void applyEqualizer(Context context) {
         String choice = "off";
         try {
             choice = new String(Files.readAllBytes(file(context).toPath()), StandardCharsets.UTF_8).trim();

@@ -287,6 +287,19 @@ final class AndroidRuntime {
         _ = try? shell("su 0 am broadcast -n \(NotificationBridge.agent)/.Sound --es eq '\(choice)' >/dev/null")
     }
 
+    /// Bass boost, surround and loudness, each from 0 to 100 (the helper's Sound).
+    func soundEffects() -> [Int] {
+        let value = (try? shell("su 0 cat /data/data/\(NotificationBridge.agent)/files/effects 2>/dev/null")) ?? ""
+        let levels = value.split(whereSeparator: \.isWhitespace).compactMap { Int($0) }
+        return levels.count == 3 ? levels : [0, 0, 0]
+    }
+
+    func setSoundEffects(_ levels: [Int]) {
+        guard levels.count == 3 else { return }
+        let value = levels.map { String(min(max($0, 0), 100)) }.joined(separator: " ")
+        _ = try? shell("su 0 am broadcast -n \(NotificationBridge.agent)/.Sound --es effects '\(value)' >/dev/null")
+    }
+
     static let equalizerPresets = ["Normal", "Classical", "Dance", "Flat", "Folk", "Heavy Metal", "Hip Hop", "Jazz", "Pop", "Rock"]
     static let equalizerBands = ["60", "230", "910", "3.6k", "14k"]
 

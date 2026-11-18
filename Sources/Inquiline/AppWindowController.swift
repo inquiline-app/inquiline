@@ -1496,14 +1496,17 @@ private final class SoundView: NSView {
     /// What was last read or set, so the popover opens as it is at once.
     private static var lastLevel: Int?
     private static var lastEqualizer: String?
+    private static var lastEffects: [Int]?
 
     /// Read when the window opens, as the app's settings are.
     static func prefetch() {
         DispatchQueue.global().async {
             let level = AndroidRuntime.shared.mediaVolume(), equalizer = AndroidRuntime.shared.equalizer()
+            let effects = AndroidRuntime.shared.soundEffects()
             DispatchQueue.main.async {
                 if let level { lastLevel = level }
                 lastEqualizer = equalizer
+                lastEffects = effects
             }
         }
     }
@@ -1513,6 +1516,8 @@ private final class SoundView: NSView {
     private let presets = NSPopUpButton()
     private let bandRow = NSStackView()
     private var bandSliders: [NSSlider] = []
+    /// Bass boost, surround and loudness.
+    private var effectSliders: [NSSlider] = []
     private static let customTag = 1000, offTag = -1
     var onResize: ((NSSize) -> Void)?
 
@@ -1570,7 +1575,21 @@ private final class SoundView: NSView {
         }
         bandRow.isHidden = true
 
-        let stack = NSStackView(views: [volume, equalizerRow, bandRow])
+        // Android's other effects, each from off to full.
+        var effectRows: [NSView] = []
+        for name in ["Bass Boost", "Surround", "Loudness"] {
+            let slider = NSSlider(value: 0, minValue: 0, maxValue: 100, target: self, action: #selector(effectsChanged))
+            slider.isContinuous = false
+            let label = NSTextField(labelWithString: name)
+            label.widthAnchor.constraint(equalToConstant: 84).isActive = true
+            let row = NSStackView(views: [label, slider])
+            row.orientation = .horizontal
+            effectSliders.append(slider)
+            effectRows.append(row)
+        }
+        if let effects = Self.lastEffects { show(effects: effects) }
+
+        let stack = NSStackView(views: [volume, equalizerRow, bandRow] + effectRows)
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 16
@@ -1584,14 +1603,17 @@ private final class SoundView: NSView {
             volume.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -36),
             equalizerRow.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -36),
             bandRow.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -36),
-        ])
+        ] + effectRows.map { $0.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -36) })
         if let equalizer = Self.lastEqualizer { show(equalizer) }
         DispatchQueue.global().async { [weak self] in
             let level = AndroidRuntime.shared.mediaVolume(), equalizer = AndroidRuntime.shared.equalizer()
+            let effects = AndroidRuntime.shared.soundEffects()
             DispatchQueue.main.async {
                 guard let self else { return }
                 Self.lastEqualizer = equalizer
+                Self.lastEffects = effects
                 self.show(equalizer)
+                self.show(effects: effects)
                 guard let level else { return }
                 Self.lastLevel = level
                 self.slider.integerValue = level
@@ -1614,6 +1636,16 @@ private final class SoundView: NSView {
         bandRow.isHidden = parts.first != "bands"
         layoutSubtreeIfNeeded()
         onResize?(fittingSize)
+    }
+
+    private func show(effects: [Int]) {
+        for (slider, value) in zip(effectSliders, effects) { slider.integerValue = value }
+    }
+
+    @objc private func effectsChanged() {
+        let levels = effectSliders.map(\.integerValue)
+        Self.lastEffects = levels
+        DispatchQueue.global().async { AndroidRuntime.shared.setSoundEffects(levels) }
     }
 
     @objc private func silent() { set(0) }
