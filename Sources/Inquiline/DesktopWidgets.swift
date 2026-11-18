@@ -48,11 +48,25 @@ final class DesktopWidgets {
 
     /// At launch: the widgets where they were, with their last pictures.
     func start() {
+        Self.setCursorInBackground()
         if let data = try? Data(contentsOf: Self.listFile),
            let list = try? JSONDecoder().decode([Widget].self, from: data) {
             widgets = list
         }
         for widget in widgets { show(widget) }
+    }
+
+    /// The Mac lets only the app in front set the cursor, and Inquiline never is while the
+    /// mouse is over a widget on the desktop: it's let set it from behind, as desktop tools are,
+    /// so a widget's edges show the resize cursor as a window's do.
+    private static func setCursorInBackground() {
+        typealias Connection = @convention(c) () -> Int32
+        typealias SetProperty = @convention(c) (Int32, Int32, CFString, CFTypeRef) -> Int32
+        guard let skyLight = dlopen("/System/Library/Frameworks/ApplicationServices.framework/ApplicationServices", RTLD_LAZY),
+              let connection = dlsym(skyLight, "_CGSDefaultConnection"),
+              let setProperty = dlsym(skyLight, "CGSSetConnectionProperty") else { return }
+        let id = unsafeBitCast(connection, to: Connection.self)()
+        _ = unsafeBitCast(setProperty, to: SetProperty.self)(id, id, "SetsCursorInBackground" as CFString, kCFBooleanTrue)
     }
 
     /// The helper connected: Android hosts each widget again at its size.
