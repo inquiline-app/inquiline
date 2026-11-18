@@ -43,9 +43,60 @@ diff -ru orig3/com/android/server/wm/DisplayContent.smali out-classes3.dex/com/a
  
      move-result-object v0
  
+diff -ru orig3/com/android/server/wm/RootWindowContainer.smali out-classes3.dex/com/android/server/wm/RootWindowContainer.smali
+--- orig3/com/android/server/wm/RootWindowContainer.smali	2026-11-19 01:12:25
++++ out-classes3.dex/com/android/server/wm/RootWindowContainer.smali	2026-11-19 01:28:52
+@@ -12234,3 +12234,47 @@
+     :cond_17
+     return-void
+ .end method
++
++# Inquiline: the screen of the app in use, which an app's window shows: the topmost screen other
++# than the main one, which nothing shows, with an app in focus. The assistant's own window opens on
++# the main screen and takes the focus there, so the screen in focus is not the app's.
++.method public getInquilineAppDisplayContent()Lcom/android/server/wm/DisplayContent;
++    .registers 4
++
++    invoke-virtual {p0}, Lcom/android/server/wm/WindowContainer;->getChildCount()I
++
++    move-result v0
++
++    add-int/lit8 v0, v0, -0x1
++
++    :inquiline_loop
++    if-ltz v0, :inquiline_none
++
++    invoke-virtual {p0, v0}, Lcom/android/server/wm/WindowContainer;->getChildAt(I)Lcom/android/server/wm/WindowContainer;
++
++    move-result-object v1
++
++    check-cast v1, Lcom/android/server/wm/DisplayContent;
++
++    iget v2, v1, Lcom/android/server/wm/DisplayContent;->mDisplayId:I
++
++    if-eqz v2, :inquiline_next
++
++    iget-object v2, v1, Lcom/android/server/wm/DisplayContent;->mFocusedApp:Lcom/android/server/wm/ActivityRecord;
++
++    if-eqz v2, :inquiline_next
++
++    return-object v1
++
++    :inquiline_next
++    add-int/lit8 v0, v0, -0x1
++
++    goto :inquiline_loop
++
++    :inquiline_none
++    invoke-virtual {p0}, Lcom/android/server/wm/RootWindowContainer;->getTopFocusedDisplayContent()Lcom/android/server/wm/DisplayContent;
++
++    move-result-object v0
++
++    return-object v0
++.end method
 diff -ru orig3/com/android/server/wm/TaskLaunchParamsModifier.smali out-classes3.dex/com/android/server/wm/TaskLaunchParamsModifier.smali
 --- orig3/com/android/server/wm/TaskLaunchParamsModifier.smali	2026-11-19 01:12:25
-+++ out-classes3.dex/com/android/server/wm/TaskLaunchParamsModifier.smali	2026-11-19 01:12:38
++++ out-classes3.dex/com/android/server/wm/TaskLaunchParamsModifier.smali	2026-11-19 01:28:52
 @@ -1838,6 +1838,7 @@
  .method public final getFallbackDisplayAreaForActivity(Lcom/android/server/wm/ActivityRecord;Lcom/android/server/wm/ActivityStarter$Request;)Lcom/android/server/wm/TaskDisplayArea;
      .registers 6
@@ -59,8 +110,8 @@ diff -ru orig3/com/android/server/wm/TaskLaunchParamsModifier.smali out-classes3
  .method public final getPreferredLaunchTaskDisplayArea(Lcom/android/server/wm/Task;Landroid/app/ActivityOptions;Lcom/android/server/wm/ActivityRecord;Lcom/android/server/wm/LaunchParamsController$LaunchParams;Lcom/android/server/wm/ActivityRecord;Lcom/android/server/wm/ActivityStarter$Request;)Lcom/android/server/wm/TaskDisplayArea;
      .registers 14
 +
-+    # Inquiline: the assistant's own screens open on the screen in focus, over the app it reads,
-+    # whatever screen they ask for or last were on.
++    # Inquiline: the assistant's own screens open on the screen of the app in use, over the app it
++    # reads, whatever screen they ask for or last were on.
 +    if-eqz p5, :inquiline_choose
 +
 +    iget-object v0, p0, Lcom/android/server/wm/TaskLaunchParamsModifier;->mSupervisor:Lcom/android/server/wm/ActivityTaskSupervisor;
@@ -87,7 +138,7 @@ diff -ru orig3/com/android/server/wm/TaskLaunchParamsModifier.smali out-classes3
 +
 +    iget-object v0, v0, Lcom/android/server/wm/ActivityTaskSupervisor;->mRootWindowContainer:Lcom/android/server/wm/RootWindowContainer;
 +
-+    invoke-virtual {v0}, Lcom/android/server/wm/RootWindowContainer;->getTopFocusedDisplayContent()Lcom/android/server/wm/DisplayContent;
++    invoke-virtual {v0}, Lcom/android/server/wm/RootWindowContainer;->getInquilineAppDisplayContent()Lcom/android/server/wm/DisplayContent;
 +
 +    move-result-object v0
 +
@@ -107,7 +158,7 @@ diff -ru orig3/com/android/server/wm/TaskLaunchParamsModifier.smali out-classes3
  
 diff -ru orig3/com/android/server/wm/WindowManagerService.smali out-classes3.dex/com/android/server/wm/WindowManagerService.smali
 --- orig3/com/android/server/wm/WindowManagerService.smali	2026-11-19 01:12:26
-+++ out-classes3.dex/com/android/server/wm/WindowManagerService.smali	2026-11-19 00:38:33
++++ out-classes3.dex/com/android/server/wm/WindowManagerService.smali	2026-11-19 01:28:52
 @@ -33158,9 +33158,8 @@
      :try_start_10
      iget-object p0, p0, Lcom/android/server/wm/WindowManagerService;->mRoot:Lcom/android/server/wm/RootWindowContainer;
@@ -115,8 +166,8 @@ diff -ru orig3/com/android/server/wm/WindowManagerService.smali out-classes3.dex
 -    const/4 v1, 0x0
 -
 -    invoke-virtual {p0, v1}, Lcom/android/server/wm/RootWindowContainer;->getDisplayContent(I)Lcom/android/server/wm/DisplayContent;
-+    # Inquiline: the screen in focus, where the app the assistant reads is, not always the main one.
-+    invoke-virtual {p0}, Lcom/android/server/wm/RootWindowContainer;->getTopFocusedDisplayContent()Lcom/android/server/wm/DisplayContent;
++    # Inquiline: the screen of the app in use, which the assistant reads, not always the main one.
++    invoke-virtual {p0}, Lcom/android/server/wm/RootWindowContainer;->getInquilineAppDisplayContent()Lcom/android/server/wm/DisplayContent;
  
      move-result-object p0
  

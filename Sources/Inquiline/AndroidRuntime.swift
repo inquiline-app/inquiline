@@ -231,14 +231,13 @@ final class AndroidRuntime {
         let agent = NotificationBridge.agent
         // The assistant reuses its open screen, which is left on another screen when the window it
         // was over closed (Android moves a closed screen's tasks to the main screen). That one is
-        // moved to this app's screen first, so the assistant shows over this app, as on a phone's
-        // one screen. Closing it instead would hand the focus, and the assistant, to the main screen.
+        // closed first, so the assistant opens anew over this app, as on a phone's one screen.
         let stale = """
             p=$(settings get secure voice_interaction_service | cut -d/ -f1); \
             am stack list | awk -v t=\(task) -v p="$p/" '\
             /^RootTask/ { r = substr($2, 4); for (i = 3; i <= NF; i++) if ($i ~ /^displayId=/) d = substr($i, 11) } \
             /^  taskId=/ { if (substr($1, 8) + 0 == t) td = d; if (index($2, p) == 1) s[r] = d } \
-            END { for (r in s) if (td != "" && s[r] != td) print r, td }' | while read r d; do am display move-stack $r $d; done
+            END { for (r in s) if (td != "" && s[r] != td) print r }' | while read r; do am stack remove $r; done
             """
         _ = try? shell(stale + "; CLASSPATH=$(pm path \(agent) | cut -d: -f2) app_process / \(agent).Focus \(task); "
                        + "su 1000 cmd voiceinteraction show >/dev/null 2>&1")
