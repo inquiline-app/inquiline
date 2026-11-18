@@ -1,5 +1,5 @@
 #!/bin/bash
-# Builds Android's system services with Inquiline's changes (Vendor/services/services.patch) and
+# Builds Android's system services with Inquiline's changes (Vendor/services/<dex>.patch) and
 # their precompiled code, into .build/vm/services: services.jar and oat-arm64, which the disk
 # binds over /system/framework/services.jar and /system/framework/oat/arm64 (build-disk.sh).
 #
@@ -10,7 +10,10 @@
 #   - its screenshot is of the screen in focus (WindowManagerService.takeAssistScreenshot);
 #   - that screen's own power counts, not the main screen's, which nothing shows, and its
 #     screenshot is taken though Inquiline's screens are marked secure, unless an app's secure
-#     screen shows, as such screens come out black on a phone (DisplayContent.getLayerCaptureArgs).
+#     screen shows, as such screens come out black on a phone (DisplayContent.getLayerCaptureArgs);
+#   - recording the whole screen (Gemini Live's screen sharing) records the app's screen
+#     (ContentRecorder), and a recording stays on though the main screen is off
+#     (DisplayManagerService.createVirtualDisplayLocked).
 #
 # Changing services.jar invalidates the image's precompiled code for it and for the system
 # server jars compiled against it, so all of them are compiled again with Android's own dex2oat,
@@ -37,27 +40,35 @@ W=$OUT/work
 adb shell "su 0 sh -c 'umount -l /system/framework/services.jar /system/framework/oat/arm64 2>/dev/null; true'"
 adb pull /system/framework/services.jar "$W/original.jar" >/dev/null
 
-java -cp "$CP" com.android.tools.smali.baksmali.Main d "$W/original.jar/classes3.dex" -o "$W/orig3"
-cp -R "$W/orig3" "$W/out-classes3.dex"
-# Into the copy: with both paths, patch would change the original's files.
-patch -s -p1 -d "$W/out-classes3.dex" < Vendor/services/services.patch
-grep -q getInquilineAppDisplayContent "$W/out-classes3.dex/com/android/server/wm/RootWindowContainer.smali"
-# Dex 039, as the image's: Android 15 reads its other dex files as that version.
-java -cp "$CP" com.android.tools.smali.smali.Main a "$W/out-classes3.dex" -o "$W/classes3.dex" --api 29
-
-mkdir -p "$W/jar" && (cd "$W/jar" && unzip -q ../original.jar && cp ../classes3.dex classes3.dex \
-    && zip -q -0 -X ../patched.jar classes*.dex && zip -q -X -r ../patched.jar . -x 'classes*.dex')
+mkdir -p "$W/jar" && (cd "$W/jar" && unzip -q ../original.jar)
+for patch in Vendor/services/*.patch; do
+    dex=$(basename "$patch" .patch)
+    java -cp "$CP" com.android.tools.smali.baksmali.Main d "$W/original.jar/$dex.dex" -o "$W/$dex"
+    # -p1 into the folder: given both paths, patch would change the first, the original's files.
+    patch -s -p1 -d "$W/$dex" < "$patch"
+    # Dex 039, as the image's: Android 15 reads its other dex files as that version.
+    java -cp "$CP" com.android.tools.smali.smali.Main a "$W/$dex" -o "$W/jar/$dex.dex" --api 29
+done
+(cd "$W/jar" && zip -q -0 -X ../patched.jar classes*.dex && zip -q -X -r ../patched.jar . -x 'classes*.dex')
 "$BUILD_TOOLS/zipalign" -f -p 4 "$W/patched.jar" "$OUT/services.jar"
 
 # Precompiled inside Android, against the patched jar.
 adb push "$OUT/services.jar" /data/local/tmp/inquiline-services.jar >/dev/null
 adb push Vendor/services/compile.sh /data/local/tmp/inquiline-compile.sh >/dev/null
+# The image's profile names the original's dex files by checksum: it goes over to the patched
+# jar through its text form, the methods it lists.
+adb shell "su 0 sh -c 'cd /data/local/tmp && P=/apex/com.android.art/bin/profman \
+    && \$P --dump-classes-and-methods --profile-file=/system/framework/services.jar.prof \
+        --apk=/system/framework/services.jar --dex-location=/system/framework/services.jar > inquiline-profile.txt \
+    && \$P --create-profile-from=inquiline-profile.txt --apk=inquiline-services.jar \
+        --dex-location=/system/framework/services.jar --reference-profile-file=inquiline-services.prof \
+    && chmod 644 inquiline-services.prof'"
 adb shell "su 0 sh -c 'chmod 644 /data/local/tmp/inquiline-services.jar; \
     mount --bind /data/local/tmp/inquiline-services.jar /system/framework/services.jar && \
     sh /data/local/tmp/inquiline-compile.sh && umount -l /system/framework/services.jar; \
     cd /data/local/tmp && tar -cf inquiline-oat.tar oat-arm64'"
 adb pull /data/local/tmp/inquiline-oat.tar "$W/oat.tar" >/dev/null
 tar -xf "$W/oat.tar" -C "$OUT"
-adb shell "su 0 rm -rf /data/local/tmp/inquiline-services.jar /data/local/tmp/inquiline-compile.sh /data/local/tmp/inquiline-oat.tar /data/local/tmp/oat-arm64"
+adb shell "su 0 rm -rf /data/local/tmp/inquiline-profile.txt /data/local/tmp/inquiline-services.prof /data/local/tmp/inquiline-services.jar /data/local/tmp/inquiline-compile.sh /data/local/tmp/inquiline-oat.tar /data/local/tmp/oat-arm64"
 rm -rf "$W"
 du -sh "$OUT"/*

@@ -13,8 +13,10 @@ name() { echo "$1" | sed 's|^/||; s|/|@|g'; }
 prev=""
 for jar in $(echo $SYSTEMSERVERCLASSPATH | tr ':' ' '); do
   if [ "$jar" = /system/framework/services.jar ]; then
+    # With the image's profile, carried over to the patched jar (build-services.sh), whose dex
+    # checksums the profile names.
     rm -f $O/services.art
-    compile $jar "PCL[$prev]" speed-profile $O/services /system/framework/services.jar.prof
+    compile $jar "PCL[$prev]" speed-profile $O/services /data/local/tmp/inquiline-services.prof
   elif [ -n "$prev" ]; then
     compile $jar "PCL[$prev]" speed $O/$(name $jar)@classes
   fi
