@@ -959,6 +959,8 @@ private final class AppSettingsView: NSView {
     private let permissionRows = NSStackView()
     private let adRows = NSStackView()
     private let dataRows = NSStackView()
+    private let widgetRows = NSStackView()
+    private var widgetsHeader: NSView?
     private let appSize = NSTextField(labelWithString: "")
     private let dataSize = NSTextField(labelWithString: "")
     private let cacheSize = NSTextField(labelWithString: "")
@@ -995,7 +997,7 @@ private final class AppSettingsView: NSView {
         notifications.isEnabled = false
 
         // Permissions, notifications first: the one most often changed.
-        for rows in [permissionRows, adRows, dataRows] {
+        for rows in [permissionRows, adRows, dataRows, widgetRows] {
             rows.orientation = .vertical
             rows.alignment = .leading
             rows.spacing = 10
@@ -1060,7 +1062,12 @@ private final class AppSettingsView: NSView {
         dataRows.addArrangedSubview(folder)
         dataRows.addArrangedSubview(clearing)
         let dataHeader = Self.header("Data", rows: dataRows, trailing: nil)
-        let stack = NSStackView(views: [permissionsHeader, permissionRows, adsHeader, adRows, dataHeader, dataRows])
+        // The app's widgets, for the desktop, once Android lists them; none, no section.
+        let widgetsHeader = Self.header("Widgets", rows: widgetRows, trailing: nil)
+        widgetsHeader.isHidden = true
+        self.widgetsHeader = widgetsHeader
+        let stack = NSStackView(views: [permissionsHeader, permissionRows, adsHeader, adRows, widgetsHeader, widgetRows,
+                                        dataHeader, dataRows])
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 12
@@ -1074,7 +1081,7 @@ private final class AppSettingsView: NSView {
             stack.bottomAnchor.constraint(equalTo: bottomAnchor),
             widthAnchor.constraint(equalToConstant: 270),
         ]
-        for view in [permissionsHeader, permissionRows, adsHeader, adRows, dataHeader, dataRows] {
+        for view in [permissionsHeader, permissionRows, adsHeader, adRows, widgetsHeader, widgetRows, dataHeader, dataRows] {
             constraints.append(view.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -32))
         }
         for view in [level, names, levelText, countRows] as [NSView] {
@@ -1089,8 +1096,10 @@ private final class AppSettingsView: NSView {
             let blocking = AndroidRuntime.shared.adBlocking(package: package)
             let groups = AndroidRuntime.shared.permissions(package: package) ?? []
             let storage = AndroidRuntime.shared.storage(package: package)
+            let widgets = AndroidRuntime.shared.widgetList(package: package) ?? []
             DispatchQueue.main.async {
                 guard let self else { return }
+                self.showWidgets(widgets)
                 if let allowed {
                     self.notifications.state = allowed ? .on : .off
                     self.notifications.isEnabled = true
@@ -1136,6 +1145,31 @@ private final class AppSettingsView: NSView {
         row.orientation = .horizontal
         row.spacing = 4
         return row
+    }
+
+    /// The app's widgets, two to a row, each its picture and name, ticked when on the desktop:
+    /// a click adds it there, another click takes it away.
+    private func showWidgets(_ widgets: [[String: Any]]) {
+        guard !widgets.isEmpty else { return }
+        widgetsHeader?.isHidden = false
+        let placed = DesktopWidgets.placed(package: package)
+        var row: NSStackView?
+        for widget in widgets {
+            guard let provider = widget["provider"] as? String else { continue }
+            let preview = (widget["preview"] as? String).flatMap { Data(base64Encoded: $0) }.flatMap(NSImage.init(data:))
+            let tile = WidgetTile(provider: provider, label: widget["label"] as? String ?? "", preview: preview,
+                                  key: placed[provider], package: package)
+            if row == nil || row!.arrangedSubviews.count == 2 {
+                let next = NSStackView()
+                next.orientation = .horizontal
+                next.alignment = .top
+                next.spacing = 8
+                widgetRows.addArrangedSubview(next)
+                row = next
+            }
+            row?.addArrangedSubview(tile)
+        }
+        fitToContent()
     }
 
     private func show(_ groups: [AndroidRuntime.PermissionGroup]) {
@@ -1264,4 +1298,75 @@ private final class SectionToggle: NSObject {
         triangle.state = triangle.state == .on ? .off : .on
         toggle()
     }
+}
+
+/// One of the app's widgets in its settings: its picture and name; ticked while on the desktop.
+private final class WidgetTile: NSView {
+    private let provider: String
+    private let package: String
+    private var key: String?
+    private let tick = NSImageView()
+
+    init(provider: String, label: String, preview: NSImage?, key: String?, package: String) {
+        self.provider = provider
+        self.package = package
+        self.key = key
+        super.init(frame: .zero)
+        let picture = NSImageView()
+        picture.image = preview ?? NSImage(systemSymbolName: "square.dashed", accessibilityDescription: nil)
+        picture.imageScaling = .scaleProportionallyUpOrDown
+        let name = NSTextField(wrappingLabelWithString: label)
+        name.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        name.alignment = .center
+        name.maximumNumberOfLines = 2
+        tick.image = NSImage(systemSymbolName: "checkmark.circle.fill", accessibilityDescription: "On the Desktop")
+        tick.contentTintColor = .controlAccentColor
+        tick.symbolConfiguration = .init(pointSize: 16, weight: .regular)
+        for view in [picture, name, tick] {
+            view.translatesAutoresizingMaskIntoConstraints = false
+            addSubview(view)
+        }
+        NSLayoutConstraint.activate([
+            widthAnchor.constraint(equalToConstant: 111),
+            picture.topAnchor.constraint(equalTo: topAnchor),
+            picture.leadingAnchor.constraint(equalTo: leadingAnchor),
+            picture.trailingAnchor.constraint(equalTo: trailingAnchor),
+            picture.heightAnchor.constraint(equalToConstant: 72),
+            name.topAnchor.constraint(equalTo: picture.bottomAnchor, constant: 4),
+            name.leadingAnchor.constraint(equalTo: leadingAnchor),
+            name.trailingAnchor.constraint(equalTo: trailingAnchor),
+            name.bottomAnchor.constraint(equalTo: bottomAnchor),
+            tick.topAnchor.constraint(equalTo: topAnchor, constant: 2),
+            tick.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -2),
+        ])
+        tick.isHidden = key == nil
+        toolTip = key == nil ? "Add to the Desktop" : "Remove from the Desktop"
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    override func mouseUp(with event: NSEvent) {
+        guard bounds.contains(convert(event.locationInWindow, from: nil)) else { return }
+        var components = URLComponents()
+        components.scheme = "inquiline"
+        components.host = "widget"
+        if key != nil {
+            // Added since the settings opened, Inquiline knows it by the key it gave it.
+            guard let placed = DesktopWidgets.placed(package: package)[provider] else { return }
+            components.queryItems = [URLQueryItem(name: "remove", value: placed)]
+            self.key = nil
+        } else {
+            components.queryItems = [URLQueryItem(name: "add", value: provider), URLQueryItem(name: "package", value: package)]
+            // Inquiline gives it its key; until the settings open again, any marks it as there.
+            self.key = ""
+        }
+        tick.isHidden = key == nil
+        toolTip = key == nil ? "Add to the Desktop" : "Remove from the Desktop"
+        guard let url = components.url else { return }
+        let configuration = NSWorkspace.OpenConfiguration()
+        configuration.activates = false
+        NSWorkspace.shared.open(url, configuration: configuration)
+    }
+
+    override func mouseDown(with event: NSEvent) {}
 }

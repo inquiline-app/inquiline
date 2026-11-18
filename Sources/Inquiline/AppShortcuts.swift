@@ -179,6 +179,11 @@ enum AppShortcuts {
 
     /// Where Inquiline's apps are now: where their bookmarks lead, and any in the folders they
     /// go in, as apps from before the bookmarks were kept.
+    /// The Mac app of an Android app, wherever the user keeps it.
+    static func bundle(of package: String) -> URL? {
+        queue.sync { locate()[package] }
+    }
+
     private static func locate() -> [String: URL] {
         var found: [String: URL] = [:]
         for (package, data) in places {

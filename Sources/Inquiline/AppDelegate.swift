@@ -37,7 +37,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, SPUSta
             DispatchQueue.main.async { self?.packagesChanged() }
         }
         AppShortcuts.onRemoved = { [weak self] package in
-            DispatchQueue.main.async { self?.removedFromApplications(package) }
+            DispatchQueue.main.async {
+                self?.removedFromApplications(package)
+                DesktopWidgets.shared.remove(package: package)
+            }
         }
         library.onChange = { [weak self] in self?.updateShortcuts() }
     }
@@ -120,6 +123,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, SPUSta
         if library.apps.isEmpty {
             statusItem.button?.perform(#selector(NSButton.performClick(_:)), with: nil, afterDelay: 0.5)
         }
+        // Android's widgets on the desktop, as they were (DesktopWidgets).
+        DesktopWidgets.shared.start()
         startAndroidInBackground()
     }
 
@@ -193,6 +198,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, SPUSta
                     try self.prepareAndroid()
                     try AndroidFiles.show(label: label)
                 }, failure: "Couldn't Show the Files")
+            } else if url.scheme == "inquiline", url.host == "widget" {
+                // An app's settings add or remove one of its widgets on the desktop.
+                let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
+                func item(_ name: String) -> String? { items.first { $0.name == name }?.value }
+                if let key = item("remove") {
+                    DesktopWidgets.shared.remove(key: key)
+                } else if let provider = item("add"), let package = item("package") {
+                    run("Starting Android…") { try self.prepareAndroid() }
+                    DesktopWidgets.shared.add(package: package, provider: provider)
+                }
             } else if url.scheme == "inquiline" {
                 run("Starting Android…") { try self.prepareAndroid() }
             } else {

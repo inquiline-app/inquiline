@@ -39,6 +39,8 @@ public final class Listener extends NotificationListenerService {
     private final List<OutputStream> clients = new CopyOnWriteArrayList<>();
     private LocalServerSocket server;
     private Location location;
+    /** The widgets on the Mac's desktop, hosted in this process, which Android keeps running. */
+    private WidgetHost widgets;
 
     @Override
     public void onListenerConnected() {
@@ -49,6 +51,7 @@ public final class Listener extends NotificationListenerService {
             return;
         }
         location = new Location(this, this::send);
+        widgets = new WidgetHost(this, this::send);
         Thread accept = new Thread(this::acceptClients, "inquiline-accept");
         accept.setDaemon(true);
         accept.start();
@@ -90,6 +93,26 @@ public final class Listener extends NotificationListenerService {
                     if (command.has("reply")) reply(command.getString("reply"), command.getString("text"));
                     JSONObject fix = command.optJSONObject("location");
                     if (fix != null) location.fix(fix);
+                    // The Mac's desktop widgets: sizes and points in points, which are dp here.
+                    if (command.has("placeWidget")) {
+                        widgets.place(command.getString("placeWidget"), command.getString("provider"),
+                                command.getInt("width"), command.getInt("height"));
+                    }
+                    if (command.has("resizeWidget")) {
+                        widgets.resize(command.getString("resizeWidget"), command.getInt("width"), command.getInt("height"));
+                    }
+                    if (command.has("removeWidget")) widgets.remove(command.getString("removeWidget"));
+                    if (command.has("touchWidget")) {
+                        widgets.touch(command.getString("touchWidget"), command.getString("action"),
+                                (float) command.getDouble("x"), (float) command.getDouble("y"));
+                    }
+                    if (command.has("scrollWidget")) {
+                        widgets.scroll(command.getString("scrollWidget"), (float) command.getDouble("x"),
+                                (float) command.getDouble("y"), (float) command.getDouble("lines"));
+                    }
+                    if (command.has("launchWidget")) {
+                        widgets.launch(command.getString("launchWidget"), command.getInt("display"));
+                    }
                 } catch (org.json.JSONException ignored) {
                 }
             }

@@ -107,6 +107,7 @@ final class AndroidRuntime {
         keepLogs()
         turnOffBluetooth()
         letGoogleLocate()
+        letHelperHostWidgets()
         nameDevice()
         watchPackages()
         watchSleep()
@@ -167,6 +168,28 @@ final class AndroidRuntime {
     /// Google Play services is Android's location service once the user adds it, as on a phone,
     /// where Android lets it know where the phone is from the first start. Added later here, it
     /// never got that leave, and apps asking it got no location; it's given what a phone gives.
+    /// The two members of Android's widget host that its own launchers use to see what a tap
+    /// on a widget starts, so that an app it opens opens in its Mac window (WidgetHost). Android
+    /// lets processes use them once named here; set before the helper starts or is updated.
+    private func letHelperHostWidgets() {
+        let members = "Landroid/appwidget/AppWidgetHostView;->setInteractionHandler,"
+            + "Landroid/widget/RemoteViews$RemoteResponse;->getLaunchOptions"
+        let current = (try? shell("settings get global hidden_api_blacklist_exemptions"))?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard current != members else { return }
+        _ = try? shell("settings put global hidden_api_blacklist_exemptions '\(members)'")
+    }
+
+    /// The widgets an app offers, as the helper's WidgetList prints them; nil if it couldn't tell.
+    func widgetList(package: String) -> [[String: Any]]? {
+        guard package.range(of: "^[A-Za-z0-9_.]+$", options: .regularExpression) != nil else { return nil }
+        let agent = NotificationBridge.agent
+        guard let output = try? shell("su 0 sh -c 'CLASSPATH=$(pm path \(agent) | cut -d: -f2) app_process / \(agent).WidgetList \(package)'"),
+              let line = output.split(whereSeparator: \.isNewline).last(where: { $0.hasPrefix("[") }),
+              let list = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [[String: Any]] else { return nil }
+        return list
+    }
+
     private func letGoogleLocate() {
         let gms = "com.google.android.gms"
         guard let held = try? shell("dumpsys package \(gms) | grep -E 'ACCESS_(FINE|COARSE|BACKGROUND)_LOCATION: granted=true' | wc -l"),

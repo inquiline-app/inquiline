@@ -13,7 +13,7 @@ final class NotificationBridge: NSObject, UNUserNotificationCenterDelegate {
     static let shared = NotificationBridge()
 
     static let agent = "io.github.inquiline.notifications"
-    static let agentVersion = 36
+    static let agentVersion = 37
     private static let socket = "localabstract:inquiline-notifications"
 
     /// Opens an app's window, given its package; with true, without starting the app, whose
@@ -42,6 +42,7 @@ final class NotificationBridge: NSObject, UNUserNotificationCenterDelegate {
         let center = UNUserNotificationCenter.current()
         center.delegate = self
         LocationBridge.shared.send = { [weak self] in self?.send($0) }
+        DesktopWidgets.shared.send = { [weak self] in self?.send($0) }
         let reply = UNTextInputNotificationAction(identifier: Self.replyCategory, title: "Reply", options: [],
                                                   textInputButtonTitle: "Send", textInputPlaceholder: "")
         center.setNotificationCategories([UNNotificationCategory(identifier: Self.replyCategory, actions: [reply],
@@ -62,6 +63,7 @@ final class NotificationBridge: NSObject, UNUserNotificationCenterDelegate {
                 return
             }
             let fd = connection
+            DispatchQueue.main.async { DesktopWidgets.shared.connected() }
             Thread.detachNewThread { [self] in
                 read(from: fd)
                 // No helper, no one asking where the Mac is.
@@ -96,6 +98,8 @@ final class NotificationBridge: NSObject, UNUserNotificationCenterDelegate {
             guard result.contains("Success") else { throw RuntimeError("Could not add the notifications helper.") }
         }
         _ = try AdbClient.shell("cmd notification allow_listener \(Self.agent)/.Listener")
+        // Hosting widgets, as a phone's home screen does (DesktopWidgets).
+        _ = try? AdbClient.shell("appwidget grantbind --package \(Self.agent) --user 0")
     }
 
     /// Android binds the agent a moment after it's allowed, so it's asked a few times.
@@ -128,6 +132,14 @@ final class NotificationBridge: NSObject, UNUserNotificationCenterDelegate {
     }
 
     private func handle(_ message: [String: Any]) {
+        if let key = message["widget"] as? String, let png = (message["png"] as? String).flatMap({ Data(base64Encoded: $0) }) {
+            DesktopWidgets.shared.received(key: key, png: png)
+            return
+        }
+        if let key = message["widgetOpen"] as? String, let package = message["package"] as? String {
+            DesktopWidgets.shared.open(key: key, package: package)
+            return
+        }
         if let location = message["location"] as? String {
             LocationBridge.shared.set(wanted: location == "start")
             return
@@ -252,6 +264,22 @@ final class NotificationBridge: NSObject, UNUserNotificationCenterDelegate {
                     _ = Self.readLine(helper, seconds: 5)
                     return
                 }
+                Thread.sleep(forTimeInterval: 0.25)
+            }
+        }
+    }
+
+    /// Opens the app's window, as for a notification's own screen, without its first screen, and
+    /// gives the display it shows: for what a widget's tap opens.
+    func openWindow(package: String, then run: @escaping (Int) -> Void) {
+        let identifier = "io.github.inquiline-app.app." + package.replacingOccurrences(of: "_", with: "-")
+        DispatchQueue.global().async { [self] in
+            let open = !NSRunningApplication.runningApplications(withBundleIdentifier: identifier).isEmpty
+            let before = Self.windowDisplays()
+            DispatchQueue.main.async { self.openApp?(package, !open) }
+            for _ in 0..<40 {
+                let display = open ? Self.display(of: package) : Self.windowDisplays().subtracting(before).first
+                if let display { return run(display) }
                 Thread.sleep(forTimeInterval: 0.25)
             }
         }
