@@ -1496,17 +1496,17 @@ private final class SoundView: NSView {
     /// What was last read or set, so the popover opens as it is at once.
     private static var lastLevel: Int?
     private static var lastEqualizer: String?
-    private static var lastEffects: [Int]?
+    private static var lastLoudness: Int?
 
     /// Read when the window opens, as the app's settings are.
     static func prefetch() {
         DispatchQueue.global().async {
             let level = AndroidRuntime.shared.mediaVolume(), equalizer = AndroidRuntime.shared.equalizer()
-            let effects = AndroidRuntime.shared.soundEffects()
+            let loudness = AndroidRuntime.shared.loudness()
             DispatchQueue.main.async {
                 if let level { lastLevel = level }
                 lastEqualizer = equalizer
-                lastEffects = effects
+                lastLoudness = loudness
             }
         }
     }
@@ -1516,8 +1516,8 @@ private final class SoundView: NSView {
     private let presets = NSPopUpButton()
     private let bandRow = NSStackView()
     private var bandSliders: [NSSlider] = []
-    /// Bass boost, surround and loudness.
-    private var effectSliders: [NSSlider] = []
+    /// How much louder Android plays, for apps and videos that play quiet.
+    private let loudness = NSSlider(value: Double(SoundView.lastLoudness ?? 0), minValue: 0, maxValue: 100, target: nil, action: nil)
     private static let customTag = 1000, offTag = -1
     var onResize: ((NSSize) -> Void)?
 
@@ -1575,21 +1575,13 @@ private final class SoundView: NSView {
         }
         bandRow.isHidden = true
 
-        // Android's other effects, each from off to full.
-        var effectRows: [NSView] = []
-        for name in ["Bass Boost", "Surround", "Loudness"] {
-            let slider = NSSlider(value: 0, minValue: 0, maxValue: 100, target: self, action: #selector(effectsChanged))
-            slider.isContinuous = false
-            let label = NSTextField(labelWithString: name)
-            label.widthAnchor.constraint(equalToConstant: 84).isActive = true
-            let row = NSStackView(views: [label, slider])
-            row.orientation = .horizontal
-            effectSliders.append(slider)
-            effectRows.append(row)
-        }
-        if let effects = Self.lastEffects { show(effects: effects) }
+        loudness.target = self
+        loudness.action = #selector(loudnessChanged)
+        loudness.isContinuous = false
+        let loudnessRow = NSStackView(views: [NSTextField(labelWithString: "Loudness"), loudness])
+        loudnessRow.orientation = .horizontal
 
-        let stack = NSStackView(views: [volume, equalizerRow, bandRow] + effectRows)
+        let stack = NSStackView(views: [volume, equalizerRow, bandRow, loudnessRow])
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 16
@@ -1603,17 +1595,18 @@ private final class SoundView: NSView {
             volume.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -36),
             equalizerRow.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -36),
             bandRow.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -36),
-        ] + effectRows.map { $0.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -36) })
+            loudnessRow.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -36),
+        ])
         if let equalizer = Self.lastEqualizer { show(equalizer) }
         DispatchQueue.global().async { [weak self] in
             let level = AndroidRuntime.shared.mediaVolume(), equalizer = AndroidRuntime.shared.equalizer()
-            let effects = AndroidRuntime.shared.soundEffects()
+            let loud = AndroidRuntime.shared.loudness()
             DispatchQueue.main.async {
                 guard let self else { return }
                 Self.lastEqualizer = equalizer
-                Self.lastEffects = effects
+                Self.lastLoudness = loud
                 self.show(equalizer)
-                self.show(effects: effects)
+                self.loudness.integerValue = loud
                 guard let level else { return }
                 Self.lastLevel = level
                 self.slider.integerValue = level
@@ -1638,14 +1631,10 @@ private final class SoundView: NSView {
         onResize?(fittingSize)
     }
 
-    private func show(effects: [Int]) {
-        for (slider, value) in zip(effectSliders, effects) { slider.integerValue = value }
-    }
-
-    @objc private func effectsChanged() {
-        let levels = effectSliders.map(\.integerValue)
-        Self.lastEffects = levels
-        DispatchQueue.global().async { AndroidRuntime.shared.setSoundEffects(levels) }
+    @objc private func loudnessChanged() {
+        let level = loudness.integerValue
+        Self.lastLoudness = level
+        DispatchQueue.global().async { AndroidRuntime.shared.setLoudness(level) }
     }
 
     @objc private func silent() { set(0) }

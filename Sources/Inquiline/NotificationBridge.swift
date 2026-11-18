@@ -13,7 +13,7 @@ final class NotificationBridge: NSObject, UNUserNotificationCenterDelegate {
     static let shared = NotificationBridge()
 
     static let agent = "io.github.inquiline.notifications"
-    static let agentVersion = 44
+    static let agentVersion = 45
     private static let socket = "localabstract:inquiline-notifications"
 
     /// Opens an app's window, given its package; with true, without starting the app, whose
