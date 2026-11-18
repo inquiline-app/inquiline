@@ -39,7 +39,9 @@ adb pull /system/framework/services.jar "$W/original.jar" >/dev/null
 
 java -cp "$CP" com.android.tools.smali.baksmali.Main d "$W/original.jar/classes3.dex" -o "$W/orig3"
 cp -R "$W/orig3" "$W/out-classes3.dex"
-patch -s -p0 -d "$W" < Vendor/services/services.patch
+# Into the copy: with both paths, patch would change the original's files.
+patch -s -p1 -d "$W/out-classes3.dex" < Vendor/services/services.patch
+grep -q getInquilineAppDisplayContent "$W/out-classes3.dex/com/android/server/wm/RootWindowContainer.smali"
 # Dex 039, as the image's: Android 15 reads its other dex files as that version.
 java -cp "$CP" com.android.tools.smali.smali.Main a "$W/out-classes3.dex" -o "$W/classes3.dex" --api 29
 
