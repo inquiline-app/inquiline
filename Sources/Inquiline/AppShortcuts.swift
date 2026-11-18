@@ -92,6 +92,7 @@ enum AppShortcuts {
             }
             var locations: [String: URL] = [:]
             var kept: [String: Data] = [:]
+            replaced = false
             for (package, app) in wanted {
                 var bundle = found[package] ?? place(for: app, in: folder)
                 // One left in Inquiline's own folder moves to the Applications folder once it can.
@@ -110,6 +111,9 @@ enum AppShortcuts {
                 }
             }
             places = kept
+            // Apps made anew: their extensions are listed once more now that all are written, as
+            // the Mac's extension service can unlist one while it catches up with a replacement.
+            if replaced { registerAll() }
             trashed.forEach { onRemoved?($0) }
             // Inquiline's own folder goes once it has no apps left; Finder's files in it don't count.
             if folder != ownFolder,
@@ -177,7 +181,15 @@ enum AppShortcuts {
     /// written can be unlisted a moment later, as the Mac's extension service catches up with
     /// the app's replacement; registered once more after that, it stays.
     static func registerWidgets() {
-        let plugins = queue.sync { locate().values.map { $0.appendingPathComponent("Contents/PlugIns/Widgets.appex") } }
+        queue.sync { registerAll() }
+    }
+
+    /// On `queue`.
+    private static var replaced = false
+
+    /// On `queue`.
+    private static func registerAll() {
+        let plugins = locate().values.map { $0.appendingPathComponent("Contents/PlugIns/Widgets.appex") }
         for plugin in plugins where FileManager.default.fileExists(atPath: plugin.path) {
             let pluginkit = Process()
             pluginkit.executableURL = URL(fileURLWithPath: "/usr/bin/pluginkit")
@@ -355,6 +367,17 @@ enum AppShortcuts {
             return false
         }
         LSRegisterURL(bundle as CFURL, existed)
+        if existed {
+            replaced = true
+            // The old extension, if the Mac had it running, still answers for the widgets from the
+            // replaced copy; it quits, and the Mac starts the new one when it next needs it.
+            let old = Process()
+            old.executableURL = URL(fileURLWithPath: "/usr/bin/pkill")
+            let program = contents.appendingPathComponent("PlugIns/Widgets.appex/Contents/MacOS/Widgets").path
+            old.arguments = ["-xf", NSRegularExpression.escapedPattern(for: program) + "( .*)?"]
+            try? old.run()
+            old.waitUntilExit()
+        }
         // Its widgets join the Mac's widget gallery.
         let pluginkit = Process()
         pluginkit.executableURL = URL(fileURLWithPath: "/usr/bin/pluginkit")

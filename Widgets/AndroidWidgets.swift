@@ -131,7 +131,13 @@ struct AndroidWidgetView: View {
         // margins and background, as the Mac's widgets have them.
         Group {
             if let image = entry.image {
-                Image(nsImage: image).resizable().interpolation(.high).scaledToFit()
+                // With a window in front the Mac draws desktop widgets faded; a picture fades to
+                // grey as the Mac's own photo widgets do, instead of turning into a grey block.
+                if #available(macOS 15, *) {
+                    Image(nsImage: image).resizable().interpolation(.high).widgetAccentedRenderingMode(.desaturated).scaledToFit()
+                } else {
+                    Image(nsImage: image).resizable().interpolation(.high).scaledToFit()
+                }
             } else {
                 Image(systemName: "square.dashed").font(.largeTitle).foregroundStyle(.secondary)
             }
