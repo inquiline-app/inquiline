@@ -1106,8 +1106,12 @@ final class AndroidRuntime {
     /// The device's Google Services Framework ID, in decimal as Google's registration page
     /// takes it; nil before Play Store has been signed in to.
     func googleServicesID() -> String? {
-        let output = try? shell("su 0 sqlite3 /data/data/com.google.android.gsf/databases/gservices.db "
-                                + "\"select value from main where name='android_id'\"")
+        // Play Services keeps it now; the framework itself did before. Read-only, and only a
+        // file that's there, so nothing is made in Google's folders.
+        let query = "\\\"select value from main where name='android_id'\\\""
+        let output = try? shell("su 0 sh -c \"for d in /data/data/com.google.android.gms/databases/gservices.db "
+                                + "/data/data/com.google.android.gsf/databases/gservices.db; do "
+                                + "[ -f \\$d ] && sqlite3 -readonly \\$d \(query) && break; done\"")
         let id = output?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         return id.range(of: "^[0-9]+$", options: .regularExpression) != nil ? id : nil
     }
