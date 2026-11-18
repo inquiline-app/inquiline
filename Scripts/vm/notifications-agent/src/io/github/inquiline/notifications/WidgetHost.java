@@ -254,8 +254,12 @@ final class WidgetHost {
             if (display > 0) options.setLaunchDisplayId(display);
             options.setPendingIntentBackgroundActivityStartMode(ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED);
             try {
-                action.send(context, 0, fill, null, null, null, options.toBundle());
+                action.send(context, 0, fill, null, null, null, action.isActivity() ? options.toBundle() : null);
             } catch (PendingIntent.CanceledException ignored) {
+            }
+            try {
+                sink.send(new JSONObject().put("widgetDone", key));
+            } catch (org.json.JSONException ignored) {
             }
         });
     }
@@ -277,13 +281,16 @@ final class WidgetHost {
                         PendingIntent action = (PendingIntent) args[1];
                         android.util.Pair<?, ?> pair = (android.util.Pair<?, ?>) launchOptions.invoke(args[2], clicked);
                         Intent fill = (Intent) pair.first;
-                        if (action.isActivity()) {
-                            opening.put(key, action);
-                            if (fill != null) openingFill.put(key, fill); else openingFill.remove(key);
-                            sink.send(new JSONObject().put("widgetOpen", key).put("package", action.getCreatorPackage()));
-                        } else {
-                            action.send(context, 0, fill);
-                        }
+                        // Every tap runs from Launch, a screen the user sees, as a phone's taps
+                        // come from its home screen in front: Android then lets what it starts
+                        // run on in the background, as music does. One that opens the app runs
+                        // on the app's window; any other on the widget's own screen.
+                        opening.put(key, action);
+                        if (fill != null) openingFill.put(key, fill); else openingFill.remove(key);
+                        Placed widget = placed.get(key);
+                        sink.send(new JSONObject().put("widgetOpen", key).put("package", action.getCreatorPackage())
+                                .put("activity", action.isActivity())
+                                .put("display", widget == null ? 0 : widget.display.getDisplay().getDisplayId()));
                         return true;
                     });
             AppWidgetHostView.class.getMethod("setInteractionHandler", handlerClass).invoke(view, handler);

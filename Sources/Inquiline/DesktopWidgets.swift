@@ -139,13 +139,37 @@ final class DesktopWidgets {
         DispatchQueue.global(qos: .utility).async { try? png.write(to: file) }
     }
 
-    /// A tap that opens the widget's app: its window opens, and the tap's action runs in it.
-    func open(key: String, package: String) {
+    /// Widgets whose tap woke Android's screen, to turn it off again once the tap has run.
+    private var woke: Set<String> = []
+
+    /// A tap's action, ready in the helper, runs from its Launch screen: one that opens the app on
+    /// the app's window, which opens for it; any other, as play or a tick, on the widget's own
+    /// screen, with Android's screen on for it as a phone's is when it's tapped.
+    func tapped(key: String, package: String, opensApp: Bool, display: Int) {
         guard key.range(of: "^[A-F0-9-]+$", options: .regularExpression) != nil else { return }
-        NotificationBridge.shared.openWindow(package: package) { display in
-            // Root, as only the helper itself may start its screen.
+        // Root, as only the helper itself may start its screen.
+        func launch(on display: Int) {
             _ = try? AdbClient.shell("su 0 am start --display \(display) -n \(NotificationBridge.agent)/.Launch --es key \(key)")
         }
+        if opensApp {
+            NotificationBridge.shared.openWindow(package: package) { launch(on: $0) }
+            return
+        }
+        DispatchQueue.global().async {
+            let awake = (try? AdbClient.shell("dumpsys power | grep -m1 mWakefulness="))?.contains("Awake") ?? true
+            if !awake {
+                AndroidRuntime.shared.setScreenOn(true)
+                DispatchQueue.main.async { self.woke.insert(key) }
+            }
+            launch(on: display)
+        }
+    }
+
+    /// The tap ran: Android's screen goes back off if the tap turned it on, as a phone's does;
+    /// what it started, as music, plays on.
+    func tapDone(key: String) {
+        guard woke.remove(key) != nil else { return }
+        DispatchQueue.global().async { AndroidRuntime.shared.setScreenOn(false) }
     }
 
     // MARK: - Windows
