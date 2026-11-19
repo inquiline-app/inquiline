@@ -115,9 +115,6 @@ final class MacTrackpad {
                 swipe(message["d"] as? String ?? "")
             case "zoom":
                 key(message["d"] as? String == "in" ? 24 : 27, flags: .maskCommand) // ⌘= and ⌘-
-            case "lookup":
-                // A force click's action: Look Up, ⌃⌘D.
-                key(2, flags: [.maskCommand, .maskControl])
             default:
                 break
             }

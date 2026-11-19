@@ -340,10 +340,10 @@ enum PhoneRemotePage {
   surface.addEventListener("pointercancel", release);
 
   // Mac: the phone as the Mac's trackpad. One finger moves the pointer and taps to click, and a
-  // touch right after a tap drags; two fingers scroll, tap for a right click, or pinch to zoom;
-  // three swipe between desktops, up to Mission Control, down to the app's windows; one held
-  // still is a force click, Look Up. Moves and scrolls go as running totals, so the Mac misses
-  // none when one is lost.
+  // touch right after a tap drags, as does one held still for a moment, a press, which lasts
+  // until the finger lifts; two fingers scroll, tap for a right click, or pinch to zoom; three
+  // swipe between desktops, up to Mission Control, down to the app's windows. Moves and
+  // scrolls go as running totals, so the Mac misses none when one is lost.
   const trackpad = document.getElementById("trackpad");
   const points = new Map();
   let g = null, macSeq = 0, mx = 0, my = 0, sx = 0, sy = 0, lastTap = 0, macTicking = false;
@@ -402,9 +402,12 @@ enum PhoneRemotePage {
       g = { start: Date.now(), most: 0, far: 0, slide: 0, pinch: 0, ax: 0, ay: 0 };
       mac({ k: "hold" });
       if (Date.now() - lastTap < 300) { g.drag = true; lastTap = 0; mac({ k: "down" }); }
+      // A finger set down and held still is a press, as on the Mac's trackpad: the button goes
+      // down and stays until the finger lifts, and moving drags. A quick tap is a click; a
+      // finger that moves off at once moves the pointer.
       g.timer = setTimeout(() => {
-        if (points.size === 1 && g.most === 1 && g.far < 8 && !g.drag) { g.used = true; mac({ k: "lookup" }); buzz(); }
-      }, 600);
+        if (points.size === 1 && g.most === 1 && g.far < 8 && !g.drag) { g.drag = true; mac({ k: "down" }); buzz(); }
+      }, 150);
     }
     points.set(e.pointerId, { x: e.clientX, y: e.clientY, x0: e.clientX, y0: e.clientY });
     g.most = Math.max(g.most, points.size);
@@ -425,7 +428,7 @@ enum PhoneRemotePage {
   function macLift(e) {
     if (!points.delete(e.pointerId) || points.size) return;
     clearTimeout(g.timer);
-    const tap = Date.now() - g.start < 250 && g.far < 10 && !g.used;
+    const tap = Date.now() - g.start < 250 && g.far < 10;
     // Where the finger stopped, which must arrive, and the pointer stops there.
     if (g.most === 1) mac({ k: "move", s: ++macSeq, x: mx, y: my, ts: performance.now(), rest: 1 });
     if (g.drag) mac({ k: "up" });
