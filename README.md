@@ -37,6 +37,18 @@ Make a window wider and the app lays itself out again for the new size, with its
 
 Apps notify you while you work in something else, even with no window open. Clicking a notification opens the app on what it's about, such as the chat that got a message, and chats can be answered right from the notification. With **Open at Login**, they arrive as soon as your Mac starts.
 
+## Gemini, over any app
+
+<p align="center"><img src="docs/images/assistant.gif" width="640" alt="In Wikipedia's window, the sparkle button opens Gemini at the bottom; asked to summarize this page in two sentences, it reads the article on screen and answers"></p>
+
+The ✨ button in an app's window opens Gemini over that app, as holding a phone's power button does. Gemini sees what the app shows, so you can ask about the page, the chat or the game in front of you. With **Share screen with Live** you can talk to it and it follows along as you use the app, through your Mac's microphone. Gemini needs Google Play and the Google and Gemini apps from it.
+
+## Widgets on your desktop
+
+<p align="center"><img src="docs/images/widgets.gif" width="480" alt="The clock app's gear menu lists its widgets; choosing the analog clock opens its setup in the app's window, and after Done the clock widget sits on the desktop beside the window"></p>
+
+An app's widgets, from its settings, go on your desktop as Android draws them, kept up to date. Tap and scroll them, drag them anywhere, and right-click to open the app or remove the widget. A widget that needs setting up opens its setup in the app's window first, as on a phone's home screen.
+
 ## Each app's own settings
 
 <p align="center"><img src="docs/images/app-settings.png" width="360" alt="The gear menu of an app window: Permissions, Ad Blocking with a slider set to Balanced, and Data with the app's sizes and buttons to show it in Finder or clear its cache or data"></p>
@@ -45,7 +57,12 @@ The gear in each window holds what Android's Settings would for that app:
 
 - **Permissions** the app asks for, each with a switch, notifications included.
 - **Ad Blocking** with four levels, from Off to Strong. It uses the same lists as uBlock Origin, AdGuard's list for ads in apps and games, and the list for your Mac's language, and they update on their own every day. It works in the app and in the web pages it shows, and counts what it blocked.
+- **Widgets** the app offers, to put on your desktop.
 - **Data:** how much space the app takes, its folder in Finder, and Clear Cache or Clear Data.
+
+<p align="center"><img src="docs/images/sound.png" width="300" alt="The sound popover: a volume slider, Mute This App, an equalizer set to Custom with five bands, and Loudness"></p>
+
+The speaker button holds Android's volume, a switch to mute just this app, so a game can be quiet while music plays, an equalizer with presets or five bands of your own, and loudness.
 
 ## Games
 
@@ -101,19 +118,19 @@ Each app you add appears in your Applications folder and in Launchpad; you can m
 | Cmd+K | Keyboard controls for games |
 | Ctrl+Cmd+F | Full screen |
 
-- **The toolbar** shows the frame rate and has buttons for keyboard controls, mute, turning between portrait and landscape, and the app's settings. **View > Customize Toolbar** changes it.
+- **The toolbar** shows the frame rate and has buttons for Gemini, keyboard controls, sound, turning between portrait and landscape, and the app's settings. **View > Customize Toolbar** changes it.
 - **Windows** open where and as large as you left them, and an app closed in full screen opens in full screen.
 - **Closing a window quits the app**, as swiping it away on a phone does. Apps keep running while their window is in the back or minimized.
 - **Files:** choose **Show Files in Finder** from the menu bar, or **Show in Finder** in an app's settings. Android's storage and each app's own folders appear as the **Android** disk.
 - **Android rests** when no app needs it, as a phone does, and wakes for notifications and alarms. When your Mac needs memory, Android closes apps in the background.
-- **Android follows your Mac:** its language, dark mode, time zone and 24-hour clock are your Mac's, and its storage is your Mac's free space.
+- **Android follows your Mac:** its language, dark mode, time zone and 24-hour clock are your Mac's, and its storage is your Mac's free space. Apps that listen or ask where you are use your Mac's microphone and location, after macOS asks you once.
 
 ## Good to know
 
 - **The first launch of a big game is slow.** The game's graphics programs (shaders) are prepared for your Mac's GPU, which can take a few minutes for large 3D games. Later launches are much faster.
 - **Not certified by Google.** Apps that check the device's integrity, such as most banking apps and some streaming apps, may refuse to run. Google may also limit Google Play on uncertified devices; **Register with Google…** in the menu bar helps with that.
 - **Not for sensitive apps.** This preview's Android is a development build with root access, so don't use it for banking, payments or other sensitive accounts.
-- **Missing hardware:** no camera, microphone, location or vibration yet.
+- **Missing hardware:** no camera or vibration yet.
 - **Memory:** Android can use up to 12 GB on Macs with 16 GB or more, 4 GB on others, and gives back what it frees.
 - **Logs:** Inquiline, its engine and Android keep logs on your Mac, about 50 MB at most, for finding what went wrong. They stay there: only **Report a Problem…** gathers them, into a zip you can look at and send yourself, with your name, e-mail addresses, web addresses and numbers that could identify you taken out.
 
