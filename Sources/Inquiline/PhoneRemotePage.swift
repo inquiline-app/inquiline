@@ -429,8 +429,8 @@ enum PhoneRemotePage {
     // Where the finger stopped, which must arrive, and the pointer stops there.
     if (g.most === 1) mac({ k: "move", s: ++macSeq, x: mx, y: my, ts: performance.now(), rest: 1 });
     if (g.drag) mac({ k: "up" });
-    else if (tap && g.most === 1) { mac({ k: "click" }); lastTap = Date.now(); buzz(); }
-    else if (tap && g.most === 2) { mac({ k: "click", b: "right" }); buzz(); }
+    else if (tap && g.most === 1) { mac({ k: "click", d: Date.now() - g.start }); lastTap = Date.now(); buzz(); }
+    else if (tap && g.most === 2) { mac({ k: "click", b: "right", d: Date.now() - g.start }); buzz(); }
     if (g.mode === "scroll") mac({ k: "scrollEnd" });
   }
   trackpad.addEventListener("pointerup", macLift);

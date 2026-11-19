@@ -99,9 +99,9 @@ final class MacTrackpad {
                 startPacing()
             case "click":
                 if message["b"] as? String == "right" {
-                    press(.rightMouseDown, .rightMouseUp, button: .right)
+                    press(.rightMouseDown, .rightMouseUp, button: .right, for: number("d"))
                 } else {
-                    press(.leftMouseDown, .leftMouseUp, button: .left)
+                    press(.leftMouseDown, .leftMouseUp, button: .left, for: number("d"))
                 }
             case "down":
                 flushMove()
@@ -280,11 +280,19 @@ final class MacTrackpad {
         return count
     }
 
-    private func press(_ down: CGEventType, _ up: CGEventType, button: CGMouseButton) {
+    /// Held as long as the finger was down, in milliseconds, as a click of the mouse is: what
+    /// shows itself pressed, as the Dock's icons, shows it.
+    private func press(_ down: CGEventType, _ up: CGEventType, button: CGMouseButton, for held: Double) {
         flushMove()
         let clicks = button == .left ? clickCount() : 1
+        let at = pointer
         post(mouse: down, button: button, clicks: clicks)
-        post(mouse: up, button: button, clicks: clicks)
+        queue.asyncAfter(deadline: .now() + min(max(held, 50), 150) / 1000) { [self] in
+            let event = CGEvent(mouseEventSource: source, mouseType: up, mouseCursorPosition: at, mouseButton: button)
+            event?.setIntegerValueField(.mouseEventClickState, value: clicks)
+            event?.flags = []
+            event?.post(tap: .cghidEventTap)
+        }
     }
 
     private func post(mouse type: CGEventType, button: CGMouseButton, clicks: Int64) {
