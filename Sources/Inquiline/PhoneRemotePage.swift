@@ -207,37 +207,39 @@ enum PhoneRemotePage {
   pad.addEventListener("pointerup", lift);
   pad.addEventListener("pointercancel", lift);
 
-  // Touchpad: each finger lands where it is on the app's screen. A finger's moves go once a
-  // frame, at its latest place, in step with the screen, rather than in uneven bursts as the
-  // phone reports them; a finger landing or lifting goes at once.
+  // Touchpad: each finger lands where it is on the app's screen. While down, every finger's
+  // place goes once a frame, in step with the screen, whether it moved or not: the phone only
+  // reports a finger that moves, and the Mac must tell a finger held still from a gap in the
+  // Wi-Fi, which it bridges. A finger landing or lifting goes at once.
   const surface = document.getElementById("surface");
-  const touches = new Map(), moved = new Map();
-  let flushing = false;
+  const touches = new Map(), places = new Map();
+  let ticking = false;
   function where(e) {
     const box = surface.getBoundingClientRect();
     return { x: (e.clientX - box.left) / box.width, y: (e.clientY - box.top) / box.height };
   }
-  function flushMoves() {
-    flushing = false;
-    moved.forEach((p, id) => message({ t: "touch", a: "move", id, x: p.x, y: p.y }));
-    moved.clear();
+  function tick() {
+    if (places.size === 0) { ticking = false; return; }
+    places.forEach((p, id) => message({ t: "touch", a: "move", id, x: p.x, y: p.y }));
+    requestAnimationFrame(tick);
   }
   surface.addEventListener("pointerdown", e => {
     let id = 0; while ([...touches.values()].includes(id)) id++;
     touches.set(e.pointerId, id); surface.setPointerCapture(e.pointerId);
     const p = where(e);
+    places.set(id, p);
     message({ t: "touch", a: "down", id, x: p.x, y: p.y });
+    if (!ticking) { ticking = true; requestAnimationFrame(tick); }
     e.preventDefault();
   });
   surface.addEventListener("pointermove", e => {
     if (!touches.has(e.pointerId)) return;
-    moved.set(touches.get(e.pointerId), where(e));
-    if (!flushing) { flushing = true; requestAnimationFrame(flushMoves); }
+    places.set(touches.get(e.pointerId), where(e));
   });
   function release(e) {
     if (!touches.has(e.pointerId)) return;
     const id = touches.get(e.pointerId);
-    if (moved.has(id)) flushMoves();
+    places.delete(id);
     const p = where(e);
     message({ t: "touch", a: "up", id, x: p.x, y: p.y });
     touches.delete(e.pointerId);
