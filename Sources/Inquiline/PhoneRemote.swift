@@ -239,6 +239,82 @@ final class PhoneInput {
     /// The phone's controller in Android, after the Mac's own (GamepadBridge, 3 to 10).
     private static let padID: UInt16 = 11
 
+    // MARK: Smooth fingers
+    //
+    // Over Wi-Fi a finger's moves come unevenly: in bursts, and with gaps of a tenth of a second
+    // or more while a lost packet is sent again or the phone's radio naps. Sent as they come, a
+    // dragged ship stops and jumps. So they go to Android at a steady 120 a second instead: each
+    // finger glides to where it was last seen, and through a gap keeps going the way it went,
+    // for a short while, as it most likely did.
+
+    private struct Finger {
+        var x: Double, y: Double, time: TimeInterval
+        var vx = 0.0, vy = 0.0
+        var shownX: Double, shownY: Double
+
+        init(x: Double, y: Double, time: TimeInterval) {
+            self.x = x; self.y = y; self.time = time
+            shownX = x; shownY = y
+        }
+
+        mutating func received(x: Double, y: Double, time: TimeInterval) {
+            let dt = max(time - self.time, 0.008)
+            // Speed from the last two places, evened out over a few, as single ones jitter.
+            vx = vx * 0.5 + (x - self.x) / dt * 0.5
+            vy = vy * 0.5 + (y - self.y) / dt * 0.5
+            self.x = x; self.y = y; self.time = time
+        }
+
+        /// Where the finger likely is now: seen, or a little on along its way through a gap.
+        func expected(at now: TimeInterval) -> (Double, Double) {
+            let ahead = min(max(now - time, 0), 0.08)
+            return (min(max(x + vx * ahead, 0), 1), min(max(y + vy * ahead, 0), 1))
+        }
+    }
+
+    private var fingers: [Int: Finger] = [:]
+    private var pacer: DispatchSourceTimer?
+    private let pacing = DispatchQueue(label: "inquiline.phone-fingers", qos: .userInteractive)
+
+    private func startPacing() {
+        guard pacer == nil else { return }
+        let timer = DispatchSource.makeTimerSource(flags: .strict, queue: pacing)
+        timer.schedule(deadline: .now(), repeating: .nanoseconds(8_333_333), leeway: .nanoseconds(500_000))
+        timer.setEventHandler { [weak self] in self?.pace() }
+        timer.resume()
+        pacer = timer
+    }
+
+    private func pace() {
+        lock.lock(); defer { lock.unlock() }
+        guard !fingers.isEmpty else {
+            pacer?.cancel()
+            pacer = nil
+            return
+        }
+        let now = ProcessInfo.processInfo.systemUptime
+        for (id, var finger) in fingers {
+            let (x, y) = finger.expected(at: now)
+            // Most of the way there each tick: smooth, and only a few milliseconds behind.
+            let nextX = finger.shownX + (x - finger.shownX) * 0.6
+            let nextY = finger.shownY + (y - finger.shownY) * 0.6
+            guard abs(nextX - finger.shownX) * Double(width) >= 0.5 || abs(nextY - finger.shownY) * Double(height) >= 0.5
+            else { continue }
+            finger.shownX = nextX; finger.shownY = nextY
+            fingers[id] = finger
+            send(.move, x: nextX, y: nextY, finger: id)
+        }
+    }
+
+    /// Called with the lock held.
+    private func send(_ action: ScrcpySession.TouchAction, x: Double, y: Double, finger: Int) {
+        guard let session, width > 0, height > 0 else { return }
+        // Fingers of their own, apart from the mouse's and the keyboard controls'.
+        session.sendTouch(action, x: Int(x * Double(width)), y: Int(y * Double(height)),
+                          width: width, height: height, finger: Int64(20 + finger))
+        if let onTouch { DispatchQueue.main.async { onTouch(action, x, y, finger) } }
+    }
+
     func update(session: ScrcpySession? = nil, size: NSSize? = nil, task: Int? = nil) {
         lock.lock(); defer { lock.unlock() }
         if let session, session !== self.session {
@@ -292,10 +368,17 @@ final class PhoneInput {
                                         moves, seconds, Double(moves) / seconds, longestGap * 1000))
                 }
             }
-            // Fingers of their own, apart from the mouse's and the keyboard controls'.
-            session.sendTouch(action, x: Int(x * Double(width)), y: Int(y * Double(height)),
-                              width: width, height: height, finger: Int64(20 + finger))
-            if let onTouch { DispatchQueue.main.async { onTouch(action, x, y, finger) } }
+            switch action {
+            case .down:
+                fingers[finger] = Finger(x: x, y: y, time: now)
+                send(.down, x: x, y: y, finger: finger)
+                startPacing()
+            case .move:
+                fingers[finger]?.received(x: x, y: y, time: now)
+            case .up:
+                fingers[finger] = nil
+                send(.up, x: x, y: y, finger: finger)
+            }
         case .assistant:
             DispatchQueue.main.async { self.onAssistant?() }
         }
