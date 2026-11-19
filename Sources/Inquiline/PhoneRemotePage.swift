@@ -37,38 +37,59 @@ enum PhoneRemotePage {
 <meta name="theme-color" content="#111214">
 <title>Inquiline</title>
 <style>
-  :root { --bg: #111214; --panel: #1c1d21; --key: #2a2c31; --key-on: #4b7bec; --text: #f2f2f4; --dim: #8b8d94; }
+  :root { --bg: #0e0f11; --panel: #17181b; --key: #24262b; --edge: #33363d; --text: #f2f2f4; --dim: #8b8d94;
+    --glow: rgba(120,160,255,.55); }
   * { box-sizing: border-box; -webkit-user-select: none; user-select: none; -webkit-tap-highlight-color: transparent;
       touch-action: none; -webkit-touch-callout: none; }
   html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
     font: 15px -apple-system, system-ui, sans-serif; overflow: hidden; touch-action: none; }
   body { display: flex; flex-direction: column; padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); }
-  header { display: flex; align-items: center; gap: 8px; padding: 8px 12px; }
+  header { display: flex; align-items: center; gap: 10px; padding: 6px 14px; }
   #dot { width: 9px; height: 9px; border-radius: 50%; background: #e5534b; flex: none; }
   #dot.on { background: #3fb950; }
   #title { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1; }
-  nav { display: flex; gap: 4px; background: var(--panel); border-radius: 9px; padding: 3px; }
-  nav button { border: 0; background: none; color: var(--dim); font: inherit; padding: 5px 12px; border-radius: 7px; }
+  nav { display: flex; gap: 3px; background: var(--panel); border-radius: 9px; padding: 3px; }
+  nav button { border: 0; background: none; color: var(--dim); font: inherit; font-size: 14px; padding: 5px 12px; border-radius: 7px; }
   nav button.on { background: var(--key); color: var(--text); }
+  #assistant { border: 0; border-radius: 16px; padding: 6px 14px; font: inherit; font-size: 14px; font-weight: 600;
+    color: var(--text); background: linear-gradient(135deg, #4b7bec, #a55eea); }
   main { flex: 1; position: relative; }
   section { position: absolute; inset: 0; display: none; }
   section.on { display: block; }
-  footer { display: flex; justify-content: center; padding: 8px; }
-  #assistant { border: 0; border-radius: 22px; padding: 10px 22px; font: inherit; font-weight: 600; color: var(--text);
-    background: linear-gradient(135deg, #4b7bec, #a55eea); }
-  .key { position: absolute; display: flex; align-items: center; justify-content: center; background: var(--key);
-    color: var(--text); font-weight: 600; border-radius: 50%; }
-  .key.on { background: var(--key-on); }
-  .pill { border-radius: 12px; }
-  .stick { position: absolute; border-radius: 50%; background: var(--panel); border: 2px solid var(--key); }
-  .knob { position: absolute; left: 50%; top: 50%; width: 44%; height: 44%; margin: -22% 0 0 -22%; border-radius: 50%;
-    background: var(--key); }
-  .stick.on .knob { background: var(--key-on); }
+
+  /* The controller, laid out as an Xbox pad and sized by the space it has, so it looks the
+     same on any phone: positions in percent of its width and height, sizes in its height. */
+  #pad { container-type: size; }
+  .at { position: absolute; left: calc(var(--x) * 1cqw + var(--dx, 0) * 1cqh); top: calc(var(--y) * 1cqh);
+    width: calc(var(--d) * 1cqh); height: calc(var(--d) * 1cqh); transform: translate(-50%, -50%); }
+  .key { display: flex; align-items: center; justify-content: center; background: var(--key);
+    border: 1.5px solid var(--edge); color: var(--text); font-weight: 700; border-radius: 50%;
+    box-shadow: 0 3px 0 rgba(0,0,0,.45); transition: transform .05s, box-shadow .05s, background .05s; }
+  .key.on { transform: translate(-50%, -50%) scale(.94); box-shadow: 0 0 calc(4cqh) var(--glow); background: #2e3138; }
+  .face { font-size: calc(7cqh); }
+  .face[data-b="a"] { color: #5cd65c; } .face[data-b="b"] { color: #ff5c5c; }
+  .face[data-b="x"] { color: #4fa3ff; } .face[data-b="y"] { color: #ffd23f; }
+  .trigger { width: calc(var(--w) * 1cqw); height: calc(var(--h) * 1cqh); border-radius: calc(4cqh) calc(4cqh) calc(2cqh) calc(2cqh);
+    font-size: calc(5cqh); color: var(--dim); }
+  .bumper { width: calc(var(--w) * 1cqw); height: calc(var(--h) * 1cqh); border-radius: calc(3cqh); font-size: calc(4.5cqh); color: var(--dim); }
+  .small { font-size: calc(4.5cqh); color: var(--dim); }
+  .stick { border-radius: 50%; background: radial-gradient(circle, #1b1c20 55%, #121316 100%); border: 1.5px solid var(--edge); }
+  .knob { position: absolute; left: 50%; top: 50%; width: 46%; height: 46%; margin: -23% 0 0 -23%; border-radius: 50%;
+    background: radial-gradient(circle at 40% 35%, #3a3d45, #24262b 70%); border: 1.5px solid var(--edge);
+    box-shadow: 0 4px 10px rgba(0,0,0,.5); }
+  .stick.on .knob { box-shadow: 0 0 calc(4cqh) var(--glow); }
+  .dpad { pointer-events: none; }
+  .dpad::before, .dpad::after { content: ""; position: absolute; background: var(--key); border: 1.5px solid var(--edge);
+    border-radius: calc(2.5cqh); }
+  .dpad::before { left: 33%; top: 0; width: 34%; height: 100%; }
+  .dpad::after { left: 0; top: 33%; width: 100%; height: 34%; }
+  .arrow { background: transparent; border: 0; box-shadow: none; border-radius: calc(2cqh); font-size: calc(4.5cqh); color: var(--dim); }
+  .arrow.on { background: rgba(120,160,255,.25); box-shadow: none; }
   #turn { display: none; position: absolute; inset: 0; align-items: center; justify-content: center; text-align: center;
     color: var(--dim); padding: 24px; }
-  @media (orientation: portrait) { #pad .key, #pad .stick { display: none; } #turn { display: flex; } }
-  #surface { position: absolute; inset: 8px; border-radius: 14px; background: var(--panel); display: flex;
-    align-items: center; justify-content: center; color: var(--dim); }
+  @media (orientation: portrait) { #pad .at { display: none; } #turn { display: flex; } }
+  #surface { position: absolute; inset: 4px 10px 10px; border-radius: 16px; background: var(--panel); border: 1.5px solid var(--edge);
+    display: flex; align-items: center; justify-content: center; color: var(--dim); }
   #gone { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.85); align-items: center; justify-content: center;
     text-align: center; padding: 24px; z-index: 9; }
   #gone.on { display: flex; }
@@ -78,31 +99,37 @@ enum PhoneRemotePage {
 <body>
 <header>
   <span id="dot"></span><span id="title">Connecting…</span>
+  <button id="assistant">✨ Gemini</button>
   <nav><button data-tab="pad" class="on">Controller</button><button data-tab="touch">Touchpad</button></nav>
 </header>
 <main>
   <section id="pad" class="on">
     <div id="turn">Turn your phone sideways to use it as a controller.</div>
-    <div class="key pill" data-b="lt" style="left:3%;top:2%;width:16%;height:13%">LT</div>
-    <div class="key pill" data-b="lb" style="left:21%;top:2%;width:16%;height:13%">LB</div>
-    <div class="key pill" data-b="rb" style="right:21%;top:2%;width:16%;height:13%">RB</div>
-    <div class="key pill" data-b="rt" style="right:3%;top:2%;width:16%;height:13%">RT</div>
-    <div class="stick" data-s="l" style="left:5%;top:24%;width:34vh;height:34vh"><div class="knob"></div></div>
-    <div class="key" data-b="up" style="left:25%;top:62%;width:9vh;height:9vh">▲</div>
-    <div class="key" data-b="left" style="left:19%;top:75%;width:9vh;height:9vh">◀</div>
-    <div class="key" data-b="right" style="left:31%;top:75%;width:9vh;height:9vh">▶</div>
-    <div class="key" data-b="down" style="left:25%;top:88%;width:9vh;height:9vh">▼</div>
-    <div class="key pill" data-b="back" style="left:43%;top:24%;width:7%;height:11%">⧉</div>
-    <div class="key pill" data-b="start" style="right:43%;top:24%;width:7%;height:11%">≡</div>
-    <div class="key" data-b="y" style="right:14%;top:22%;width:15vh;height:15vh">Y</div>
-    <div class="key" data-b="x" style="right:24%;top:40%;width:15vh;height:15vh">X</div>
-    <div class="key" data-b="b" style="right:4%;top:40%;width:15vh;height:15vh">B</div>
-    <div class="key" data-b="a" style="right:14%;top:58%;width:15vh;height:15vh">A</div>
-    <div class="stick" data-s="r" style="right:42%;top:55%;width:28vh;height:28vh"><div class="knob"></div></div>
+    <div class="at key trigger" data-b="lt" style="--x:11;--y:9;--w:15;--h:13">LT</div>
+    <div class="at key bumper" data-b="lb" style="--x:11;--y:24;--w:15;--h:10">LB</div>
+    <div class="at key trigger" data-b="rt" style="--x:89;--y:9;--w:15;--h:13">RT</div>
+    <div class="at key bumper" data-b="rb" style="--x:89;--y:24;--w:15;--h:10">RB</div>
+
+    <div class="at stick" data-s="l" style="--x:18;--y:56;--d:44"><div class="knob"></div></div>
+
+    <div class="at dpad" style="--x:37;--y:78;--d:36"></div>
+    <div class="at key arrow" data-b="up" style="--x:37;--y:66;--d:12">▲</div>
+    <div class="at key arrow" data-b="down" style="--x:37;--y:90;--d:12">▼</div>
+    <div class="at key arrow" data-b="left" style="--x:37;--dx:-12;--y:78;--d:12">◀</div>
+    <div class="at key arrow" data-b="right" style="--x:37;--dx:12;--y:78;--d:12">▶</div>
+
+    <div class="at key small" data-b="back" style="--x:44;--y:36;--d:11">⧉</div>
+    <div class="at key small" data-b="start" style="--x:56;--y:36;--d:11">≡</div>
+
+    <div class="at key face" data-b="y" style="--x:81;--y:36;--d:16">Y</div>
+    <div class="at key face" data-b="x" style="--x:81;--dx:-17;--y:54;--d:16">X</div>
+    <div class="at key face" data-b="b" style="--x:81;--dx:17;--y:54;--d:16">B</div>
+    <div class="at key face" data-b="a" style="--x:81;--y:72;--d:16">A</div>
+
+    <div class="at stick" data-s="r" style="--x:63;--y:76;--d:36"><div class="knob"></div></div>
   </section>
   <section id="touch"><div id="surface">Touch here as on the app's screen</div></section>
 </main>
-<footer><button id="assistant">✨ Ask Gemini</button></footer>
 <div id="gone"><div><div id="goneText">Not connected to your Mac.</div><button onclick="location.reload()">Try Again</button></div></div>
 <script>
 (() => {
