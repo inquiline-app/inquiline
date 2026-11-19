@@ -21,11 +21,10 @@ final class MacTrackpad {
     /// What's yet to go to the Mac, in the phone's pixels.
     private var scrollX = 0.0, scrollY = 0.0
     /// The finger's moves, in the phone's pixels: all received so far and when the last came;
-    /// its speed, by the phone's own clock, as the network bunches moves up, for acceleration;
-    /// the way it last went; and how far the pointer has gone.
+    /// its speed, by the phone's own clock, as the network bunches moves up; and how far the
+    /// pointer has gone.
     private var receivedX = 0.0, receivedY = 0.0, receivedAt: TimeInterval = 0, phoneTime = 0.0
     private var speedOfMoveX = 0.0, speedOfMoveY = 0.0, shownX = 0.0, shownY = 0.0
-    private var wayX = 0.0, wayY = 0.0
     private var dragging = false
     private var scrolling = false, scrollEnding = false
     /// The scroll's speed as it went out, in pixels a tick, carried on as momentum after.
@@ -37,7 +36,7 @@ final class MacTrackpad {
     private var watcher: DispatchSourceTimer?
     /// How evenly moves arrive, for the log.
     private var moveStart: TimeInterval = 0, lastMove: TimeInterval = 0, longestGap: TimeInterval = 0, moves = 0
-    private var longestPhoneGap: TimeInterval = 0
+    private var longestPhoneGap: TimeInterval = 0, gapAt = 0
 
     func handle(_ message: [String: Any], phone: ObjectIdentifier) {
         queue.async { [self] in
@@ -68,23 +67,19 @@ final class MacTrackpad {
                         speedOfMoveX = speedOfMoveX * 0.5 + dx / dt * 0.5
                         speedOfMoveY = speedOfMoveY * 0.5 + dy / dt * 0.5
                     }
-                    if dx != 0 { wayX = dx > 0 ? 1 : -1 }
-                    if dy != 0 { wayY = dy > 0 ? 1 : -1 }
                     receivedX += dx; receivedY += dy; receivedAt = now
                     // The finger stopped short of where the pointer went: it stays.
                     if resting {
-                        if (receivedX - shownX) * wayX < 0 { shownX = receivedX }
-                        if (receivedY - shownY) * wayY < 0 { shownY = receivedY }
                     }
                     if resting {
                         if moves >= 30 {
-                            AppLog.write(String(format: "Mac trackpad move: %d moves in %.1f s (%.0f a second), longest gap %.0f ms, on the phone %.0f ms",
-                                                moves, now - moveStart, Double(moves) / (now - moveStart), longestGap * 1000,
+                            AppLog.write(String(format: "Mac trackpad move: %d moves in %.1f s (%.0f a second), longest gap %.0f ms after move %d, on the phone %.0f ms",
+                                                moves, now - moveStart, Double(moves) / (now - moveStart), longestGap * 1000, gapAt,
                                                 longestPhoneGap * 1000))
                         }
                         moves = 0
                     } else {
-                        if moves == 0 { moveStart = now; longestGap = 0; longestPhoneGap = 0 } else { longestGap = max(longestGap, now - lastMove) }
+                        if moves == 0 { moveStart = now; longestGap = 0; longestPhoneGap = 0 } else if now - lastMove > longestGap { longestGap = now - lastMove; gapAt = moves }
                         lastMove = now; moves += 1
                     }
                 } else {
@@ -192,14 +187,17 @@ final class MacTrackpad {
 
     private func pace() {
         var busy = false
+        // Through a gap in the Wi-Fi, on the way the finger went for up to 100 ms, as Android's
+        // touchpad does (PhoneInput); the next move sets it right, back too if it went past.
         // Most of the way each tick: smooth, and only a few milliseconds behind.
-        // Only as far as the finger went: a guess past it would carry the pointer off on its own.
-        let dx = (receivedX - shownX) * 0.5, dy = (receivedY - shownY) * 0.5
+        let ahead = min(max(ProcessInfo.processInfo.systemUptime - receivedAt, 0), 0.1)
+        let dx = (receivedX + speedOfMoveX * ahead - shownX) * 0.5, dy = (receivedY + speedOfMoveY * ahead - shownY) * 0.5
         if abs(dx) >= 0.05 || abs(dy) >= 0.05 {
             shownX += dx; shownY += dy
             movePointer(dx, dy)
             busy = true
         }
+        if ahead < 0.1 && (speedOfMoveX != 0 || speedOfMoveY != 0) { busy = true }
         if scrolling {
             let dx = scrollX * 0.6, dy = scrollY * 0.6
             scrollX -= dx; scrollY -= dy
@@ -235,7 +233,7 @@ final class MacTrackpad {
 
     private func flushMove() {
         let dx = receivedX - shownX, dy = receivedY - shownY
-        movePointer(dx * wayX < 0 ? 0 : dx, dy * wayY < 0 ? 0 : dy)
+        movePointer(dx, dy)
         shownX = receivedX; shownY = receivedY
         speedOfMoveX = 0; speedOfMoveY = 0
     }
