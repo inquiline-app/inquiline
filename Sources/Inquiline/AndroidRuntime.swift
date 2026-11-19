@@ -229,6 +229,23 @@ final class AndroidRuntime {
     /// services are patched for that: Scripts/vm/build-services.sh).
     func showAssistant(task: Int) {
         let agent = NotificationBridge.agent
+        // A phone comes with an assistant; Android here has none until the Google app is there.
+        // With the Google app, it becomes the assistant, as on a phone; without it, Google Play
+        // shows the Google app in this window, so the button never does nothing.
+        let google = "com.google.android.googlequicksearchbox"
+        let current = (try? shell("settings get secure voice_interaction_service"))?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if current.isEmpty || current == "null" {
+            if (try? shell("pm path \(google)"))?.contains("package:") == true {
+                _ = try? shell("cmd role add-role-holder --user 0 android.app.role.ASSISTANT \(google)")
+            } else {
+                _ = try? shell("d=$(am stack list | awk -v t=\(task) '/^RootTask/ { for (i = 3; i <= NF; i++) "
+                               + "if ($i ~ /^displayId=/) d = substr($i, 11) } /^  taskId=/ { if (substr($1, 8) + 0 == t) "
+                               + "print d }'); [ -n \"$d\" ] && su 0 am start --display $d -a android.intent.action.VIEW "
+                               + "-d 'market://details?id=\(google)' -p com.android.vending")
+                return
+            }
+        }
         // The assistant reuses its open screen, which is left on another screen when the window it
         // was over closed (Android moves a closed screen's tasks to the main screen), or over
         // another app's window. That one is closed first, so the assistant opens anew over this
