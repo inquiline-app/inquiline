@@ -57,10 +57,11 @@ final class MacTrackpad {
                     let dx = x - known.moveX, dy = y - known.moveY
                     known.moveX = x; known.moveY = y
                     let resting = message["rest"] != nil
-                    let time = number("ts") / 1000, dt = time - phoneTime
+                    // Not under 8 ms: moves the phone's touch screen bunched up would read as a fling.
+                    let time = number("ts") / 1000, elapsed = time - phoneTime, dt = max(elapsed, 0.008)
                     phoneTime = time
                     if !resting, moves > 0, dt < 1 { longestPhoneGap = max(longestPhoneGap, dt) }
-                    if resting || dt <= 0 || dt > 0.25 {
+                    if resting || elapsed < 0 || elapsed > 0.25 {
                         speedOfMoveX = 0; speedOfMoveY = 0
                     } else if speedOfMoveX == 0 && speedOfMoveY == 0 {
                         // A finger setting off: its own speed at once, not evened out from rest.
@@ -257,7 +258,7 @@ final class MacTrackpad {
     /// the phone's pixels a second, which changes smoothly, not by each step's size.
     private func movePointer(_ dx: Double, _ dy: Double) {
         let speed = hypot(speedOfMoveX, speedOfMoveY)
-        let gain = 1.0 + 2.6 * pow(min(speed / 1200, 1), 0.8)
+        let gain = 0.8 + 1.4 * pow(min(speed / 1500, 1), 1.3)
         let from = pointer
         var to = CGPoint(x: from.x + dx * gain, y: from.y + dy * gain)
         // On a screen: past the edge of all of them it stops at the edge of the one it's on.
