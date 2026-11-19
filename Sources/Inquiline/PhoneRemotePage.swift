@@ -88,11 +88,8 @@ enum PhoneRemotePage {
   #turn { display: none; position: absolute; inset: 0; align-items: center; justify-content: center; text-align: center;
     color: var(--dim); padding: 24px; }
   @media (orientation: portrait) { #deck { display: none; } #turn { display: flex; } }
-  #surface, #trackpad { position: absolute; inset: 4px 10px 10px; border-radius: 16px; background: var(--panel); border: 1.5px solid var(--edge);
+  #surface { position: absolute; inset: 4px 10px 10px; border-radius: 16px; background: var(--panel); border: 1.5px solid var(--edge);
     display: flex; align-items: center; justify-content: center; color: var(--dim); }
-  #trackpad { flex-direction: column; gap: 10px; }
-  #macnote { display: none; max-width: 80%; text-align: center; color: #ffd23f; }
-  #macnote.on { display: block; }
   #gone { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.85); align-items: center; justify-content: center;
     text-align: center; padding: 24px; z-index: 9; }
   #gone.on { display: flex; }
@@ -103,7 +100,7 @@ enum PhoneRemotePage {
 <header>
   <span id="dot"></span><span id="title">Connecting…</span>
   <button id="assistant">✨ Gemini</button>
-  <nav><button data-tab="pad" class="on">Controller</button><button data-tab="touch">Touchpad</button><button data-tab="mac">Mac</button></nav>
+  <nav><button data-tab="pad" class="on">Controller</button><button data-tab="touch">Touchpad</button></nav>
 </header>
 <main>
   <section id="pad" class="on">
@@ -137,8 +134,6 @@ enum PhoneRemotePage {
     </div>
   </section>
   <section id="touch"><div id="surface">Touch here as on the app's screen</div></section>
-  <section id="mac"><div id="trackpad"><div>Your Mac's trackpad</div>
-    <div id="macnote">On your Mac, allow Inquiline in System Settings › Privacy &amp; Security › Accessibility.</div></div></section>
 </main>
 <div id="gone"><div><div id="goneText">Not connected to your Mac.</div><button onclick="location.reload()">Try Again</button></div></div>
 <script>
@@ -147,26 +142,23 @@ enum PhoneRemotePage {
   const dot = document.getElementById("dot"), gone = document.getElementById("gone"), title = document.getElementById("title");
   // Inquiline says which windows there are and which is in front; the page works that one,
   // over the window's own socket, and follows when another comes to the front.
-  let control, app = null, appPid = 0, ready = false, tab = "pad", lastState = null, rtcHandler = null;
+  let control, app = null, appPid = 0, ready = false;
   function connect() {
     control = new WebSocket("ws://" + location.hostname + ":{{PORT}}/");
     control.onopen = () => control.send(JSON.stringify({ t: "hello", token }));
     control.onmessage = e => follow(JSON.parse(e.data));
     control.onclose = () => { closeApp(); gone.classList.add("on"); };
   }
-  // The Mac tab works the Mac itself, which Inquiline lists too; the others, the app in front.
   function follow(s) {
-    lastState = s;
-    const list = s.windows || [];
-    const w = tab === "mac" ? list.find(w => w.mac) : list.find(w => w.pid === s.active && !w.mac);
-    if (!w) { title.textContent = tab === "mac" ? "Mac" : "Open an app on your Mac"; closeApp(); return; }
-    title.textContent = w.mac ? "Mac" : w.title;
+    const w = (s.windows || []).find(w => w.pid === s.active);
+    if (!w) { title.textContent = "Open an app on your Mac"; closeApp(); return; }
+    title.textContent = w.title;
     if (w.pid !== appPid) openApp(w);
   }
   function closeApp() {
     if (app) { app.onclose = null; app.close(); }
     if (peer) { peer.close(); peer = null; }
-    channel = null; rtcHandler = null;
+    channel = null;
     app = null; appPid = 0; ready = false; dot.classList.remove("on");
   }
 
@@ -187,7 +179,8 @@ enum PhoneRemotePage {
         if (e.candidate && socket.readyState === 1)
           socket.send(JSON.stringify({ t: "rtc-candidate", cand: e.candidate.candidate, mid: e.candidate.sdpMid }));
       };
-      rtcHandler = m => {
+      socket.onmessage = e => {
+        const m = JSON.parse(e.data);
         if (m.t === "rtc-answer") pc.setRemoteDescription({ type: "answer", sdp: m.sdp }).catch(() => {});
         else if (m.t === "rtc-candidate") pc.addIceCandidate({ candidate: m.cand, sdpMid: m.mid }).catch(() => {});
       };
@@ -200,17 +193,7 @@ enum PhoneRemotePage {
     appPid = w.pid;
     const socket = new WebSocket("ws://" + location.hostname + ":" + w.port + "/");
     app = socket;
-    macSeq = 0; mx = 0; my = 0; sx = 0; sy = 0;
-    socket.onopen = () => {
-      socket.send(JSON.stringify({ t: "hello", token: w.token })); ready = true; dot.classList.add("on");
-      if (!w.mac) send(true);
-      startRtc(socket);
-    };
-    socket.onmessage = e => {
-      const m = JSON.parse(e.data);
-      if (m.t === "access") document.getElementById("macnote").classList.toggle("on", !m.ok);
-      else if (rtcHandler) rtcHandler(m);
-    };
+    socket.onopen = () => { socket.send(JSON.stringify({ t: "hello", token: w.token })); ready = true; dot.classList.add("on"); send(true); startRtc(socket); };
     socket.onclose = () => { if (app === socket) { app = null; appPid = 0; ready = false; dot.classList.remove("on"); } };
   }
   function message(m, fast) {
@@ -224,9 +207,6 @@ enum PhoneRemotePage {
   document.querySelectorAll("nav button").forEach(b => b.onclick = () => {
     document.querySelectorAll("nav button").forEach(x => x.classList.toggle("on", x === b));
     document.querySelectorAll("section").forEach(s => s.classList.toggle("on", s.id === b.dataset.tab));
-    tab = b.dataset.tab;
-    document.getElementById("assistant").style.visibility = tab === "mac" ? "hidden" : "";
-    if (lastState) follow(lastState);
   });
   document.getElementById("assistant").onclick = () => { buzz(); message({ t: "assistant" }); };
 
@@ -339,105 +319,6 @@ enum PhoneRemotePage {
   surface.addEventListener("pointerup", release);
   surface.addEventListener("pointercancel", release);
 
-  // Mac: the phone as the Mac's trackpad. One finger moves the pointer and taps to click, and a
-  // touch right after a tap drags, as does one held still for a moment, a press, which lasts
-  // until the finger lifts; two fingers scroll, tap for a right click, or pinch to zoom; three
-  // swipe between desktops, up to Mission Control, down to the app's windows. Moves and
-  // scrolls go as running totals, so the Mac misses none when one is lost.
-  const trackpad = document.getElementById("trackpad");
-  const points = new Map();
-  let g = null, macSeq = 0, mx = 0, my = 0, sx = 0, sy = 0, lastTap = 0, macTicking = false;
-  function mac(m, fast) { m.t = "mac"; message(m, fast); }
-  // While the Mac tab is open, a few bytes go every 40 ms, so the phone's Wi-Fi doesn't doze
-  // between strokes, and a finger set down again moves the pointer at once rather than after
-  // the radio wakes.
-  setInterval(() => { if (tab === "mac" && !points.size && channel && channel.readyState === "open") channel.send('{"t":"mac","k":"awake"}'); }, 40);
-  function middle() {
-    let x = 0, y = 0;
-    points.forEach(p => { x += p.x; y += p.y; });
-    return { x: x / points.size, y: y / points.size };
-  }
-  function spread() {
-    const a = [...points.values()];
-    return a.length < 2 ? 0 : Math.hypot(a[0].x - a[1].x, a[0].y - a[1].y);
-  }
-  function macFrame() {
-    if (!points.size) { macTicking = false; return; }
-    const c = middle(), n = points.size, key = [...points.keys()].join(","), d = spread();
-    // Only while the same fingers are down, so a finger landing or lifting doesn't jump.
-    if (g.prev && g.prev.key === key) {
-      const dx = c.x - g.prev.x, dy = c.y - g.prev.y;
-      if (n === 1 && g.most === 1) {
-        // The finger's moves go as they come (below); a finger held still is told once a frame
-        // too, as the Mac must tell it from a gap in the Wi-Fi, which it bridges.
-        if (!g.sent) mac({ k: "move", s: ++macSeq, x: mx, y: my, ts: performance.now() }, true);
-        g.sent = false;
-      } else if (n === 2) {
-        if (!g.mode) {
-          g.slide += Math.abs(dx) + Math.abs(dy); g.pinch += Math.abs(d - g.prev.d);
-          if (g.slide + g.pinch > 8) { g.mode = g.pinch > g.slide * 1.5 ? "pinch" : "scroll"; g.d0 = d; }
-        }
-        if (g.mode === "scroll" && (dx || dy)) {
-          sx += dx * 1.5; sy += dy * 1.5;
-          mac({ k: "scroll", s: ++macSeq, x: sx, y: sy }, true);
-        } else if (g.mode === "pinch" && g.d0 > 0) {
-          if (d / g.d0 > 1.3) { mac({ k: "zoom", d: "in" }); g.d0 = d; }
-          else if (d / g.d0 < 0.77) { mac({ k: "zoom", d: "out" }); g.d0 = d; }
-        }
-      } else if (n >= 3 && !g.swiped) {
-        g.ax += dx; g.ay += dy;
-        if (Math.max(Math.abs(g.ax), Math.abs(g.ay)) > 50) {
-          g.swiped = true;
-          mac({ k: "swipe", d: Math.abs(g.ax) > Math.abs(g.ay) ? (g.ax > 0 ? "right" : "left") : (g.ay > 0 ? "down" : "up") });
-        }
-      }
-    }
-    g.prev = { x: c.x, y: c.y, key, d };
-    requestAnimationFrame(macFrame);
-  }
-  trackpad.addEventListener("pointerdown", e => {
-    trackpad.setPointerCapture(e.pointerId);
-    e.preventDefault();
-    if (!points.size) {
-      g = { start: Date.now(), most: 0, far: 0, slide: 0, pinch: 0, ax: 0, ay: 0 };
-      mac({ k: "hold" });
-      if (Date.now() - lastTap < 300) { g.drag = true; lastTap = 0; mac({ k: "down" }); }
-      // A finger set down and held still is a press, as on the Mac's trackpad: the button goes
-      // down and stays until the finger lifts, and moving drags. A quick tap is a click; a
-      // finger that moves off at once moves the pointer.
-      g.timer = setTimeout(() => {
-        if (points.size === 1 && g.most === 1 && g.far < 4 && !g.drag) { g.drag = true; mac({ k: "down" }); buzz(); }
-      }, 350);
-    }
-    points.set(e.pointerId, { x: e.clientX, y: e.clientY, x0: e.clientX, y0: e.clientY });
-    g.most = Math.max(g.most, points.size);
-    if (!macTicking) { macTicking = true; requestAnimationFrame(macFrame); }
-  });
-  trackpad.addEventListener("pointermove", e => {
-    const p = points.get(e.pointerId);
-    if (!p) return;
-    // One finger moves the pointer as soon as it moves, not at the next frame.
-    if (points.size === 1 && g.most === 1) {
-      mx += e.clientX - p.x; my += e.clientY - p.y;
-      mac({ k: "move", s: ++macSeq, x: mx, y: my, ts: e.timeStamp || performance.now() }, true);
-      g.sent = true;
-    }
-    p.x = e.clientX; p.y = e.clientY;
-    g.far = Math.max(g.far, Math.hypot(p.x - p.x0, p.y - p.y0));
-  });
-  function macLift(e) {
-    if (!points.delete(e.pointerId) || points.size) return;
-    clearTimeout(g.timer);
-    const tap = Date.now() - g.start < 250 && g.far < 10;
-    // Where the finger stopped, which must arrive, and the pointer stops there.
-    if (g.most === 1) mac({ k: "move", s: ++macSeq, x: mx, y: my, ts: performance.now(), rest: 1 });
-    if (g.drag) mac({ k: "up" });
-    else if (tap && g.most === 1) { mac({ k: "click", d: Date.now() - g.start }); lastTap = Date.now(); buzz(); }
-    else if (tap && g.most === 2) { mac({ k: "click", b: "right", d: Date.now() - g.start }); buzz(); }
-    if (g.mode === "scroll") mac({ k: "scrollEnd" });
-  }
-  trackpad.addEventListener("pointerup", macLift);
-  trackpad.addEventListener("pointercancel", macLift);
   // Never zoom: a double tap or a pinch is input for the app, not for the page.
   ["gesturestart", "gesturechange", "gestureend", "dblclick"].forEach(type =>
     document.addEventListener(type, e => e.preventDefault(), { passive: false }));
