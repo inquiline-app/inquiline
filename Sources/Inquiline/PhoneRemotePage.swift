@@ -414,9 +414,17 @@ enum PhoneRemotePage {
     const p = points.get(e.pointerId);
     if (!p) return;
     // One finger moves the pointer as soon as it moves, not at the next frame.
-    if (points.size === 1 && g.most === 1) {
-      mx += e.clientX - p.x; my += e.clientY - p.y;
-      mac({ k: "move", s: ++macSeq, x: mx, y: my, ts: e.timeStamp || performance.now() }, true);
+    // Not until it has gone 4 pixels, as the Mac's trackpad: a finger landing rolls a little,
+    // which would move the pointer off what it taps.
+    const far = Math.hypot(e.clientX - p.x0, e.clientY - p.y0);
+    if (points.size === 1 && g.most === 1 && (g.moving || far >= 4)) {
+      const dx = g.moving ? e.clientX - p.x : (e.clientX - p.x0) * (1 - 4 / far);
+      const dy = g.moving ? e.clientY - p.y : (e.clientY - p.y0) * (1 - 4 / far);
+      g.moving = true;
+      mx += dx; my += dy;
+      const ts = e.timeStamp || performance.now();
+      g.recent = (g.recent || []).filter(r => ts - r.ts < 50).concat([{ ts, dx, dy }]);
+      mac({ k: "move", s: ++macSeq, x: mx, y: my, ts }, true);
       g.sent = true;
     }
     p.x = e.clientX; p.y = e.clientY;
@@ -426,8 +434,13 @@ enum PhoneRemotePage {
     if (!points.delete(e.pointerId) || points.size) return;
     clearTimeout(g.timer);
     const tap = Date.now() - g.start < 250 && g.far < 10 && !g.used;
-    // Where the finger stopped, which must arrive, and the pointer stops there.
-    if (g.most === 1) mac({ k: "move", s: ++macSeq, x: mx, y: my, ts: performance.now(), rest: 1 });
+    // Where the finger stopped, which must arrive, and the pointer stops there: without its
+    // last 30 ms, as a finger lifting slides a little, which would fling the pointer.
+    if (g.most === 1) {
+      const end = e.timeStamp || performance.now();
+      (g.recent || []).forEach(r => { if (end - r.ts < 30) { mx -= r.dx; my -= r.dy; } });
+      mac({ k: "move", s: ++macSeq, x: mx, y: my, ts: end, rest: 1 });
+    }
     if (g.drag) mac({ k: "up" });
     else if (tap && g.most === 1) { mac({ k: "click" }); lastTap = Date.now(); buzz(); }
     else if (tap && g.most === 2) { mac({ k: "click", b: "right" }); buzz(); }

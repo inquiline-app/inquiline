@@ -68,6 +68,11 @@ final class MacTrackpad {
                         speedOfMoveY = speedOfMoveY * 0.5 + dy / dt * 0.5
                     }
                     receivedX += dx; receivedY += dy; receivedAt = now
+                    // The finger has stopped: the pointer stays where it is, rather than going back
+                    // the little way it went past, which would look like a fling.
+                    if resting, abs(receivedX - shownX) < 12, abs(receivedY - shownY) < 12 {
+                        shownX = receivedX; shownY = receivedY
+                    }
                     // The finger stopped short of where the pointer went: it stays.
                     if resting {
                     }
@@ -187,17 +192,18 @@ final class MacTrackpad {
 
     private func pace() {
         var busy = false
-        // Through a gap in the Wi-Fi, on the way the finger went for up to 100 ms, as Android's
-        // touchpad does (PhoneInput); the next move sets it right, back too if it went past.
+        // Through a gap in the Wi-Fi, on the way the finger went, as Android's touchpad does
+        // (PhoneInput), but warily: for up to 70 ms and not quite as fast, as a finger turning
+        // in the gap would carry the pointer the wrong way. The next move sets it right.
         // Most of the way each tick: smooth, and only a few milliseconds behind.
-        let ahead = min(max(ProcessInfo.processInfo.systemUptime - receivedAt, 0), 0.1)
+        let ahead = min(max(ProcessInfo.processInfo.systemUptime - receivedAt, 0), 0.07) * 0.8
         let dx = (receivedX + speedOfMoveX * ahead - shownX) * 0.5, dy = (receivedY + speedOfMoveY * ahead - shownY) * 0.5
         if abs(dx) >= 0.05 || abs(dy) >= 0.05 {
             shownX += dx; shownY += dy
             movePointer(dx, dy)
             busy = true
         }
-        if ahead < 0.1 && (speedOfMoveX != 0 || speedOfMoveY != 0) { busy = true }
+        if ahead < 0.056 && (speedOfMoveX != 0 || speedOfMoveY != 0) { busy = true }
         if scrolling {
             let dx = scrollX * 0.6, dy = scrollY * 0.6
             scrollX -= dx; scrollY -= dy
