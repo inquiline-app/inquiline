@@ -54,7 +54,13 @@ find "$APP/Contents/Frameworks" -maxdepth 1 \( -name '*.framework' -o -name '*.d
 # Sparkle, for updates, keeps its own signature: its helpers are signed by its makers.
 ditto .build/release/Sparkle.framework "$APP/Contents/Frameworks/Sparkle.framework"
 codesign --force --sign - --entitlements Resources/qemu.entitlements "$APP/Contents/MacOS/Inquiline Engine"
-codesign --force --sign - "$APP"
+# The app itself with Inquiline's own certificate, made on the Mac that builds it, when it has
+# one ("Inquiline Code Signing" in the login keychain): the Mac then knows each new version as
+# the same app and keeps what the user allowed it, as Accessibility for the phone's trackpad.
+# It isn't Apple's, so to Gatekeeper the app is as one signed ad hoc.
+IDENTITY=$(security find-identity -p codesigning | awk '/"Inquiline Code Signing"/ { print $2; exit }')
+[ -n "$IDENTITY" ] || echo "No Inquiline Code Signing certificate: signing ad hoc, so the Mac forgets what the user allowed"
+codesign --force --sign "${IDENTITY:--}" "$APP"
 echo "Built $APP"
 
 VERSION=$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' Resources/Info.plist)
