@@ -364,7 +364,9 @@ enum PhoneRemotePage {
     if (g.prev && g.prev.key === key) {
       const dx = c.x - g.prev.x, dy = c.y - g.prev.y;
       if (n === 1 && g.most === 1) {
-        if (dx || dy) { mx += dx; my += dy; mac({ k: "move", s: ++macSeq, x: mx, y: my }, true); }
+        // Every frame while the finger is down, moved or not, as the touchpad's: the Mac must
+        // tell a finger held still from a gap in the Wi-Fi, which it bridges.
+        mx += dx; my += dy; mac({ k: "move", s: ++macSeq, x: mx, y: my }, true);
       } else if (n === 2) {
         if (!g.mode) {
           g.slide += Math.abs(dx) + Math.abs(dy); g.pinch += Math.abs(d - g.prev.d);
@@ -413,6 +415,8 @@ enum PhoneRemotePage {
     if (!points.delete(e.pointerId) || points.size) return;
     clearTimeout(g.timer);
     const tap = Date.now() - g.start < 250 && g.far < 10 && !g.used;
+    // Where the finger stopped, which must arrive, and the pointer stops there.
+    if (g.most === 1) mac({ k: "move", s: ++macSeq, x: mx, y: my, rest: 1 });
     if (g.drag) mac({ k: "up" });
     else if (tap && g.most === 1) { mac({ k: "click" }); lastTap = Date.now(); buzz(); }
     else if (tap && g.most === 2) { mac({ k: "click", b: "right" }); buzz(); }
