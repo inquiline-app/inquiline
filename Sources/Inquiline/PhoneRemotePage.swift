@@ -406,8 +406,8 @@ enum PhoneRemotePage {
       // down and stays until the finger lifts, and moving drags. A quick tap is a click; a
       // finger that moves off at once moves the pointer.
       g.timer = setTimeout(() => {
-        if (points.size === 1 && g.most === 1 && g.far < 8 && !g.drag) { g.drag = true; mac({ k: "down" }); buzz(); }
-      }, 150);
+        if (points.size === 1 && g.most === 1 && g.far < 4 && !g.drag) { g.drag = true; mac({ k: "down" }); buzz(); }
+      }, 350);
     }
     points.set(e.pointerId, { x: e.clientX, y: e.clientY, x0: e.clientX, y0: e.clientY });
     g.most = Math.max(g.most, points.size);
