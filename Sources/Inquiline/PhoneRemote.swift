@@ -1,4 +1,5 @@
 import AppKit
+import CDataChannel
 import CoreImage
 import Network
 
@@ -167,6 +168,8 @@ final class PhoneRemote {
     }
 
     private func drop(_ key: ObjectIdentifier) {
+        if let peer = peers.removeValue(forKey: key) { peer.close() }
+        padSequence[key] = nil
         guard phones.removeValue(forKey: key) != nil else { return }
         let wasTrusted = trusted.remove(key) != nil
         let count = trusted.count
@@ -199,10 +202,61 @@ final class PhoneRemote {
             DispatchQueue.main.async { self.onPhones?(count) }
             return
         }
+        switch message["t"] as? String {
+        case "rtc-offer":
+            guard let sdp = message["sdp"] as? String else { return }
+            peers[key]?.close()
+            peers[key] = PhonePeer(offer: sdp, key: key, remote: self)
+        case "rtc-candidate":
+            guard let candidate = message["cand"] as? String else { return }
+            peers[key]?.add(candidate: candidate, mid: message["mid"] as? String)
+        default:
+            process(message, key: key)
+        }
+    }
+
+    // MARK: - WebRTC
+    //
+    // Over the WebSocket, a packet lost on Wi-Fi holds back every one after it until it's sent
+    // again, a tenth of a second or more: a dragged finger stops, then jumps. So the phone
+    // also opens a WebRTC data channel, over UDP, unordered and never resent, and sends its
+    // moves there: a late one is simply passed by the next. Landing, lifting and letting go
+    // still go over the WebSocket, which loses nothing. Without WebRTC, everything does.
+
+    private var peers: [ObjectIdentifier: PhonePeer] = [:]
+    /// The latest controller state's number per phone, as states come over both ways, and an
+    /// older one must not undo a newer one.
+    private var padSequence: [ObjectIdentifier: Double] = [:]
+
+    /// To the phone, over its WebSocket: the Mac's answer and its addresses.
+    fileprivate func signal(_ message: [String: Any], key: ObjectIdentifier) {
+        queue.async { [self] in
+            guard let connection = phones[key], let data = try? JSONSerialization.data(withJSONObject: message) else { return }
+            let metadata = NWProtocolWebSocket.Metadata(opcode: .text)
+            let context = NWConnection.ContentContext(identifier: "signal", metadata: [metadata])
+            connection.send(content: data, contentContext: context, isComplete: true, completion: .idempotent)
+        }
+    }
+
+    /// Input from a phone's data channel.
+    fileprivate func channelMessage(_ data: Data, key: ObjectIdentifier) {
+        queue.async { [self] in
+            guard trusted.contains(key), let message = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+            else { return }
+            process(message, key: key)
+        }
+    }
+
+    private func process(_ message: [String: Any], key: ObjectIdentifier) {
         func number(_ name: String) -> Double { (message[name] as? NSNumber)?.doubleValue ?? 0 }
         let input: Input
         switch message["t"] as? String {
         case "pad":
+            let sequence = number("s")
+            if sequence > 0 {
+                guard sequence > padSequence[key] ?? 0 else { return }
+                padSequence[key] = sequence
+            }
             input = .pad(leftX: number("lx"), leftY: number("ly"), rightX: number("rx"), rightY: number("ry"),
                          leftTrigger: number("lt"), rightTrigger: number("rt"),
                          buttons: UInt16(clamping: Int(number("b"))), hat: UInt8(clamping: Int(number("hat"))))
@@ -382,5 +436,61 @@ final class PhoneInput {
         case .assistant:
             DispatchQueue.main.async { self.onAssistant?() }
         }
+    }
+}
+
+/// One phone's WebRTC connection (libdatachannel): it answers the phone's offer, and hands the
+/// remote what comes over the phone's data channel. The phone and the Mac are on one network,
+/// so the Mac's own addresses are all it offers: nothing goes through a server outside.
+private final class PhonePeer {
+    private let pc: Int32
+    let key: ObjectIdentifier
+    weak var remote: PhoneRemote?
+    private var pointer: UnsafeMutableRawPointer { Unmanaged.passUnretained(self).toOpaque() }
+
+    init(offer: String, key: ObjectIdentifier, remote: PhoneRemote) {
+        self.key = key
+        self.remote = remote
+        var config = rtcConfiguration()
+        config.iceServersCount = 0
+        config.disableAutoNegotiation = false
+        pc = rtcCreatePeerConnection(&config)
+        guard pc >= 0 else { return }
+        rtcSetUserPointer(pc, pointer)
+        rtcSetLocalDescriptionCallback(pc) { _, sdp, type, user in
+            guard let user, let sdp, let type else { return }
+            let peer = Unmanaged<PhonePeer>.fromOpaque(user).takeUnretainedValue()
+            peer.remote?.signal(["t": "rtc-answer", "sdp": String(cString: sdp), "type": String(cString: type)], key: peer.key)
+        }
+        rtcSetLocalCandidateCallback(pc) { _, candidate, mid, user in
+            guard let user, let candidate else { return }
+            let peer = Unmanaged<PhonePeer>.fromOpaque(user).takeUnretainedValue()
+            peer.remote?.signal(["t": "rtc-candidate", "cand": String(cString: candidate),
+                                 "mid": mid.map { String(cString: $0) } ?? "0"], key: peer.key)
+        }
+        rtcSetDataChannelCallback(pc) { _, channel, user in
+            guard let user else { return }
+            rtcSetUserPointer(channel, user)
+            rtcSetOpenCallback(channel) { _, _ in AppLog.write("The phone's WebRTC channel is open") }
+            rtcSetMessageCallback(channel) { _, message, size, user in
+                guard let user, let message else { return }
+                let peer = Unmanaged<PhonePeer>.fromOpaque(user).takeUnretainedValue()
+                // A negative size is a string, ended by a zero.
+                let data = size < 0 ? Data(String(cString: message).utf8)
+                    : Data(bytes: message, count: Int(size))
+                peer.remote?.channelMessage(data, key: peer.key)
+            }
+        }
+        rtcSetRemoteDescription(pc, offer, "offer")
+    }
+
+    func add(candidate: String, mid: String?) {
+        guard pc >= 0 else { return }
+        rtcAddRemoteCandidate(pc, candidate, mid ?? "0")
+    }
+
+    func close() {
+        guard pc >= 0 else { return }
+        rtcDeletePeerConnection(pc)
     }
 }

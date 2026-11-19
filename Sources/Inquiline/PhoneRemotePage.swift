@@ -125,17 +125,50 @@ enum PhoneRemotePage {
   }
   function closeApp() {
     if (app) { app.onclose = null; app.close(); }
+    if (peer) { peer.close(); peer = null; }
+    channel = null;
     app = null; appPid = 0; ready = false; dot.classList.remove("on");
+  }
+
+  // A WebRTC data channel to the window, over UDP, unordered and never resent: a finger's moves
+  // and the controller's state go there, so one lost on Wi-Fi doesn't hold back the next. The
+  // WebSocket carries the offer and answer, and whatever must arrive: landing, lifting, letting
+  // go. Without WebRTC everything goes over the WebSocket.
+  let peer = null, channel = null;
+  function startRtc(socket) {
+    if (!window.RTCPeerConnection) return;
+    try {
+      const pc = new RTCPeerConnection({ iceServers: [] });
+      peer = pc;
+      const ch = pc.createDataChannel("input", { ordered: false, maxRetransmits: 0 });
+      ch.onopen = () => { if (peer === pc) channel = ch; };
+      ch.onclose = () => { if (channel === ch) channel = null; };
+      pc.onicecandidate = e => {
+        if (e.candidate && socket.readyState === 1)
+          socket.send(JSON.stringify({ t: "rtc-candidate", cand: e.candidate.candidate, mid: e.candidate.sdpMid }));
+      };
+      socket.onmessage = e => {
+        const m = JSON.parse(e.data);
+        if (m.t === "rtc-answer") pc.setRemoteDescription({ type: "answer", sdp: m.sdp }).catch(() => {});
+        else if (m.t === "rtc-candidate") pc.addIceCandidate({ candidate: m.cand, sdpMid: m.mid }).catch(() => {});
+      };
+      pc.createOffer().then(o => pc.setLocalDescription(o))
+        .then(() => socket.send(JSON.stringify({ t: "rtc-offer", sdp: pc.localDescription.sdp }))).catch(() => {});
+    } catch (e) { peer = null; }
   }
   function openApp(w) {
     closeApp();
     appPid = w.pid;
     const socket = new WebSocket("ws://" + location.hostname + ":" + w.port + "/");
     app = socket;
-    socket.onopen = () => { socket.send(JSON.stringify({ t: "hello", token: w.token })); ready = true; dot.classList.add("on"); send(true); };
+    socket.onopen = () => { socket.send(JSON.stringify({ t: "hello", token: w.token })); ready = true; dot.classList.add("on"); send(true); startRtc(socket); };
     socket.onclose = () => { if (app === socket) { app = null; appPid = 0; ready = false; dot.classList.remove("on"); } };
   }
-  function message(m) { if (ready && app && app.readyState === 1) app.send(JSON.stringify(m)); }
+  function message(m, fast) {
+    const text = JSON.stringify(m);
+    if (fast && channel && channel.readyState === "open") { channel.send(text); return; }
+    if (ready && app && app.readyState === 1) app.send(text);
+  }
   function buzz() { if (navigator.vibrate) navigator.vibrate(8); }
 
   // Tabs
@@ -149,6 +182,7 @@ enum PhoneRemotePage {
   const bits = { a: 0x0001, b: 0x0002, x: 0x0008, y: 0x0010, lb: 0x0040, rb: 0x0080, back: 0x0400, start: 0x0800 };
   const state = { lx: 0, ly: 0, rx: 0, ry: 0, lt: 0, rt: 0 };
   const held = new Set();
+  let padSequence = 0;
   let pending = false, last = "";
   function hat() {
     const u = held.has("up"), d = held.has("down"), l = held.has("left"), r = held.has("right");
@@ -164,7 +198,13 @@ enum PhoneRemotePage {
       const m = { t: "pad", lx: state.lx, ly: state.ly, rx: state.rx, ry: state.ry,
                   lt: held.has("lt") ? 1 : 0, rt: held.has("rt") ? 1 : 0, b, hat: hat() };
       const text = JSON.stringify(m);
-      if (text !== last || force) { last = text; message(m); }
+      if (text !== last || force) {
+        last = text;
+        m.s = ++padSequence;
+        // Let go entirely, it must arrive: over the WebSocket.
+        const resting = !b && !m.hat && !m.lt && !m.rt && !m.lx && !m.ly && !m.rx && !m.ry;
+        message(m, !resting);
+      }
     });
   }
   const fingers = new Map(); // pointerId -> {key} or {stick, el, cx, cy, r}
@@ -220,7 +260,7 @@ enum PhoneRemotePage {
   }
   function tick() {
     if (places.size === 0) { ticking = false; return; }
-    places.forEach((p, id) => message({ t: "touch", a: "move", id, x: p.x, y: p.y }));
+    places.forEach((p, id) => message({ t: "touch", a: "move", id, x: p.x, y: p.y }, true));
     requestAnimationFrame(tick);
   }
   surface.addEventListener("pointerdown", e => {
