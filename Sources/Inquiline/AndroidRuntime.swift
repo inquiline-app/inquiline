@@ -251,6 +251,13 @@ final class AndroidRuntime {
                        + "su 1000 cmd voiceinteraction show >/dev/null 2>&1")
     }
 
+    /// When no window shows Android, the assistant stops listening (Gemini Live): on a phone its
+    /// bar and notification show while it talks, here nothing would, nor let it be ended.
+    func endListeningAssistant() {
+        _ = try? shell("p=$(settings get secure voice_interaction_service | cut -d/ -f1); "
+                       + "[ -n \"$p\" ] && cmd appops get $p RECORD_AUDIO | grep -q '(running)' && am force-stop $p")
+    }
+
     private func letGoogleLocate() {
         let gms = "com.google.android.gms"
         guard let held = try? shell("dumpsys package \(gms) | grep -E 'ACCESS_(FINE|COARSE|BACKGROUND)_LOCATION: granted=true' | wc -l"),

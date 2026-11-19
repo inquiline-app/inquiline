@@ -642,6 +642,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, SPUSta
         DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [self] in
             guard runningApps.isEmpty, busy == 0, AndroidRuntime.shared.isRunning else { return }
             launchQueue.async {
+                AndroidRuntime.shared.endListeningAssistant()
                 AndroidRuntime.shared.releaseMemory()
                 AndroidRuntime.shared.pressPowerButton()
             }
