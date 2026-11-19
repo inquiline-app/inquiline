@@ -348,6 +348,10 @@ enum PhoneRemotePage {
   const points = new Map();
   let g = null, macSeq = 0, mx = 0, my = 0, sx = 0, sy = 0, lastTap = 0, macTicking = false;
   function mac(m, fast) { m.t = "mac"; message(m, fast); }
+  // While the Mac tab is open, a few bytes go every 40 ms, so the phone's Wi-Fi doesn't doze
+  // between strokes, and a finger set down again moves the pointer at once rather than after
+  // the radio wakes.
+  setInterval(() => { if (tab === "mac" && !points.size && channel && channel.readyState === "open") channel.send('{"t":"mac","k":"awake"}'); }, 40);
   function middle() {
     let x = 0, y = 0;
     points.forEach(p => { x += p.x; y += p.y; });

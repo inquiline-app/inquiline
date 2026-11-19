@@ -62,6 +62,9 @@ final class MacTrackpad {
                     if !resting, moves > 0, dt < 1 { longestPhoneGap = max(longestPhoneGap, dt) }
                     if resting || dt <= 0 || dt > 0.25 {
                         speedOfMoveX = 0; speedOfMoveY = 0
+                    } else if speedOfMoveX == 0 && speedOfMoveY == 0 {
+                        // A finger setting off: its own speed at once, not evened out from rest.
+                        speedOfMoveX = dx / dt; speedOfMoveY = dy / dt
                     } else {
                         speedOfMoveX = speedOfMoveX * 0.5 + dx / dt * 0.5
                         speedOfMoveY = speedOfMoveY * 0.5 + dy / dt * 0.5
