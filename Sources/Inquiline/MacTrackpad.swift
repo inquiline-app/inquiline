@@ -51,8 +51,10 @@ final class MacTrackpad {
                 totals[phone] = known
                 startPacing()
             case "hold":
-                // A finger on the trackpad stops a coasting scroll, as on the Mac's own.
+                // A finger on the trackpad stops a coasting scroll, as on the Mac's own; and the
+                // pointer starts from where it is, as the mouse may have moved it.
                 stopCoasting()
+                if !dragging { cursor = nil }
             case "scrollEnd":
                 scrollEnding = true
                 startPacing()
@@ -90,6 +92,7 @@ final class MacTrackpad {
             if scrolling { post(scroll: 0, 0, phase: 4); scrolling = false }
             stopCoasting()
             totals = [:]
+            cursor = nil
             moveX = 0; moveY = 0; scrollX = 0; scrollY = 0
         }
     }
@@ -185,7 +188,10 @@ final class MacTrackpad {
 
     // MARK: Events
 
-    private var pointer: CGPoint { CGEvent(source: nil)?.location ?? .zero }
+    /// Where this has put the pointer. The Mac's own answer lags behind events just posted, so
+    /// moves read from it would be lost and a click would land where the pointer was.
+    private var cursor: CGPoint?
+    private var pointer: CGPoint { cursor ?? CGEvent(source: nil)?.location ?? .zero }
 
     /// Faster the faster the finger goes, as the Mac's own pointer.
     private func movePointer(_ dx: Double, _ dy: Double) {
@@ -208,6 +214,7 @@ final class MacTrackpad {
         event?.setDoubleValueField(.mouseEventDeltaX, value: to.x - from.x)
         event?.setDoubleValueField(.mouseEventDeltaY, value: to.y - from.y)
         event?.post(tap: .cghidEventTap)
+        cursor = to
     }
 
     /// One more for a click soon after another in the same place, as a double click.
@@ -230,6 +237,8 @@ final class MacTrackpad {
     private func post(mouse type: CGEventType, button: CGMouseButton, clicks: Int64) {
         let event = CGEvent(mouseEventSource: source, mouseType: type, mouseCursorPosition: pointer, mouseButton: button)
         event?.setIntegerValueField(.mouseEventClickState, value: clicks)
+        // A plain click: no modifier the Mac thinks is held, as Control would make it a right click.
+        event?.flags = []
         event?.post(tap: .cghidEventTap)
     }
 
