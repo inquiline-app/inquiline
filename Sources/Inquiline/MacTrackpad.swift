@@ -29,6 +29,8 @@ final class MacTrackpad {
     private var pacer: DispatchSourceTimer?
     private var trusted = false, asked = false
     private var watcher: DispatchSourceTimer?
+    /// How evenly moves arrive, for the log.
+    private var moveStart: TimeInterval = 0, lastMove: TimeInterval = 0, longestGap: TimeInterval = 0, moves = 0
 
     func handle(_ message: [String: Any], phone: ObjectIdentifier) {
         queue.async { [self] in
@@ -42,6 +44,9 @@ final class MacTrackpad {
                 known.s = s
                 let x = number("x"), y = number("y")
                 if message["k"] as? String == "move" {
+                    let now = ProcessInfo.processInfo.systemUptime
+                    if now - lastMove > 0.5 { moveStart = now; longestGap = 0; moves = 0 } else { longestGap = max(longestGap, now - lastMove) }
+                    lastMove = now; moves += 1
                     moveX += x - known.moveX; moveY += y - known.moveY
                     known.moveX = x; known.moveY = y
                 } else {
@@ -52,6 +57,11 @@ final class MacTrackpad {
                 totals[phone] = known
                 startPacing()
             case "hold":
+                if moves >= 30 {
+                    AppLog.write(String(format: "Mac trackpad move: %d moves in %.1f s, longest gap %.0f ms",
+                                        moves, lastMove - moveStart, longestGap * 1000))
+                    moves = 0
+                }
                 // A finger on the trackpad stops a coasting scroll, as on the Mac's own; and the
                 // pointer starts from where it is, as the mouse may have moved it.
                 stopCoasting()

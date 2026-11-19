@@ -25,6 +25,7 @@ final class PhoneRemoteDoor {
     /// The Mac itself, as one more place for the phone, for its Mac tab: a trackpad.
     private let mac = PhoneRemote(title: "Mac", mac: true)
     private let trackpad = MacTrackpad()
+    private var awake: NSObjectProtocol?
     /// The pairing popover's line on whether a phone is connected.
     private weak var statusLine: NSTextField?
     private lazy var token: String = {
@@ -57,7 +58,19 @@ final class PhoneRemoteDoor {
         let trackpad = trackpad
         trackpad.tell = { [weak mac] in mac?.tell($0) }
         mac.onInput = { if case let .mac(message, phone) = $0 { trackpad.handle(message, phone: phone) } }
-        mac.onPhones = { if $0 == 0 { trackpad.reset() } }
+        mac.onPhones = { [weak self] count in
+            guard let self else { return }
+            if count == 0 { trackpad.reset() }
+            // Inquiline has no window, so the Mac would let it nap, and its timers and network
+            // with it: the pointer would stutter. Not while a phone is its trackpad.
+            if count > 0, self.awake == nil {
+                self.awake = ProcessInfo.processInfo.beginActivity(options: [.userInitiated, .latencyCritical],
+                                                                   reason: "A phone is the Mac's trackpad")
+            } else if count == 0, let awake = self.awake {
+                ProcessInfo.processInfo.endActivity(awake)
+                self.awake = nil
+            }
+        }
         mac.start()
         // The windows come and go, and the one in front changes; the page hears of both.
         let timer = DispatchSource.makeTimerSource(queue: queue)
