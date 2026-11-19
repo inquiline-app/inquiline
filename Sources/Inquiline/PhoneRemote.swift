@@ -229,8 +229,12 @@ final class PhoneInput {
     private var task: Int?
     private var plugged = false
     private var lastActive = Date.distantPast
+    /// How evenly a drag's moves arrive, for the log: the network, not the app, if uneven.
+    private var dragStart: TimeInterval = 0, lastMove: TimeInterval = 0, longestGap: TimeInterval = 0, moves = 0
     /// Called on the main queue.
     var onAssistant: (() -> Void)?
+    /// A touchpad finger, for showing it on the Mac; called on the main queue.
+    var onTouch: ((ScrcpySession.TouchAction, Double, Double, Int) -> Void)?
 
     /// The phone's controller in Android, after the Mac's own (GamepadBridge, 3 to 10).
     private static let padID: UInt16 = 11
@@ -277,9 +281,21 @@ final class PhoneInput {
                 leftX: lx, leftY: ly, rightX: rx, rightY: ry, leftTrigger: lt, rightTrigger: rt, buttons: buttons, hat: hat))
         case let .touch(action, x, y, finger):
             guard width > 0, height > 0 else { return }
+            let now = ProcessInfo.processInfo.systemUptime
+            switch action {
+            case .down: dragStart = now; lastMove = now; longestGap = 0; moves = 0
+            case .move: longestGap = max(longestGap, now - lastMove); lastMove = now; moves += 1
+            case .up:
+                if moves >= 30 {
+                    let seconds = now - dragStart
+                    AppLog.write(String(format: "Phone drag: %d moves in %.1f s (%.0f a second), longest gap %.0f ms",
+                                        moves, seconds, Double(moves) / seconds, longestGap * 1000))
+                }
+            }
             // Fingers of their own, apart from the mouse's and the keyboard controls'.
             session.sendTouch(action, x: Int(x * Double(width)), y: Int(y * Double(height)),
                               width: width, height: height, finger: Int64(20 + finger))
+            if let onTouch { DispatchQueue.main.async { onTouch(action, x, y, finger) } }
         case .assistant:
             DispatchQueue.main.async { self.onAssistant?() }
         }

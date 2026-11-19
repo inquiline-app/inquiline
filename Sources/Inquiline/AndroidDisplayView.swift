@@ -39,6 +39,43 @@ final class AndroidDisplayView: NSView {
 
     func showCaughtNote(_ on: Bool) { onCaught?(on) }
 
+    /// A phone's fingers on its touchpad (PhoneRemote), shown where they touch the app, as a
+    /// phone's "show taps" does, so that watching the Mac one sees where the finger is.
+    private var phoneFingers: [Int: CALayer] = [:]
+
+    func showPhoneFinger(_ action: ScrcpySession.TouchAction, x: Double, y: Double, finger: Int) {
+        let rect = screenRect
+        let center = CGPoint(x: rect.minX + x * rect.width, y: rect.maxY - y * rect.height)
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        defer { CATransaction.commit() }
+        if action == .up {
+            guard let dot = phoneFingers.removeValue(forKey: finger) else { return }
+            CATransaction.setDisableActions(false)
+            CATransaction.setCompletionBlock { dot.removeFromSuperlayer() }
+            dot.opacity = 0
+            return
+        }
+        let dot = phoneFingers[finger] ?? {
+            let dot = CALayer()
+            let size: CGFloat = 40
+            dot.bounds = CGRect(x: 0, y: 0, width: size, height: size)
+            dot.cornerRadius = size / 2
+            dot.backgroundColor = NSColor.white.withAlphaComponent(0.35).cgColor
+            dot.borderColor = NSColor.white.withAlphaComponent(0.9).cgColor
+            dot.borderWidth = 2
+            dot.shadowOpacity = 0.4
+            dot.shadowRadius = 3
+            dot.shadowOffset = .zero
+            dot.zPosition = 10
+            layer?.addSublayer(dot)
+            phoneFingers[finger] = dot
+            return dot
+        }()
+        dot.opacity = 1
+        dot.position = center
+    }
+
     override func resignFirstResponder() -> Bool {
         releaseAllKeys()
         return true

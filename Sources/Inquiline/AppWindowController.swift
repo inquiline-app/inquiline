@@ -731,6 +731,9 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate, 
         let input = phoneInput
         input.update(session: session, size: displaySize, task: watchedTask)
         input.onAssistant = { [weak self] in self?.askAssistant() }
+        input.onTouch = { [weak self] action, x, y, finger in
+            self?.displayView.showPhoneFinger(action, x: x, y: y, finger: finger)
+        }
         remote.onInput = { input.handle($0) }
         remote.onPhones = { [weak self] count in
             guard let self else { return }
