@@ -71,8 +71,6 @@ enum PhoneRemotePage {
   .face { font-size: calc(7cqh); }
   .face[data-b="a"] { color: #5cd65c; } .face[data-b="b"] { color: #ff5c5c; }
   .face[data-b="x"] { color: #4fa3ff; } .face[data-b="y"] { color: #ffd23f; }
-  .trigger { width: calc(var(--w) * 1cqw); height: calc(var(--h) * 1cqh); border-radius: calc(4cqh) calc(4cqh) calc(2cqh) calc(2cqh);
-    font-size: calc(5cqh); color: var(--dim); }
   .bumper { width: calc(var(--w) * 1cqw); height: calc(var(--h) * 1cqh); border-radius: calc(3cqh); font-size: calc(4.5cqh); color: var(--dim); }
   .small { font-size: calc(4.5cqh); color: var(--dim); }
   .stick { border-radius: 50%; background: radial-gradient(circle, #1b1c20 55%, #121316 100%); border: 1.5px solid var(--edge); }
@@ -108,28 +106,31 @@ enum PhoneRemotePage {
   <section id="pad" class="on">
     <div id="turn">Turn your phone sideways to use it as a controller.</div>
     <div id="deck">
-      <div class="at key trigger" data-b="lt" style="--x:10;--y:10;--w:14;--h:14">LT</div>
-      <div class="at key bumper" data-b="lb" style="--x:10;--y:27;--w:14;--h:11">LB</div>
-      <div class="at key trigger" data-b="rt" style="--x:90;--y:10;--w:14;--h:14">RT</div>
-      <div class="at key bumper" data-b="rb" style="--x:90;--y:27;--w:14;--h:11">RB</div>
+      <!-- Laid out as an Xbox pad: left stick high, d-pad and right stick low and inward, the
+           face buttons high on the right, View and Menu between; the triggers and bumpers as
+           thin keys along the top. -->
+      <div class="at key bumper" data-b="lt" style="--x:12;--y:7;--w:12;--h:9">LT</div>
+      <div class="at key bumper" data-b="lb" style="--x:26;--y:7;--w:12;--h:9">LB</div>
+      <div class="at key bumper" data-b="rb" style="--x:74;--y:7;--w:12;--h:9">RB</div>
+      <div class="at key bumper" data-b="rt" style="--x:88;--y:7;--w:12;--h:9">RT</div>
 
-      <div class="at stick" data-s="l" style="--x:20;--y:63;--d:48"><div class="knob"></div></div>
+      <div class="at stick" data-s="l" style="--x:25;--y:42;--d:42"><div class="knob"></div></div>
 
-      <div class="at dpad" style="--x:39;--y:80;--d:34"></div>
-      <div class="at key arrow" data-b="up" style="--x:39;--y:68.5;--d:11">▲</div>
-      <div class="at key arrow" data-b="down" style="--x:39;--y:91.5;--d:11">▼</div>
-      <div class="at key arrow" data-b="left" style="--x:39;--dx:-11.5;--y:80;--d:11">◀</div>
-      <div class="at key arrow" data-b="right" style="--x:39;--dx:11.5;--y:80;--d:11">▶</div>
+      <div class="at dpad" style="--x:37;--y:74;--d:32"></div>
+      <div class="at key arrow" data-b="up" style="--x:37;--y:63;--d:10.5">▲</div>
+      <div class="at key arrow" data-b="down" style="--x:37;--y:85;--d:10.5">▼</div>
+      <div class="at key arrow" data-b="left" style="--x:37;--dx:-11;--y:74;--d:10.5">◀</div>
+      <div class="at key arrow" data-b="right" style="--x:37;--dx:11;--y:74;--d:10.5">▶</div>
 
-      <div class="at key small" data-b="back" style="--x:44;--y:30;--d:12">⧉</div>
-      <div class="at key small" data-b="start" style="--x:56;--y:30;--d:12">≡</div>
+      <div class="at key small" data-b="back" style="--x:43;--y:42;--d:11">⧉</div>
+      <div class="at key small" data-b="start" style="--x:57;--y:42;--d:11">≡</div>
 
-      <div class="at key face" data-b="y" style="--x:80;--y:44;--d:16">Y</div>
-      <div class="at key face" data-b="x" style="--x:80;--dx:-16;--y:61;--d:16">X</div>
-      <div class="at key face" data-b="b" style="--x:80;--dx:16;--y:61;--d:16">B</div>
-      <div class="at key face" data-b="a" style="--x:80;--y:78;--d:16">A</div>
+      <div class="at key face" data-b="y" style="--x:75;--y:26;--d:15">Y</div>
+      <div class="at key face" data-b="x" style="--x:75;--dx:-16;--y:42;--d:15">X</div>
+      <div class="at key face" data-b="b" style="--x:75;--dx:16;--y:42;--d:15">B</div>
+      <div class="at key face" data-b="a" style="--x:75;--y:58;--d:15">A</div>
 
-      <div class="at stick" data-s="r" style="--x:61;--y:80;--d:34"><div class="knob"></div></div>
+      <div class="at stick" data-s="r" style="--x:63;--y:74;--d:34"><div class="knob"></div></div>
     </div>
   </section>
   <section id="touch"><div id="surface">Touch here as on the app's screen</div></section>
