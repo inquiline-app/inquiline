@@ -28,6 +28,7 @@ final class MacTrackpad {
     private var lastClick: (time: TimeInterval, at: CGPoint, count: Int64)?
     private var pacer: DispatchSourceTimer?
     private var trusted = false, asked = false
+    private var watcher: DispatchSourceTimer?
 
     func handle(_ message: [String: Any], phone: ObjectIdentifier) {
         queue.async { [self] in
@@ -93,6 +94,7 @@ final class MacTrackpad {
             stopCoasting()
             totals = [:]
             cursor = nil
+            asked = false
             moveX = 0; moveY = 0; scrollX = 0; scrollY = 0
         }
     }
@@ -107,23 +109,29 @@ final class MacTrackpad {
             return true
         }
         tell?(["t": "access", "ok": false])
+        // Asked once for each time a phone connects, as it may have been turned down or
+        // removed from the list since.
         if !asked {
             asked = true
             AppLog.write("The Mac's trackpad waits for Accessibility permission")
-            // The phone hears as soon as it's given, without another touch.
+            DispatchQueue.main.async {
+                _ = AXIsProcessTrustedWithOptions([kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary)
+            }
+        }
+        // The phone hears as soon as it's given, without another touch.
+        if watcher == nil {
             let timer = DispatchSource.makeTimerSource(queue: queue)
-            timer.schedule(deadline: .now() + 2, repeating: 2)
-            timer.setEventHandler { [weak self, weak timer] in
+            timer.schedule(deadline: .now() + 1, repeating: 1)
+            timer.setEventHandler { [weak self] in
                 guard let self, AXIsProcessTrusted() else { return }
-                timer?.cancel()
+                self.watcher?.cancel()
+                self.watcher = nil
                 self.trusted = true
                 AppLog.write("The Mac's trackpad has Accessibility permission")
                 self.tell?(["t": "access", "ok": true])
             }
             timer.resume()
-            DispatchQueue.main.async {
-                _ = AXIsProcessTrustedWithOptions([kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary)
-            }
+            watcher = timer
         }
         return false
     }
