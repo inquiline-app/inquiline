@@ -364,9 +364,10 @@ enum PhoneRemotePage {
     if (g.prev && g.prev.key === key) {
       const dx = c.x - g.prev.x, dy = c.y - g.prev.y;
       if (n === 1 && g.most === 1) {
-        // Every frame while the finger is down, moved or not, as the touchpad's: the Mac must
-        // tell a finger held still from a gap in the Wi-Fi, which it bridges.
-        mx += dx; my += dy; mac({ k: "move", s: ++macSeq, x: mx, y: my, ts: performance.now() }, true);
+        // The finger's moves go as they come (below); a finger held still is told once a frame
+        // too, as the Mac must tell it from a gap in the Wi-Fi, which it bridges.
+        if (!g.sent) mac({ k: "move", s: ++macSeq, x: mx, y: my, ts: performance.now() }, true);
+        g.sent = false;
       } else if (n === 2) {
         if (!g.mode) {
           g.slide += Math.abs(dx) + Math.abs(dy); g.pinch += Math.abs(d - g.prev.d);
@@ -408,6 +409,12 @@ enum PhoneRemotePage {
   trackpad.addEventListener("pointermove", e => {
     const p = points.get(e.pointerId);
     if (!p) return;
+    // One finger moves the pointer as soon as it moves, not at the next frame.
+    if (points.size === 1 && g.most === 1) {
+      mx += e.clientX - p.x; my += e.clientY - p.y;
+      mac({ k: "move", s: ++macSeq, x: mx, y: my, ts: e.timeStamp || performance.now() }, true);
+      g.sent = true;
+    }
     p.x = e.clientX; p.y = e.clientY;
     g.far = Math.max(g.far, Math.hypot(p.x - p.x0, p.y - p.y0));
   });

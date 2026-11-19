@@ -39,6 +39,7 @@ final class MacTrackpad {
     private var watcher: DispatchSourceTimer?
     /// How evenly moves arrive, for the log.
     private var moveStart: TimeInterval = 0, lastMove: TimeInterval = 0, longestGap: TimeInterval = 0, moves = 0
+    private var longestPhoneGap: TimeInterval = 0
 
     func handle(_ message: [String: Any], phone: ObjectIdentifier) {
         queue.async { [self] in
@@ -58,6 +59,7 @@ final class MacTrackpad {
                     let resting = message["rest"] != nil
                     let time = number("ts") / 1000, dt = time - phoneTime
                     phoneTime = time
+                    if !resting, moves > 0, dt < 1 { longestPhoneGap = max(longestPhoneGap, dt) }
                     if resting || dt <= 0 || dt > 0.25 {
                         speedOfMoveX = 0; speedOfMoveY = 0
                     } else {
@@ -74,12 +76,13 @@ final class MacTrackpad {
                     }
                     if resting {
                         if moves >= 30 {
-                            AppLog.write(String(format: "Mac trackpad move: %d moves in %.1f s (%.0f a second), longest gap %.0f ms",
-                                                moves, now - moveStart, Double(moves) / (now - moveStart), longestGap * 1000))
+                            AppLog.write(String(format: "Mac trackpad move: %d moves in %.1f s (%.0f a second), longest gap %.0f ms, on the phone %.0f ms",
+                                                moves, now - moveStart, Double(moves) / (now - moveStart), longestGap * 1000,
+                                                longestPhoneGap * 1000))
                         }
                         moves = 0
                     } else {
-                        if moves == 0 { moveStart = now; longestGap = 0 } else { longestGap = max(longestGap, now - lastMove) }
+                        if moves == 0 { moveStart = now; longestGap = 0; longestPhoneGap = 0 } else { longestGap = max(longestGap, now - lastMove) }
                         lastMove = now; moves += 1
                     }
                 } else {
