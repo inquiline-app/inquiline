@@ -128,7 +128,7 @@ final class GamepadBridge {
 
     /// scrcpy's gamepad report (app/src/hid/hid_gamepad.c): four 16-bit stick axes, two
     /// triggers, 16 buttons and a hat switch for the d-pad.
-    private static let descriptor: [UInt8] = [
+    static let descriptor: [UInt8] = [
         0x05, 0x01, 0x09, 0x05, 0xA1, 0x01, 0xA1, 0x00,
         0x05, 0x01, 0x09, 0x30, 0x09, 0x31, 0x09, 0x33, 0x09, 0x34,
         0x15, 0x00, 0x27, 0xFF, 0xFF, 0x00, 0x00, 0x75, 0x10, 0x95, 0x04, 0x81, 0x02,
@@ -137,6 +137,19 @@ final class GamepadBridge {
         0x05, 0x01, 0x09, 0x39, 0x15, 0x01, 0x25, 0x08, 0x75, 0x04, 0x95, 0x01, 0x81, 0x42,
         0xC0, 0xC0,
     ]
+
+    /// A report from values: sticks from -1 to 1 with down positive, triggers from 0 to 1.
+    static func report(leftX: Double, leftY: Double, rightX: Double, rightY: Double,
+                       leftTrigger: Double, rightTrigger: Double, buttons: UInt16, hat: UInt8) -> [UInt8] {
+        func stick(_ value: Double) -> UInt16 { UInt16(clamping: Int(32768 + min(max(value, -1), 1) * 32767)) }
+        func trigger(_ value: Double) -> UInt16 { UInt16(clamping: Int(min(max(value, 0), 1) * 32767)) }
+        var report: [UInt8] = []
+        for value in [stick(leftX), stick(leftY), stick(rightX), stick(rightY), trigger(leftTrigger), trigger(rightTrigger), buttons] {
+            report += [UInt8(value & 0xFF), UInt8(value >> 8)]
+        }
+        report.append(min(hat, 8))
+        return report
+    }
 
     private static func report(_ pad: GCExtendedGamepad) -> [UInt8] {
         // Sticks run from 0 to 65535 with the middle at 32768; down is positive, as in Android.

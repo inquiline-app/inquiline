@@ -277,6 +277,8 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate, 
         gamepads = nil
         displayView.keyboard?.stop()
         displayView.keyboard = nil
+        // The new session's Android screen has no phone controller until the phone uses it.
+        phonePadPlugged = false
         session.stop()
         session = isFlexible ? ScrcpySession(package: package, screen: flexibleScreen(), restartsApp: true, flexible: true)
             : ScrcpySession(package: package, screen: resolution.screen(landscape: isLandscape), restartsApp: true)
@@ -515,6 +517,7 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate, 
     private static let clearDataItem = NSToolbarItem.Identifier("clearData")
     private static let settingsItem = NSToolbarItem.Identifier("settings")
     private static let assistantItem = NSToolbarItem.Identifier("assistant")
+    private static let phoneItem = NSToolbarItem.Identifier("phone")
 
     /// The frame rate, sound and orientation, in the Mac's own toolbar.
     private func addToolbar() {
@@ -561,7 +564,7 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate, 
                 self.showLoading(true)
             }
         }
-        let toolbar = NSToolbar(identifier: "AppWindowToolbar5")
+        let toolbar = NSToolbar(identifier: "AppWindowToolbar6")
         toolbar.delegate = self
         toolbar.displayMode = .iconOnly
         toolbar.allowsUserCustomization = true
@@ -574,15 +577,16 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate, 
         // The space keeps the buttons clear of the window's rounded corner. Android's Settings
         // is no app to set up or clear.
         package == AppShortcuts.settingsPackage ? [.flexibleSpace, Self.rotateItem, .space]
-            : [.flexibleSpace, Self.fpsItem, Self.assistantItem, Self.controlsItem, Self.muteItem, Self.rotateItem, Self.settingsItem, .space]
+            : [.flexibleSpace, Self.fpsItem, Self.assistantItem, Self.phoneItem, Self.controlsItem, Self.muteItem, Self.rotateItem,
+               Self.settingsItem, .space]
     }
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
         // Clearing is in App Settings and the app's menu; these are there for those who want
         // them at hand.
         package == AppShortcuts.settingsPackage ? [.flexibleSpace, .space, Self.rotateItem]
-            : [.flexibleSpace, .space, Self.fpsItem, Self.assistantItem, Self.controlsItem, Self.muteItem, Self.rotateItem, Self.settingsItem,
-               Self.clearCacheItem, Self.clearDataItem]
+            : [.flexibleSpace, .space, Self.fpsItem, Self.assistantItem, Self.phoneItem, Self.controlsItem, Self.muteItem, Self.rotateItem,
+               Self.settingsItem, Self.clearCacheItem, Self.clearDataItem]
     }
 
     func toolbar(_ toolbar: NSToolbar, itemForItemIdentifier identifier: NSToolbarItem.Identifier,
@@ -596,6 +600,17 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate, 
             let menu = NSMenu()
             Self.addControlsItems(to: menu, target: self)
             item.menu = menu
+            return item
+        }
+        if identifier == Self.phoneItem {
+            let item = NSToolbarItem(itemIdentifier: identifier)
+            item.label = "Phone Remote"
+            item.toolTip = "Use Your Phone as a Remote"
+            // A button of its own, so its QR code can point at it.
+            let button = NSButton(image: NSImage(systemSymbolName: "iphone", accessibilityDescription: "Phone Remote")!,
+                                  target: self, action: #selector(showPhoneRemote(_:)))
+            button.bezelStyle = .toolbar
+            item.view = button
             return item
         }
         if identifier == Self.settingsItem {
@@ -681,6 +696,109 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate, 
             ? "Choose Install Google Play… from Inquiline in the menu bar, then install the Google and Gemini apps from Google Play."
             : "Install the Google and Gemini apps from Google Play, then click the Assistant button again."
         alert.beginSheetModal(for: window)
+    }
+
+    // MARK: - Phone remote
+
+    private var phoneRemote: PhoneRemote?
+    private var phonePadPlugged = false
+    /// The phone's controller in Android, after the Mac's own (GamepadBridge, 3 to 10).
+    private static let phonePadID: UInt16 = 11
+    private weak var phoneStatus: NSTextField?
+
+    /// A QR code for the phone's camera; the page it opens is a remote for this window.
+    @objc private func showPhoneRemote(_ sender: Any?) {
+        let remote = phoneRemote ?? makePhoneRemote()
+        remote.start { [weak self] url in
+            guard let self else { return }
+            let popover = NSPopover()
+            popover.behavior = .transient
+            popover.contentViewController = self.phoneRemoteView(url: url)
+            let anchor = (sender as? NSView) ?? self.window.contentView!
+            popover.show(relativeTo: anchor.bounds, of: anchor, preferredEdge: .minY)
+        }
+    }
+
+    private func makePhoneRemote() -> PhoneRemote {
+        let remote = PhoneRemote(title: window.title)
+        remote.onInput = { [weak self] input in self?.phoneInput(input) }
+        remote.onPhones = { [weak self] count in
+            guard let self else { return }
+            self.phoneStatus?.stringValue = Self.phoneStatusText(count)
+            AppLog.write(count > 0 ? "A phone is connected as a remote" : "No phone is connected as a remote")
+            if count == 0, self.phonePadPlugged {
+                self.session.sendHIDClose(id: Self.phonePadID)
+                self.phonePadPlugged = false
+            }
+        }
+        phoneRemote = remote
+        return remote
+    }
+
+    private static func phoneStatusText(_ phones: Int) -> String {
+        phones > 0 ? "Connected" : "Waiting for your phone"
+    }
+
+    private func phoneRemoteView(url: URL?) -> NSViewController {
+        let title = NSTextField(labelWithString: "Use Your Phone as a Remote")
+        title.font = .boldSystemFont(ofSize: NSFont.systemFontSize)
+        let views: [NSView]
+        if let url, let code = PhoneRemote.code(for: url, size: 200) {
+            let image = NSImageView(image: code)
+            image.imageScaling = .scaleProportionallyUpOrDown
+            image.widthAnchor.constraint(equalToConstant: 200).isActive = true
+            image.heightAnchor.constraint(equalToConstant: 200).isActive = true
+            let note = NSTextField(wrappingLabelWithString:
+                "Scan this with your phone's camera to get a controller, a touchpad and Gemini for this app. "
+                + "Your phone must be on the same Wi-Fi as your Mac.")
+            note.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+            note.textColor = .secondaryLabelColor
+            let status = NSTextField(labelWithString: Self.phoneStatusText(0))
+            status.font = .systemFont(ofSize: NSFont.smallSystemFontSize, weight: .medium)
+            phoneStatus = status
+            views = [title, image, note, status]
+        } else {
+            let note = NSTextField(wrappingLabelWithString: "Connect your Mac to Wi-Fi or a network, then try again.")
+            note.textColor = .secondaryLabelColor
+            views = [title, note]
+        }
+        let stack = NSStackView(views: views)
+        stack.orientation = .vertical
+        stack.alignment = .centerX
+        stack.spacing = 10
+        stack.edgeInsets = NSEdgeInsets(top: 16, left: 16, bottom: 16, right: 16)
+        stack.widthAnchor.constraint(equalToConstant: 260).isActive = true
+        views.compactMap { $0 as? NSTextField }.forEach {
+            $0.alignment = .center
+            $0.preferredMaxLayoutWidth = 228
+        }
+        let controller = NSViewController()
+        controller.view = stack
+        return controller
+    }
+
+    private func phoneInput(_ input: PhoneRemote.Input) {
+        switch input {
+        case let .pad(lx, ly, rx, ry, lt, rt, buttons, hat):
+            let report = GamepadBridge.report(leftX: lx, leftY: ly, rightX: rx, rightY: ry,
+                                              leftTrigger: lt, rightTrigger: rt, buttons: buttons, hat: hat)
+            // Plugged in with the first use, so a phone used only as a touchpad isn't a controller.
+            if !phonePadPlugged {
+                guard buttons != 0 || hat != 0 || lt > 0 || rt > 0 || lx != 0 || ly != 0 || rx != 0 || ry != 0 else { return }
+                session.sendHIDOpen(id: Self.phonePadID, vendor: 0x045E, product: 0x028E, name: "Microsoft X-Box 360 Pad",
+                                    descriptor: GamepadBridge.descriptor)
+                phonePadPlugged = true
+            }
+            session.sendHIDInput(id: Self.phonePadID, report: report)
+        case let .touch(action, x, y, finger):
+            let width = Int(displaySize.width), height = Int(displaySize.height)
+            guard width > 0, height > 0 else { return }
+            // Fingers of their own, apart from the mouse's and the keyboard controls'.
+            session.sendTouch(action, x: Int(x * Double(width)), y: Int(y * Double(height)),
+                              width: width, height: height, finger: Int64(20 + finger))
+        case .assistant:
+            askAssistant()
+        }
     }
 
     /// The app's sound: Android's music volume, which all its apps share as on a phone, its
@@ -856,6 +974,8 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate, 
             _ = try? AdbClient.shell("am stack remove \(task)", timeout: 3)
         }
         displayView.controls.releaseAll()
+        phoneRemote?.stop()
+        if phonePadPlugged { session.sendHIDClose(id: Self.phonePadID) }
         watch?.invalidate()
         fpsTimer?.invalidate()
         gamepads?.stop()
