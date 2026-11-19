@@ -1137,6 +1137,16 @@ final class AndroidRuntime {
         guard package.range(of: "^[A-Za-z0-9_.]+$", options: .regularExpression) != nil,
               let output = try? shell("dumpsys activity exit-info \(package) | grep -E 'timestamp=|process='")
         else { return false }
+        // Updated while open, whatever ended it: an app that updates itself, as Google Play does,
+        // ends on its own first.
+        if let updated = try? shell("dumpsys package \(package) | grep -m1 lastUpdateTime="),
+           let range = updated.range(of: "lastUpdateTime=") {
+            let format = DateFormatter()
+            format.dateFormat = "yyyy-MM-dd HH:mm:ss"
+            if let time = format.date(from: String(updated[range.upperBound...].prefix(19))), time > since {
+                return true
+            }
+        }
         // ApplicationExitInfo reasons: low memory, permission change, dependency died, other
         // kills by system, freezer, package state change, package updated.
         let bySystem: Set<Int> = [3, 8, 12, 13, 14, 15, 16]
