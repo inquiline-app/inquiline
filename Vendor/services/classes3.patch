@@ -27,7 +27,7 @@ diff -ru o3/com/android/server/wm/ContentRecorder.smali out-classes3.dex/com/and
  
 diff -ru o3/com/android/server/wm/DisplayContent.smali out-classes3.dex/com/android/server/wm/DisplayContent.smali
 --- o3/com/android/server/wm/DisplayContent.smali	2026-11-19 02:40:28
-+++ out-classes3.dex/com/android/server/wm/DisplayContent.smali	2026-11-19 02:59:19
++++ out-classes3.dex/com/android/server/wm/DisplayContent.smali	2026-11-19 03:19:52
 @@ -8922,6 +8922,12 @@
  
      if-nez v0, :cond_c
@@ -70,7 +70,7 @@ diff -ru o3/com/android/server/wm/DisplayContent.smali out-classes3.dex/com/andr
      .line 5212
      invoke-interface {p1}, Ljava/util/Set;->isEmpty()Z
  
-@@ -16040,7 +16068,75 @@
+@@ -16040,7 +16068,79 @@
  .end method
  
  .method public removeImmediately()V
@@ -140,6 +140,10 @@ diff -ru o3/com/android/server/wm/DisplayContent.smali out-classes3.dex/com/andr
 +    invoke-virtual {v2, v1}, Lcom/android/server/wm/DisplayContent;->reParentWindowToken(Lcom/android/server/wm/WindowToken;)V
 +
 +    invoke-virtual {v1, v2}, Lcom/android/server/wm/WindowToken;->onDisplayChanged(Lcom/android/server/wm/DisplayContent;)V
++
++    iget-object v2, p0, Lcom/android/server/wm/WindowContainer;->mWmService:Lcom/android/server/wm/WindowManagerService;
++
++    invoke-virtual {v2}, Lcom/android/server/wm/WindowManagerService;->requestTraversal()V
 +
 +    goto :inquiline_next
 +
@@ -288,8 +292,8 @@ diff -ru o3/com/android/server/wm/WindowManagerInternal.smali out-classes3.dex/c
 +.end method
 diff -ru o3/com/android/server/wm/WindowManagerService$LocalService.smali out-classes3.dex/com/android/server/wm/WindowManagerService$LocalService.smali
 --- o3/com/android/server/wm/WindowManagerService$LocalService.smali	2026-11-19 02:40:28
-+++ out-classes3.dex/com/android/server/wm/WindowManagerService$LocalService.smali	2026-11-19 02:59:37
-@@ -5184,3 +5184,60 @@
++++ out-classes3.dex/com/android/server/wm/WindowManagerService$LocalService.smali	2026-11-19 03:19:52
+@@ -5184,3 +5184,63 @@
  
      return v3
  .end method
@@ -336,6 +340,9 @@ diff -ru o3/com/android/server/wm/WindowManagerService$LocalService.smali out-cl
 +
 +    invoke-virtual {v2, v3}, Lcom/android/server/wm/WindowToken;->onDisplayChanged(Lcom/android/server/wm/DisplayContent;)V
 +
++    # A layout pass reports the windows their new screen, so they draw for it.
++    invoke-virtual {v0}, Lcom/android/server/wm/WindowManagerService;->requestTraversal()V
++
 +    :inquiline_none
 +    monitor-exit v1
 +    :try_end_inquiline
@@ -364,4 +371,27 @@ diff -ru o3/com/android/server/wm/WindowManagerService.smali out-classes3.dex/co
 +    invoke-virtual {p0}, Lcom/android/server/wm/RootWindowContainer;->getInquilineAppDisplayContent()Lcom/android/server/wm/DisplayContent;
  
      move-result-object p0
+ 
+diff -ru o3/com/android/server/wm/WindowToken.smali out-classes3.dex/com/android/server/wm/WindowToken.smali
+--- o3/com/android/server/wm/WindowToken.smali	2026-11-19 02:40:28
++++ out-classes3.dex/com/android/server/wm/WindowToken.smali	2026-11-19 10:07:59
+@@ -136,6 +136,19 @@
+ .method public addWindow(Lcom/android/server/wm/WindowState;)V
+     .registers 9
+ 
++    # Inquiline: the assistant's own window may be on a screen other than its context's, as its
++    # token moves to the app's screen (inquilineMoveTokenToAppDisplay); a report tells it its
++    # screen, else it draws for the main screen, which is off, and so draws nothing.
++    iget v0, p0, Lcom/android/server/wm/WindowToken;->windowType:I
++
++    const/16 v1, 0x7ef
++
++    if-ne v0, v1, :inquiline_added
++
++    invoke-virtual {p1}, Lcom/android/server/wm/WindowState;->forceReportingResized()V
++
++    :inquiline_added
++
+     .line 331
+     sget-object v0, Lcom/android/internal/protolog/ProtoLogImpl_704172511$Cache;->WM_DEBUG_FOCUS_enabled:[Z
  
