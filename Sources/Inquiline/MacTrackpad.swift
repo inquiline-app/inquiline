@@ -25,6 +25,8 @@ final class MacTrackpad {
     /// pointer has gone.
     private var receivedX = 0.0, receivedY = 0.0, receivedAt: TimeInterval = 0, phoneTime = 0.0
     private var speedOfMoveX = 0.0, speedOfMoveY = 0.0, shownX = 0.0, shownY = 0.0
+    /// The way the finger last went on each axis.
+    private var wayX = 0.0, wayY = 0.0
     private var dragging = false
     private var scrolling = false, scrollEnding = false
     /// The scroll's speed as it went out, in pixels a tick, carried on as momentum after.
@@ -68,6 +70,14 @@ final class MacTrackpad {
                         speedOfMoveY = speedOfMoveY * 0.5 + dy / dt * 0.5
                     }
                     receivedX += dx; receivedY += dy; receivedAt = now
+                    // The finger has stopped, held still or lifted: where the pointer went past it,
+                    // it stays, rather than coming back the little way it went ahead.
+                    if dx != 0 { wayX = dx > 0 ? 1 : -1 }
+                    if dy != 0 { wayY = dy > 0 ? 1 : -1 }
+                    if resting || (dx == 0 && dy == 0) {
+                        if (shownX - receivedX) * wayX > 0 { shownX = receivedX }
+                        if (shownY - receivedY) * wayY > 0 { shownY = receivedY }
+                    }
                     // The finger stopped short of where the pointer went: it stays.
                     if resting {
                     }
