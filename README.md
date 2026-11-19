@@ -89,6 +89,14 @@ So far it's been tested on a Mac mini with M4 (macOS 27) and a MacBook Air with 
 
 ## Install
 
+With [Homebrew](https://brew.sh):
+
+```bash
+brew install --cask inquiline-app/tap/inquiline
+```
+
+Then open Inquiline and allow it once, as in step 3 below. Or install it by hand:
+
 1. Download `Inquiline-<version>-arm64.dmg` from [Releases](https://github.com/inquiline-app/inquiline/releases) and open it.
 2. Drag **Inquiline** onto the Applications folder. (If you open it from elsewhere, it offers to move itself there.)
 3. Open it. Inquiline isn't notarized by Apple yet (that needs a paid developer account), so macOS stops it the first time:

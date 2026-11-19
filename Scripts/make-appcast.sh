@@ -37,3 +37,4 @@ import os; p="appcast.xml"; s=open(p).read()
 s=s.replace("        <title>Inquiline</title>\n","        <title>Inquiline</title>\n"+os.environ["ITEM"]+"\n",1)
 open(p,"w").write(s)'
 echo "Added Inquiline $VERSION (build $BUILD) to appcast.xml"
+echo "After uploading the disk image to the release, run Scripts/update-cask.sh for Homebrew."
