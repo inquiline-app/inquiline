@@ -21,6 +21,8 @@ final class PhoneRemote {
         /// A finger on the touchpad, at a point from 0 to 1 across the app's screen.
         case touch(ScrcpySession.TouchAction, x: Double, y: Double, finger: Int)
         case assistant
+        /// For the Mac itself (MacTrackpad): the trackpad's moves, scrolls, clicks and gestures.
+        case mac([String: Any], phone: ObjectIdentifier)
     }
 
     /// Called on the remote's own queue, straight from the network, as a finger's moves must
@@ -35,9 +37,12 @@ final class PhoneRemote {
     private var phones: [ObjectIdentifier: NWConnection] = [:]
     private var trusted: Set<ObjectIdentifier> = []
     private let title: String
+    /// The Mac itself, in Inquiline, rather than an app window.
+    private let isMac: Bool
 
-    init(title: String) {
+    init(title: String, mac: Bool = false) {
         self.title = title
+        isMac = mac
     }
 
     static func newToken() -> String {
@@ -75,7 +80,8 @@ final class PhoneRemote {
                 case .ready:
                     guard let port = socket.port?.rawValue else { return }
                     let entry: [String: Any] = ["pid": Int(ProcessInfo.processInfo.processIdentifier),
-                                                "title": self.title, "port": Int(port), "token": self.token]
+                                                "title": self.title, "port": Int(port), "token": self.token,
+                                                "mac": self.isMac]
                     if let data = try? JSONSerialization.data(withJSONObject: entry) {
                         FileManager.default.createFile(atPath: self.registration.path, contents: data,
                                                        attributes: [.posixPermissions: 0o600])
@@ -238,6 +244,11 @@ final class PhoneRemote {
         }
     }
 
+    /// To every connected phone, over its WebSocket.
+    func tell(_ message: [String: Any]) {
+        queue.async { [self] in trusted.forEach { signal(message, key: $0) } }
+    }
+
     /// Input from a phone's data channel.
     fileprivate func channelMessage(_ data: Data, key: ObjectIdentifier) {
         queue.async { [self] in
@@ -267,6 +278,8 @@ final class PhoneRemote {
                            finger: Int(number("id")) % 10)
         case "assistant":
             input = .assistant
+        case "mac":
+            input = .mac(message, phone: key)
         default:
             return
         }
@@ -435,6 +448,8 @@ final class PhoneInput {
             }
         case .assistant:
             DispatchQueue.main.async { self.onAssistant?() }
+        case .mac:
+            break
         }
     }
 }

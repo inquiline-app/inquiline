@@ -522,7 +522,6 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate, 
     private static let clearDataItem = NSToolbarItem.Identifier("clearData")
     private static let settingsItem = NSToolbarItem.Identifier("settings")
     private static let assistantItem = NSToolbarItem.Identifier("assistant")
-    private static let phoneItem = NSToolbarItem.Identifier("phone")
 
     /// The frame rate, sound and orientation, in the Mac's own toolbar.
     private func addToolbar() {
@@ -569,7 +568,7 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate, 
                 self.showLoading(true)
             }
         }
-        let toolbar = NSToolbar(identifier: "AppWindowToolbar6")
+        let toolbar = NSToolbar(identifier: "AppWindowToolbar7")
         toolbar.delegate = self
         toolbar.displayMode = .iconOnly
         toolbar.allowsUserCustomization = true
@@ -582,7 +581,7 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate, 
         // The space keeps the buttons clear of the window's rounded corner. Android's Settings
         // is no app to set up or clear.
         package == AppShortcuts.settingsPackage ? [.flexibleSpace, Self.rotateItem, .space]
-            : [.flexibleSpace, Self.fpsItem, Self.assistantItem, Self.phoneItem, Self.controlsItem, Self.muteItem, Self.rotateItem,
+            : [.flexibleSpace, Self.fpsItem, Self.assistantItem, Self.controlsItem, Self.muteItem, Self.rotateItem,
                Self.settingsItem, .space]
     }
 
@@ -590,7 +589,7 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate, 
         // Clearing is in App Settings and the app's menu; these are there for those who want
         // them at hand.
         package == AppShortcuts.settingsPackage ? [.flexibleSpace, .space, Self.rotateItem]
-            : [.flexibleSpace, .space, Self.fpsItem, Self.assistantItem, Self.phoneItem, Self.controlsItem, Self.muteItem, Self.rotateItem,
+            : [.flexibleSpace, .space, Self.fpsItem, Self.assistantItem, Self.controlsItem, Self.muteItem, Self.rotateItem,
                Self.settingsItem, Self.clearCacheItem, Self.clearDataItem]
     }
 
@@ -605,17 +604,6 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate, 
             let menu = NSMenu()
             Self.addControlsItems(to: menu, target: self)
             item.menu = menu
-            return item
-        }
-        if identifier == Self.phoneItem {
-            let item = NSToolbarItem(itemIdentifier: identifier)
-            item.label = "Phone Remote"
-            item.toolTip = "Use Your Phone as a Remote"
-            // A button of its own, so its QR code can point at it.
-            let button = NSButton(image: NSImage(systemSymbolName: "iphone", accessibilityDescription: "Phone Remote")!,
-                                  target: self, action: #selector(showPhoneRemote(_:)))
-            button.bezelStyle = .toolbar
-            item.view = button
             return item
         }
         if identifier == Self.settingsItem {
@@ -707,18 +695,6 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate, 
 
     private var phoneRemote: PhoneRemote?
     private let phoneInput = PhoneInput()
-    private weak var phoneStatus: NSTextField?
-
-    /// A QR code for the phone's camera, to pair it with Inquiline once; the page it opens works
-    /// whichever app window is in front.
-    @objc private func showPhoneRemote(_ sender: Any?) {
-        startPhoneRemote()
-        let popover = NSPopover()
-        popover.behavior = .transient
-        popover.contentViewController = phoneRemoteView(url: PhoneRemote.pairingAddress())
-        let anchor = (sender as? NSView) ?? window.contentView!
-        popover.show(relativeTo: anchor.bounds, of: anchor, preferredEdge: .minY)
-    }
 
     /// Ready for a paired phone as soon as the app shows, as the phone follows the window in front.
     private func startPhoneRemote() {
@@ -737,7 +713,6 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate, 
         remote.onInput = { input.handle($0) }
         remote.onPhones = { [weak self] count in
             guard let self else { return }
-            self.phoneStatus?.stringValue = Self.phoneStatusText(count)
             AppLog.write(count > 0 ? "A phone is connected as a remote" : "No phone is connected as a remote")
             if count == 0 { self.phoneInput.unplug() }
         }
@@ -745,49 +720,6 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate, 
         return remote
     }
 
-    private static func phoneStatusText(_ phones: Int) -> String {
-        phones > 0 ? "Connected" : "Waiting for your phone"
-    }
-
-    private func phoneRemoteView(url: URL?) -> NSViewController {
-        let title = NSTextField(labelWithString: "Use Your Phone as a Remote")
-        title.font = .boldSystemFont(ofSize: NSFont.systemFontSize)
-        let views: [NSView]
-        if let url, let code = PhoneRemote.code(for: url, size: 200) {
-            let image = NSImageView(image: code)
-            image.imageScaling = .scaleProportionallyUpOrDown
-            image.widthAnchor.constraint(equalToConstant: 200).isActive = true
-            image.heightAnchor.constraint(equalToConstant: 200).isActive = true
-            let note = NSTextField(wrappingLabelWithString:
-                "Scan this once with your phone's camera for a controller, a touchpad and Gemini. "
-                + "Then add the page to your Home Screen: it works whichever app is in front. "
-                + "Your phone must be on the same Wi-Fi as your Mac.")
-            note.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
-            note.textColor = .secondaryLabelColor
-            let status = NSTextField(labelWithString: Self.phoneStatusText(0))
-            status.font = .systemFont(ofSize: NSFont.smallSystemFontSize, weight: .medium)
-            phoneStatus = status
-            views = [title, image, note, status]
-        } else {
-            let note = NSTextField(wrappingLabelWithString: "Connect your Mac to Wi-Fi or a network, then try again. "
-                + "If it is, quit Inquiline from the menu bar and open it again.")
-            note.textColor = .secondaryLabelColor
-            views = [title, note]
-        }
-        let stack = NSStackView(views: views)
-        stack.orientation = .vertical
-        stack.alignment = .centerX
-        stack.spacing = 10
-        stack.edgeInsets = NSEdgeInsets(top: 16, left: 16, bottom: 16, right: 16)
-        stack.widthAnchor.constraint(equalToConstant: 260).isActive = true
-        views.compactMap { $0 as? NSTextField }.forEach {
-            $0.alignment = .center
-            $0.preferredMaxLayoutWidth = 228
-        }
-        let controller = NSViewController()
-        controller.view = stack
-        return controller
-    }
 
     /// The app's sound: Android's music volume, which all its apps share as on a phone, its
     /// effects, and this app's own mute, so a game can be quiet while music plays.

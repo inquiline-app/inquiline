@@ -22,6 +22,11 @@ final class PhoneRemoteDoor {
     private var lastState = ""
     private var lastFront: Int32?
     private var timer: DispatchSourceTimer?
+    /// The Mac itself, as one more place for the phone, for its Mac tab: a trackpad.
+    private let mac = PhoneRemote(title: "Mac", mac: true)
+    private let trackpad = MacTrackpad()
+    /// The pairing popover's line on whether a phone is connected.
+    private weak var statusLine: NSTextField?
     private lazy var token: String = {
         let file = PhoneRemote.folder.appendingPathComponent("pairing")
         if let saved = try? String(contentsOf: file, encoding: .utf8), saved.count == 32 { return saved }
@@ -49,6 +54,11 @@ final class PhoneRemoteDoor {
         control?.newConnectionHandler = { [weak self] in self?.accept($0) }
         page?.start(queue: queue)
         control?.start(queue: queue)
+        let trackpad = trackpad
+        trackpad.tell = { [weak mac] in mac?.tell($0) }
+        mac.onInput = { if case let .mac(message, phone) = $0 { trackpad.handle(message, phone: phone) } }
+        mac.onPhones = { if $0 == 0 { trackpad.reset() } }
+        mac.start()
         // The windows come and go, and the one in front changes; the page hears of both.
         let timer = DispatchSource.makeTimerSource(queue: queue)
         timer.schedule(deadline: .now() + 1, repeating: 1)
@@ -60,7 +70,9 @@ final class PhoneRemoteDoor {
             let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
             guard let self, let pid = app?.processIdentifier else { return }
             self.queue.async {
-                if self.windows().contains(where: { $0["pid"] as? Int == Int(pid) }) { self.lastFront = pid }
+                if self.windows().contains(where: { $0["pid"] as? Int == Int(pid) && $0["mac"] as? Bool != true }) {
+                    self.lastFront = pid
+                }
                 self.pushState()
             }
         }
@@ -115,7 +127,8 @@ final class PhoneRemoteDoor {
     private func pushState() {
         guard !trusted.isEmpty else { return }
         let windows = windows()
-        let pids = windows.compactMap { $0["pid"] as? Int }
+        // The app windows, which the controller and touchpad work: not the Mac itself.
+        let pids = windows.filter { $0["mac"] as? Bool != true }.compactMap { $0["pid"] as? Int }
         let front = Int(NSWorkspace.shared.frontmostApplication?.processIdentifier ?? 0)
         if pids.contains(front) { lastFront = pid_t(front) }
         let active = lastFront.map(Int.init).flatMap { pids.contains($0) ? $0 : nil } ?? pids.first
@@ -199,6 +212,7 @@ final class PhoneRemoteDoor {
             case .failed, .cancelled:
                 self?.phones[key] = nil
                 self?.trusted.remove(key)
+                self?.showCount()
             default:
                 break
             }
@@ -219,10 +233,64 @@ final class PhoneRemoteDoor {
                     return connection.cancel()
                 }
                 self.trusted.insert(ObjectIdentifier(connection))
+                self.showCount()
                 self.lastState = ""
                 self.pushState()
             }
             self.receive(on: connection)
         }
+    }
+
+    // MARK: - Pairing
+
+    private func showCount() {
+        let count = trusted.count
+        DispatchQueue.main.async { self.statusLine?.stringValue = Self.statusText(count) }
+    }
+
+    private static func statusText(_ phones: Int) -> String {
+        phones > 0 ? "Connected" : "Waiting for your phone"
+    }
+
+    /// The QR code for the phone's camera, to pair it with Inquiline once.
+    func pairingView() -> NSViewController {
+        let title = NSTextField(labelWithString: "Use Your Phone as a Remote")
+        title.font = .boldSystemFont(ofSize: NSFont.systemFontSize)
+        let views: [NSView]
+        if let url = PhoneRemote.pairingAddress(), let code = PhoneRemote.code(for: url, size: 200) {
+            let image = NSImageView(image: code)
+            image.imageScaling = .scaleProportionallyUpOrDown
+            image.widthAnchor.constraint(equalToConstant: 200).isActive = true
+            image.heightAnchor.constraint(equalToConstant: 200).isActive = true
+            let note = NSTextField(wrappingLabelWithString:
+                "Scan this once with your phone's camera: a controller and a touchpad for the app in front, "
+                + "Gemini, and a trackpad for your Mac. Then add the page to your Home Screen. "
+                + "Your phone must be on the same Wi-Fi as your Mac.")
+            note.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+            note.textColor = .secondaryLabelColor
+            let status = NSTextField(labelWithString: Self.statusText(0))
+            status.font = .systemFont(ofSize: NSFont.smallSystemFontSize, weight: .medium)
+            statusLine = status
+            queue.async { self.showCount() }
+            views = [title, image, note, status]
+        } else {
+            let note = NSTextField(wrappingLabelWithString: "Connect your Mac to Wi-Fi or a network, then try again. "
+                + "If it is, quit Inquiline from the menu bar and open it again.")
+            note.textColor = .secondaryLabelColor
+            views = [title, note]
+        }
+        let stack = NSStackView(views: views)
+        stack.orientation = .vertical
+        stack.alignment = .centerX
+        stack.spacing = 10
+        stack.edgeInsets = NSEdgeInsets(top: 16, left: 16, bottom: 16, right: 16)
+        stack.widthAnchor.constraint(equalToConstant: 260).isActive = true
+        views.compactMap { $0 as? NSTextField }.forEach {
+            $0.alignment = .center
+            $0.preferredMaxLayoutWidth = 228
+        }
+        let controller = NSViewController()
+        controller.view = stack
+        return controller
     }
 }

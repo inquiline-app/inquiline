@@ -298,6 +298,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, SPUSta
         }
         menu.addItem(.separator())
         menu.addItem(withTitle: "Show Files in Finder", action: #selector(showFiles(_:)), keyEquivalent: "").target = self
+        menu.addItem(withTitle: "Use Your Phone as a Remote…", action: #selector(showPhoneRemote(_:)), keyEquivalent: "").target = self
         // For those who know to look, as the Mac's own menus keep their extra items: shown when
         // Option is held as the menu opens. What most people would change there follows the Mac.
         if NSEvent.modifierFlags.contains(.option) {
@@ -360,6 +361,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, SPUSta
         if panel.runModal() == .OK {
             panel.urls.forEach { install(apk: $0) }
         }
+    }
+
+    /// The phone remote's QR code, under Inquiline's icon: one pairing for every app and the Mac.
+    @objc private func showPhoneRemote(_ sender: Any?) {
+        guard let button = statusItem.button else { return }
+        NSApp.activate(ignoringOtherApps: true)
+        let popover = NSPopover()
+        popover.behavior = .transient
+        popover.contentViewController = PhoneRemoteDoor.shared.pairingView()
+        popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
     }
 
     @objc private func showFiles(_ sender: Any?) {
