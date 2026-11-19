@@ -23,7 +23,8 @@ enum PhoneRemotePage {
 <title>{{TITLE}} · Inquiline</title>
 <style>
   :root { --bg: #111214; --panel: #1c1d21; --key: #2a2c31; --key-on: #4b7bec; --text: #f2f2f4; --dim: #8b8d94; }
-  * { box-sizing: border-box; -webkit-user-select: none; user-select: none; -webkit-tap-highlight-color: transparent; }
+  * { box-sizing: border-box; -webkit-user-select: none; user-select: none; -webkit-tap-highlight-color: transparent;
+      touch-action: none; -webkit-touch-callout: none; }
   html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
     font: 15px -apple-system, system-ui, sans-serif; overflow: hidden; touch-action: none; }
   body { display: flex; flex-direction: column; padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); }
@@ -187,7 +188,28 @@ enum PhoneRemotePage {
   surface.addEventListener("pointerup", release);
   surface.addEventListener("pointercancel", release);
 
-  document.addEventListener("gesturestart", e => e.preventDefault());
+  // Never zoom: a double tap or a pinch is input for the app, not for the page.
+  ["gesturestart", "gesturechange", "gestureend", "dblclick"].forEach(type =>
+    document.addEventListener(type, e => e.preventDefault(), { passive: false }));
+  let lastEnd = 0;
+  document.addEventListener("touchend", e => {
+    const now = Date.now();
+    if (now - lastEnd < 400) e.preventDefault();
+    lastEnd = now;
+  }, { passive: false });
+  document.addEventListener("touchmove", e => { if (e.touches.length > 1 || e.scale !== 1) e.preventDefault(); }, { passive: false });
+
+  // Full screen with the first touch, where the browser allows it, as an app; a controller
+  // also stays sideways.
+  document.addEventListener("pointerdown", () => {
+    const root = document.documentElement;
+    const request = root.requestFullscreen || root.webkitRequestFullscreen;
+    if (request && !(document.fullscreenElement || document.webkitFullscreenElement)) {
+      Promise.resolve(request.call(root, { navigationUI: "hide" })).then(() => {
+        if (screen.orientation && screen.orientation.lock) screen.orientation.lock("landscape").catch(() => {});
+      }).catch(() => {});
+    }
+  }, { capture: true });
   connect();
 })();
 </script>
