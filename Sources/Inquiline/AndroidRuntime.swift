@@ -271,6 +271,13 @@ final class AndroidRuntime {
         return Self.assistantApps.filter { !installed.contains("package:\($0.package)") }
     }
 
+    /// Brings an app's task into focus in Android, as touching its screen does, so a
+    /// controller's buttons go to it.
+    func focus(task: Int) {
+        let agent = NotificationBridge.agent
+        _ = try? shell("CLASSPATH=$(pm path \(agent) | cut -d: -f2) app_process / \(agent).Focus \(task)")
+    }
+
     /// When no window shows Android, the assistant stops listening (Gemini Live): on a phone its
     /// bar and notification show while it talks, here nothing would, nor let it be ended.
     func endListeningAssistant() {

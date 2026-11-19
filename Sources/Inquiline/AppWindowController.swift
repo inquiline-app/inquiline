@@ -702,6 +702,7 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate, 
 
     private var phoneRemote: PhoneRemote?
     private var phonePadPlugged = false
+    private var phonePadFocused = Date.distantPast
     /// The phone's controller in Android, after the Mac's own (GamepadBridge, 3 to 10).
     private static let phonePadID: UInt16 = 11
     private weak var phoneStatus: NSTextField?
@@ -789,6 +790,15 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate, 
                                     descriptor: GamepadBridge.descriptor)
                 phonePadPlugged = true
             }
+            // A controller's buttons go to the app in focus, which a click on the Mac doesn't change
+            // and touches on another window do; so the phone's controller brings its app into focus
+            // when it starts being used again.
+            let active = buttons != 0 || hat != 0 || lt > 0 || rt > 0 || lx != 0 || ly != 0 || rx != 0 || ry != 0
+            if active, Date().timeIntervalSince(phonePadFocused) > 2, let task = watchedTask {
+                phonePadFocused = Date()
+                DispatchQueue.global().async { AndroidRuntime.shared.focus(task: task) }
+            }
+            if active { phonePadFocused = Date() }
             session.sendHIDInput(id: Self.phonePadID, report: report)
         case let .touch(action, x, y, finger):
             let width = Int(displaySize.width), height = Int(displaySize.height)
