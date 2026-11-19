@@ -2,13 +2,15 @@ import AppKit
 import CoreImage
 import Network
 
-/// A phone on the same network as a remote for one app window: its camera reads the QR code the
-/// window shows, and its browser opens a page with a controller, a touchpad and the assistant.
-/// Nothing to install on the phone, and nothing goes past the local network.
+/// A phone on the same network as a remote for the app windows: a controller, a touchpad and
+/// the assistant, in its browser, with nothing to install. Nothing goes past the local network.
 ///
-/// The page comes from a small web server, and its input over a WebSocket. Both only answer the
-/// phone that has the window's code, which is in the QR code: a random 128-bit token, made
-/// anew each time the window opens.
+/// The phone pairs once, from a QR code, with Inquiline itself (PhoneRemoteDoor), whose address
+/// stays the same, so the page can live on the phone's home screen. The page then works the
+/// window in front on the Mac: each window takes the phone's input itself, here, over its own
+/// WebSocket, and tells Inquiline where it listens through a file in Inquiline's folder, which
+/// only the user can read (`remote/<pid>.json`). The socket takes only a phone with the
+/// window's random code, which the phone gets from Inquiline once paired.
 final class PhoneRemote {
     enum Input {
         /// The controller as it is now: sticks from -1 to 1 (down positive), triggers from 0
@@ -26,8 +28,7 @@ final class PhoneRemote {
     var onPhones: ((Int) -> Void)?
 
     private let queue = DispatchQueue(label: "inquiline.phone-remote")
-    private let token = (0..<16).map { _ in String(format: "%02x", UInt8.random(in: 0...255)) }.joined()
-    private var page: NWListener?
+    private let token = PhoneRemote.newToken()
     private var socket: NWListener?
     private var phones: [ObjectIdentifier: NWConnection] = [:]
     private var trusted: Set<ObjectIdentifier> = []
@@ -37,47 +38,59 @@ final class PhoneRemote {
         self.title = title
     }
 
-    /// The page's address, once both servers listen; nil when the Mac has no local network.
-    func start(_ done: @escaping (URL?) -> Void) {
-        guard page == nil else { return done(address) }
+    static func newToken() -> String {
+        (0..<16).map { _ in String(format: "%02x", UInt8.random(in: 0...255)) }.joined()
+    }
+
+    /// Where the windows and Inquiline meet: only the user can read it.
+    static var folder: URL {
+        let folder = AndroidRuntime.shared.home.appendingPathComponent("remote")
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true,
+                                                 attributes: [.posixPermissions: 0o700])
+        return folder
+    }
+
+    private var registration: URL {
+        Self.folder.appendingPathComponent("\(ProcessInfo.processInfo.processIdentifier).json")
+    }
+
+    /// Listens, and tells Inquiline, so a paired phone can find this window.
+    func start() {
+        guard socket == nil else { return }
         do {
-            let page = try NWListener(using: .tcp)
             let options = NWProtocolWebSocket.Options()
             options.autoReplyPing = true
             let parameters = NWParameters.tcp
             parameters.defaultProtocolStack.applicationProtocols.insert(options, at: 0)
             let socket = try NWListener(using: parameters)
-            self.page = page
             self.socket = socket
-            page.newConnectionHandler = { [weak self] in self?.servePage($0) }
             socket.newConnectionHandler = { [weak self] in self?.accept($0) }
-            var ready = 0
-            for listener in [page, socket] {
-                listener.stateUpdateHandler = { [weak self] state in
-                    guard let self else { return }
-                    switch state {
-                    case .ready:
-                        ready += 1
-                        if ready == 2 { DispatchQueue.main.async { done(self.address) } }
-                    case .failed(let error):
-                        AppLog.write("The phone remote can't listen: \(error.localizedDescription)")
-                        DispatchQueue.main.async { done(nil) }
-                    default:
-                        break
+            socket.stateUpdateHandler = { [weak self] state in
+                guard let self else { return }
+                switch state {
+                case .ready:
+                    guard let port = socket.port?.rawValue else { return }
+                    let entry: [String: Any] = ["pid": Int(ProcessInfo.processInfo.processIdentifier),
+                                                "title": self.title, "port": Int(port), "token": self.token]
+                    if let data = try? JSONSerialization.data(withJSONObject: entry) {
+                        FileManager.default.createFile(atPath: self.registration.path, contents: data,
+                                                       attributes: [.posixPermissions: 0o600])
                     }
+                case .failed(let error):
+                    AppLog.write("The phone remote can't listen: \(error.localizedDescription)")
+                default:
+                    break
                 }
-                listener.start(queue: queue)
             }
+            socket.start(queue: queue)
         } catch {
             AppLog.write("The phone remote can't listen: \(error.localizedDescription)")
-            done(nil)
         }
     }
 
     func stop() {
-        page?.cancel()
+        try? FileManager.default.removeItem(at: registration)
         socket?.cancel()
-        page = nil
         socket = nil
         queue.async { [self] in
             phones.values.forEach { $0.cancel() }
@@ -86,8 +99,13 @@ final class PhoneRemote {
         }
     }
 
-    private var address: URL? {
-        guard let host = Self.localAddress(), let port = page?.port?.rawValue else { return nil }
+    /// The page's address, at Inquiline's door (PhoneRemoteDoor), by the Mac's address on the
+    /// network now; nil without a network, or before Inquiline listens.
+    static func pairingAddress() -> URL? {
+        guard let host = localAddress(),
+              let port = try? String(contentsOf: folder.appendingPathComponent("door"), encoding: .utf8),
+              let token = try? String(contentsOf: folder.appendingPathComponent("pairing"), encoding: .utf8)
+        else { return nil }
         return URL(string: "http://\(host):\(port)/\(token)")
     }
 
@@ -110,7 +128,7 @@ final class PhoneRemote {
     }
 
     /// The Mac's address on the local network: Wi-Fi's or Ethernet's, as a phone sees it.
-    private static func localAddress() -> String? {
+    static func localAddress() -> String? {
         var list: UnsafeMutablePointer<ifaddrs>?
         guard getifaddrs(&list) == 0, let first = list else { return nil }
         defer { freeifaddrs(list) }
@@ -128,25 +146,6 @@ final class PhoneRemote {
             found.append((String(cString: item.pointee.ifa_name), address))
         }
         return (found.first { $0.name.hasPrefix("en") } ?? found.first)?.address
-    }
-
-    // MARK: - The page
-
-    private func servePage(_ connection: NWConnection) {
-        connection.start(queue: queue)
-        connection.receive(minimumIncompleteLength: 1, maximumLength: 8192) { [weak self] data, _, _, _ in
-            guard let self, let data, let request = String(data: data, encoding: .utf8) else { return connection.cancel() }
-            let path = request.split(separator: " ").dropFirst().first.map(String.init) ?? ""
-            let response: Data
-            if path == "/\(self.token)", let port = self.socket?.port?.rawValue {
-                let body = Data(PhoneRemotePage.html(title: self.title, port: Int(port), token: self.token).utf8)
-                response = Data(("HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nCache-Control: no-store\r\n"
-                    + "Content-Length: \(body.count)\r\nConnection: close\r\n\r\n").utf8) + body
-            } else {
-                response = Data("HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".utf8)
-            }
-            connection.send(content: response, completion: .contentProcessed { _ in connection.cancel() })
-        }
     }
 
     // MARK: - The phone's input
@@ -188,7 +187,7 @@ final class PhoneRemote {
     private func handle(_ message: [String: Any], from connection: NWConnection) {
         let key = ObjectIdentifier(connection)
         guard trusted.contains(key) else {
-            // The first message is the code from the QR code; without it the phone is let go.
+            // The first message is the window's code; without it the phone is let go.
             guard message["t"] as? String == "hello", message["token"] as? String == token else {
                 return connection.cancel()
             }

@@ -257,6 +257,7 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate, 
                     self.gamepads = gamepads
                 }
                 if self.displayView.keyboard == nil { self.displayView.keyboard = KeyboardBridge(session: session) }
+                self.startPhoneRemote()
             }
         }
         session.onEnd = { [weak self] error in
@@ -707,17 +708,21 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate, 
     private static let phonePadID: UInt16 = 11
     private weak var phoneStatus: NSTextField?
 
-    /// A QR code for the phone's camera; the page it opens is a remote for this window.
+    /// A QR code for the phone's camera, to pair it with Inquiline once; the page it opens works
+    /// whichever app window is in front.
     @objc private func showPhoneRemote(_ sender: Any?) {
-        let remote = phoneRemote ?? makePhoneRemote()
-        remote.start { [weak self] url in
-            guard let self else { return }
-            let popover = NSPopover()
-            popover.behavior = .transient
-            popover.contentViewController = self.phoneRemoteView(url: url)
-            let anchor = (sender as? NSView) ?? self.window.contentView!
-            popover.show(relativeTo: anchor.bounds, of: anchor, preferredEdge: .minY)
-        }
+        startPhoneRemote()
+        let popover = NSPopover()
+        popover.behavior = .transient
+        popover.contentViewController = phoneRemoteView(url: PhoneRemote.pairingAddress())
+        let anchor = (sender as? NSView) ?? window.contentView!
+        popover.show(relativeTo: anchor.bounds, of: anchor, preferredEdge: .minY)
+    }
+
+    /// Ready for a paired phone as soon as the app shows, as the phone follows the window in front.
+    private func startPhoneRemote() {
+        guard phoneRemote == nil, package != AppShortcuts.settingsPackage else { return }
+        makePhoneRemote().start()
     }
 
     private func makePhoneRemote() -> PhoneRemote {
@@ -750,7 +755,8 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate, 
             image.widthAnchor.constraint(equalToConstant: 200).isActive = true
             image.heightAnchor.constraint(equalToConstant: 200).isActive = true
             let note = NSTextField(wrappingLabelWithString:
-                "Scan this with your phone's camera to get a controller, a touchpad and Gemini for this app. "
+                "Scan this once with your phone's camera for a controller, a touchpad and Gemini. "
+                + "Then add the page to your Home Screen: it works whichever app is in front. "
                 + "Your phone must be on the same Wi-Fi as your Mac.")
             note.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
             note.textColor = .secondaryLabelColor
@@ -759,7 +765,8 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate, 
             phoneStatus = status
             views = [title, image, note, status]
         } else {
-            let note = NSTextField(wrappingLabelWithString: "Connect your Mac to Wi-Fi or a network, then try again.")
+            let note = NSTextField(wrappingLabelWithString: "Connect your Mac to Wi-Fi or a network, then try again. "
+                + "If it is, quit Inquiline from the menu bar and open it again.")
             note.textColor = .secondaryLabelColor
             views = [title, note]
         }

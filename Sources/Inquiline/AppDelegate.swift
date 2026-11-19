@@ -125,6 +125,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, SPUSta
         }
         // Android's widgets on the desktop, as they were (DesktopWidgets).
         DesktopWidgets.shared.start()
+        PhoneRemoteDoor.shared.start()
         startAndroidInBackground()
     }
 

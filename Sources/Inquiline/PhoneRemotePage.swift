@@ -1,15 +1,25 @@
 import Foundation
 
-/// The page a phone opens from a window's QR code (PhoneRemote): a controller, a touchpad and
-/// the assistant, for that window's app. One page, with no files around it, as the phone loads
-/// it from the Mac alone.
+/// The page a phone opens from Inquiline's door (PhoneRemoteDoor): a controller, a touchpad
+/// and the assistant, for the app window in front on the Mac. One page, as the phone loads it
+/// from the Mac alone; it can live on the phone's home screen as an app.
 enum PhoneRemotePage {
-    static func html(title: String, port: Int, token: String) -> String {
-        let safeTitle = title.replacingOccurrences(of: "&", with: "&amp;").replacingOccurrences(of: "<", with: "&lt;")
-        return template
-            .replacingOccurrences(of: "{{TITLE}}", with: safeTitle)
+    /// `port` is the door's control socket; `macName` the Mac's name on the network, which stays
+    /// when the router gives the Mac another address.
+    static func html(port: Int, token: String, macName: String) -> String {
+        template
             .replacingOccurrences(of: "{{PORT}}", with: String(port))
             .replacingOccurrences(of: "{{TOKEN}}", with: token)
+            .replacingOccurrences(of: "{{NAME}}", with: macName)
+    }
+
+    /// For adding the page to a phone's home screen as an app of its own.
+    static func manifest(token: String) -> String {
+        """
+        {"name": "Inquiline Remote", "short_name": "Inquiline", "start_url": "/\(token)", "scope": "/\(token)",
+         "display": "fullscreen", "orientation": "landscape", "background_color": "#111214", "theme_color": "#111214",
+         "icons": [{"src": "/\(token)/icon.png", "sizes": "512x512", "type": "image/png"}]}
+        """
     }
 
     private static let template = #"""
@@ -19,8 +29,13 @@ enum PhoneRemotePage {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Inquiline">
+<link rel="manifest" href="/{{TOKEN}}/manifest.json">
+<link rel="apple-touch-icon" href="/{{TOKEN}}/icon.png">
 <meta name="theme-color" content="#111214">
-<title>{{TITLE}} · Inquiline</title>
+<title>Inquiline</title>
 <style>
   :root { --bg: #111214; --panel: #1c1d21; --key: #2a2c31; --key-on: #4b7bec; --text: #f2f2f4; --dim: #8b8d94; }
   * { box-sizing: border-box; -webkit-user-select: none; user-select: none; -webkit-tap-highlight-color: transparent;
@@ -62,7 +77,7 @@ enum PhoneRemotePage {
 </head>
 <body>
 <header>
-  <span id="dot"></span><span id="title">{{TITLE}}</span>
+  <span id="dot"></span><span id="title">Connecting…</span>
   <nav><button data-tab="pad" class="on">Controller</button><button data-tab="touch">Touchpad</button></nav>
 </header>
 <main>
@@ -91,15 +106,36 @@ enum PhoneRemotePage {
 <div id="gone"><div><div id="goneText">Not connected to your Mac.</div><button onclick="location.reload()">Try Again</button></div></div>
 <script>
 (() => {
-  const token = "{{TOKEN}}";
-  let socket, ready = false;
-  const dot = document.getElementById("dot"), gone = document.getElementById("gone");
+  const token = "{{TOKEN}}", macName = "{{NAME}}";
+  const dot = document.getElementById("dot"), gone = document.getElementById("gone"), title = document.getElementById("title");
+  // Inquiline says which windows there are and which is in front; the page works that one,
+  // over the window's own socket, and follows when another comes to the front.
+  let control, app = null, appPid = 0, ready = false;
   function connect() {
-    socket = new WebSocket("ws://" + location.hostname + ":{{PORT}}/");
-    socket.onopen = () => { socket.send(JSON.stringify({ t: "hello", token })); ready = true; dot.classList.add("on"); send(true); };
-    socket.onclose = () => { ready = false; dot.classList.remove("on"); gone.classList.add("on"); };
+    control = new WebSocket("ws://" + location.hostname + ":{{PORT}}/");
+    control.onopen = () => control.send(JSON.stringify({ t: "hello", token }));
+    control.onmessage = e => follow(JSON.parse(e.data));
+    control.onclose = () => { closeApp(); gone.classList.add("on"); };
   }
-  function message(m) { if (ready && socket.readyState === 1) socket.send(JSON.stringify(m)); }
+  function follow(s) {
+    const w = (s.windows || []).find(w => w.pid === s.active);
+    if (!w) { title.textContent = "Open an app on your Mac"; closeApp(); return; }
+    title.textContent = w.title;
+    if (w.pid !== appPid) openApp(w);
+  }
+  function closeApp() {
+    if (app) { app.onclose = null; app.close(); }
+    app = null; appPid = 0; ready = false; dot.classList.remove("on");
+  }
+  function openApp(w) {
+    closeApp();
+    appPid = w.pid;
+    const socket = new WebSocket("ws://" + location.hostname + ":" + w.port + "/");
+    app = socket;
+    socket.onopen = () => { socket.send(JSON.stringify({ t: "hello", token: w.token })); ready = true; dot.classList.add("on"); send(true); };
+    socket.onclose = () => { if (app === socket) { app = null; appPid = 0; ready = false; dot.classList.remove("on"); } };
+  }
+  function message(m) { if (ready && app && app.readyState === 1) app.send(JSON.stringify(m)); }
   function buzz() { if (navigator.vibrate) navigator.vibrate(8); }
 
   // Tabs
@@ -210,7 +246,18 @@ enum PhoneRemotePage {
       }).catch(() => {});
     }
   }, { capture: true });
-  connect();
+
+  // Opened at the Mac's numeric address, which the router may change, the page moves to the
+  // Mac's name when the phone finds it, so a home screen link keeps working.
+  if (macName && /^\d+\.\d+\.\d+\.\d+$/.test(location.hostname)) {
+    const abort = new AbortController();
+    setTimeout(() => abort.abort(), 1500);
+    fetch("http://" + macName + ":" + location.port + "/" + token + "/ping", { signal: abort.signal })
+      .then(r => { if (r.ok) location.replace("http://" + macName + ":" + location.port + location.pathname); else connect(); })
+      .catch(() => connect());
+  } else {
+    connect();
+  }
 })();
 </script>
 </body>
