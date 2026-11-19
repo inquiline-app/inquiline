@@ -317,7 +317,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, SPUSta
 
     @objc private func reportProblem(_ sender: Any?) {
         var zip: URL?
-        run("Gathering logs…", { zip = try ProblemReport.make() }, failure: "Couldn't make the report") { [self] in
+        run("Gathering logs…", { zip = try ProblemReport.make() }, failure: "Couldn't make the report",
+            progress: "Inquiline's and Android's logs go into one file, with your name and other personal details taken out. This takes about half a minute.") { [self] in
             if let zip { reportReady(zip) }
         }
     }
