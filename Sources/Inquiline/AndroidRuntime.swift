@@ -271,17 +271,6 @@ final class AndroidRuntime {
         return Self.assistantApps.filter { !installed.contains("package:\($0.package)") }
     }
 
-    /// An app's page in Google Play, in the window of the given task: its full page, as Google
-    /// Play's own main screen opens it; a link from elsewhere may open as a sheet, which Google
-    /// Play can't lay out in a wide window and closes with.
-    func openInGooglePlay(package: String, task: Int) {
-        _ = try? shell("d=$(am stack list | awk -v t=\(task) '/^RootTask/ { for (i = 3; i <= NF; i++) "
-                       + "if ($i ~ /^displayId=/) d = substr($i, 11) } /^  taskId=/ { if (substr($1, 8) + 0 == t) "
-                       + "print d }'); [ -n \"$d\" ] && su 0 am start --display $d -a android.intent.action.VIEW "
-                       + "-d 'market://details?id=\(package)' "
-                       + "-n com.android.vending/com.google.android.finsky.activities.MainActivity")
-    }
-
     /// When no window shows Android, the assistant stops listening (Gemini Live): on a phone its
     /// bar and notification show while it talks, here nothing would, nor let it be ended.
     func endListeningAssistant() {
