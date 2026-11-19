@@ -106,6 +106,18 @@ final class MacTrackpad {
         tell?(["t": "access", "ok": false])
         if !asked {
             asked = true
+            AppLog.write("The Mac's trackpad waits for Accessibility permission")
+            // The phone hears as soon as it's given, without another touch.
+            let timer = DispatchSource.makeTimerSource(queue: queue)
+            timer.schedule(deadline: .now() + 2, repeating: 2)
+            timer.setEventHandler { [weak self, weak timer] in
+                guard let self, AXIsProcessTrusted() else { return }
+                timer?.cancel()
+                self.trusted = true
+                AppLog.write("The Mac's trackpad has Accessibility permission")
+                self.tell?(["t": "access", "ok": true])
+            }
+            timer.resume()
             DispatchQueue.main.async {
                 _ = AXIsProcessTrustedWithOptions([kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary)
             }
