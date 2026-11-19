@@ -32,6 +32,9 @@ final class PhoneRemote {
     private let token = PhoneRemote.newToken()
     private var socket: NWListener?
     private var phones: [ObjectIdentifier: NWConnection] = [:]
+    /// Phones in use now: a finger down on the touchpad, or the controller held.
+    private var busy: [ObjectIdentifier: (fingers: Set<Int>, pad: Bool)] = [:]
+    private var waker: DispatchSourceTimer?
     private var trusted: Set<ObjectIdentifier> = []
     private let title: String
 
@@ -167,6 +170,7 @@ final class PhoneRemote {
     }
 
     private func drop(_ key: ObjectIdentifier) {
+        busy[key] = nil
         guard phones.removeValue(forKey: key) != nil else { return }
         let wasTrusted = trusted.remove(key) != nil
         let count = trusted.count
@@ -216,7 +220,42 @@ final class PhoneRemote {
         default:
             return
         }
+        keepAwake(key, for: input)
         onInput?(input)
+    }
+
+    /// A phone's Wi-Fi naps between its router's beacons, a tenth of a second apart, to save
+    /// power, which holds its input back for as long; a phone that keeps hearing from the Mac
+    /// stays awake. So while it's in use, the Mac sends it a byte every 15 ms, and stops when
+    /// the finger lifts or the controller is let go.
+    private func keepAwake(_ key: ObjectIdentifier, for input: Input) {
+        var state = busy[key] ?? (fingers: [], pad: false)
+        switch input {
+        case let .touch(action, _, _, finger):
+            if action == .up { state.fingers.remove(finger) } else { state.fingers.insert(finger) }
+        case let .pad(lx, ly, rx, ry, lt, rt, buttons, hat):
+            state.pad = buttons != 0 || hat != 0 || lt > 0 || rt > 0 || lx != 0 || ly != 0 || rx != 0 || ry != 0
+        case .assistant:
+            return
+        }
+        busy[key] = state.fingers.isEmpty && !state.pad ? nil : state
+        if busy.isEmpty {
+            waker?.cancel()
+            waker = nil
+        } else if waker == nil {
+            let timer = DispatchSource.makeTimerSource(queue: queue)
+            timer.schedule(deadline: .now(), repeating: .milliseconds(15), leeway: .milliseconds(2))
+            timer.setEventHandler { [weak self] in
+                guard let self else { return }
+                let metadata = NWProtocolWebSocket.Metadata(opcode: .text)
+                let context = NWConnection.ContentContext(identifier: "awake", metadata: [metadata])
+                for key in self.busy.keys {
+                    self.phones[key]?.send(content: Data(".".utf8), contentContext: context, isComplete: true, completion: .idempotent)
+                }
+            }
+            timer.resume()
+            waker = timer
+        }
     }
 }
 
@@ -245,7 +284,7 @@ final class PhoneInput {
     // or more while a lost packet is sent again or the phone's radio naps. Sent as they come, a
     // dragged ship stops and jumps. So they go to Android at a steady 120 a second instead: each
     // finger glides to where it was last seen, and through a gap keeps going the way it went,
-    // for a short while, as it most likely did.
+    // for up to 130 ms, as it most likely did.
 
     private struct Finger {
         var x: Double, y: Double, time: TimeInterval
@@ -267,7 +306,7 @@ final class PhoneInput {
 
         /// Where the finger likely is now: seen, or a little on along its way through a gap.
         func expected(at now: TimeInterval) -> (Double, Double) {
-            let ahead = min(max(now - time, 0), 0.08)
+            let ahead = min(max(now - time, 0), 0.13)
             return (min(max(x + vx * ahead, 0), 1), min(max(y + vy * ahead, 0), 1))
         }
     }
