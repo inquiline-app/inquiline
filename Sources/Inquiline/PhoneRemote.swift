@@ -22,7 +22,8 @@ final class PhoneRemote {
         case assistant
     }
 
-    /// Called on the main queue.
+    /// Called on the remote's own queue, straight from the network, as a finger's moves must
+    /// not wait for the window to draw; PhoneInput takes them from there.
     var onInput: ((Input) -> Void)?
     /// How many phones are connected now; called on the main queue.
     var onPhones: ((Int) -> Void)?
@@ -60,7 +61,9 @@ final class PhoneRemote {
         do {
             let options = NWProtocolWebSocket.Options()
             options.autoReplyPing = true
-            let parameters = NWParameters.tcp
+            let tcp = NWProtocolTCP.Options()
+            tcp.noDelay = true
+            let parameters = NWParameters(tls: nil, tcp: tcp)
             parameters.defaultProtocolStack.applicationProtocols.insert(options, at: 0)
             let socket = try NWListener(using: parameters)
             self.socket = socket
@@ -213,6 +216,72 @@ final class PhoneRemote {
         default:
             return
         }
-        DispatchQueue.main.async { self.onInput?(input) }
+        onInput?(input)
+    }
+}
+
+/// A phone's input for one window's Android screen, sent from the network's queue as it comes:
+/// the window keeps it up to date with its session, screen size and task.
+final class PhoneInput {
+    private let lock = NSLock()
+    private var session: ScrcpySession?
+    private var width = 0, height = 0
+    private var task: Int?
+    private var plugged = false
+    private var lastActive = Date.distantPast
+    /// Called on the main queue.
+    var onAssistant: (() -> Void)?
+
+    /// The phone's controller in Android, after the Mac's own (GamepadBridge, 3 to 10).
+    private static let padID: UInt16 = 11
+
+    func update(session: ScrcpySession? = nil, size: NSSize? = nil, task: Int? = nil) {
+        lock.lock(); defer { lock.unlock() }
+        if let session, session !== self.session {
+            self.session = session
+            // A new session's Android screen has no phone controller until the phone uses it.
+            plugged = false
+        }
+        if let size { width = Int(size.width); height = Int(size.height) }
+        if let task { self.task = task }
+    }
+
+    /// No phone is connected, or the window closes: the controller is unplugged.
+    func unplug() {
+        lock.lock(); defer { lock.unlock() }
+        if plugged { session?.sendHIDClose(id: Self.padID) }
+        plugged = false
+    }
+
+    func handle(_ input: PhoneRemote.Input) {
+        lock.lock(); defer { lock.unlock() }
+        guard let session else { return }
+        switch input {
+        case let .pad(lx, ly, rx, ry, lt, rt, buttons, hat):
+            let active = buttons != 0 || hat != 0 || lt > 0 || rt > 0 || lx != 0 || ly != 0 || rx != 0 || ry != 0
+            // Plugged in with the first use, so a phone used only as a touchpad isn't a controller.
+            if !plugged {
+                guard active else { return }
+                session.sendHIDOpen(id: Self.padID, vendor: 0x045E, product: 0x028E, name: "Microsoft X-Box 360 Pad",
+                                    descriptor: GamepadBridge.descriptor)
+                plugged = true
+            }
+            // A controller's buttons go to the app in focus, which a click on the Mac doesn't change
+            // and touches on another window do; so the phone's controller brings its app into focus
+            // when it starts being used again.
+            if active, Date().timeIntervalSince(lastActive) > 2, let task {
+                DispatchQueue.global().async { AndroidRuntime.shared.focus(task: task) }
+            }
+            if active { lastActive = Date() }
+            session.sendHIDInput(id: Self.padID, report: GamepadBridge.report(
+                leftX: lx, leftY: ly, rightX: rx, rightY: ry, leftTrigger: lt, rightTrigger: rt, buttons: buttons, hat: hat))
+        case let .touch(action, x, y, finger):
+            guard width > 0, height > 0 else { return }
+            // Fingers of their own, apart from the mouse's and the keyboard controls'.
+            session.sendTouch(action, x: Int(x * Double(width)), y: Int(y * Double(height)),
+                              width: width, height: height, finger: Int64(20 + finger))
+        case .assistant:
+            DispatchQueue.main.async { self.onAssistant?() }
+        }
     }
 }

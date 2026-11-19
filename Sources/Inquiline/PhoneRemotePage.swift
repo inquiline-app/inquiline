@@ -207,20 +207,41 @@ enum PhoneRemotePage {
   pad.addEventListener("pointerup", lift);
   pad.addEventListener("pointercancel", lift);
 
-  // Touchpad: each finger lands where it is on the app's screen.
+  // Touchpad: each finger lands where it is on the app's screen. A finger's moves go once a
+  // frame, at its latest place, in step with the screen, rather than in uneven bursts as the
+  // phone reports them; a finger landing or lifting goes at once.
   const surface = document.getElementById("surface");
-  const touches = new Map();
-  function point(e, a) {
+  const touches = new Map(), moved = new Map();
+  let flushing = false;
+  function where(e) {
     const box = surface.getBoundingClientRect();
-    message({ t: "touch", a, id: touches.get(e.pointerId),
-              x: (e.clientX - box.left) / box.width, y: (e.clientY - box.top) / box.height });
+    return { x: (e.clientX - box.left) / box.width, y: (e.clientY - box.top) / box.height };
+  }
+  function flushMoves() {
+    flushing = false;
+    moved.forEach((p, id) => message({ t: "touch", a: "move", id, x: p.x, y: p.y }));
+    moved.clear();
   }
   surface.addEventListener("pointerdown", e => {
     let id = 0; while ([...touches.values()].includes(id)) id++;
-    touches.set(e.pointerId, id); surface.setPointerCapture(e.pointerId); point(e, "down"); e.preventDefault();
+    touches.set(e.pointerId, id); surface.setPointerCapture(e.pointerId);
+    const p = where(e);
+    message({ t: "touch", a: "down", id, x: p.x, y: p.y });
+    e.preventDefault();
   });
-  surface.addEventListener("pointermove", e => { if (touches.has(e.pointerId)) point(e, "move"); });
-  function release(e) { if (!touches.has(e.pointerId)) return; point(e, "up"); touches.delete(e.pointerId); }
+  surface.addEventListener("pointermove", e => {
+    if (!touches.has(e.pointerId)) return;
+    moved.set(touches.get(e.pointerId), where(e));
+    if (!flushing) { flushing = true; requestAnimationFrame(flushMoves); }
+  });
+  function release(e) {
+    if (!touches.has(e.pointerId)) return;
+    const id = touches.get(e.pointerId);
+    if (moved.has(id)) flushMoves();
+    const p = where(e);
+    message({ t: "touch", a: "up", id, x: p.x, y: p.y });
+    touches.delete(e.pointerId);
+  }
   surface.addEventListener("pointerup", release);
   surface.addEventListener("pointercancel", release);
 

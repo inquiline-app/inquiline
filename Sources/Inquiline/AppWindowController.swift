@@ -17,7 +17,10 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate, 
     private var restarted = false
     /// The app's screen in pixels.
     private var displaySize: NSSize {
-        didSet { if displaySize != oldValue { shareScreen() } }
+        didSet {
+            if displaySize != oldValue { shareScreen() }
+            phoneInput.update(size: displaySize)
+        }
     }
     private let resolution: ScrcpySession.Resolution
     private var watch: Timer?
@@ -29,7 +32,9 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate, 
     /// The Android screen this window shows, once the app has appeared on it.
     private var watchedDisplay: String?
     /// The app's task on that screen.
-    private var watchedTask: Int?
+    private var watchedTask: Int? {
+        didSet { phoneInput.update(task: watchedTask) }
+    }
     /// When the app was started in this window, last.
     private var appStarted = Date()
     /// Screens of sessions before a restart: a slow app can stay on one a while as it ends.
@@ -204,6 +209,7 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate, 
 
     private func connect(_ session: ScrcpySession) {
         displayView.session = session
+        phoneInput.update(session: session)
         session.onClipboard = { [weak self] text in
             DispatchQueue.main.async {
                 // Background apps must not be able to write to the Mac's clipboard.
@@ -278,8 +284,6 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate, 
         gamepads = nil
         displayView.keyboard?.stop()
         displayView.keyboard = nil
-        // The new session's Android screen has no phone controller until the phone uses it.
-        phonePadPlugged = false
         session.stop()
         session = isFlexible ? ScrcpySession(package: package, screen: flexibleScreen(), restartsApp: true, flexible: true)
             : ScrcpySession(package: package, screen: resolution.screen(landscape: isLandscape), restartsApp: true)
@@ -702,10 +706,7 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate, 
     // MARK: - Phone remote
 
     private var phoneRemote: PhoneRemote?
-    private var phonePadPlugged = false
-    private var phonePadFocused = Date.distantPast
-    /// The phone's controller in Android, after the Mac's own (GamepadBridge, 3 to 10).
-    private static let phonePadID: UInt16 = 11
+    private let phoneInput = PhoneInput()
     private weak var phoneStatus: NSTextField?
 
     /// A QR code for the phone's camera, to pair it with Inquiline once; the page it opens works
@@ -727,15 +728,15 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate, 
 
     private func makePhoneRemote() -> PhoneRemote {
         let remote = PhoneRemote(title: window.title)
-        remote.onInput = { [weak self] input in self?.phoneInput(input) }
+        let input = phoneInput
+        input.update(session: session, size: displaySize, task: watchedTask)
+        input.onAssistant = { [weak self] in self?.askAssistant() }
+        remote.onInput = { input.handle($0) }
         remote.onPhones = { [weak self] count in
             guard let self else { return }
             self.phoneStatus?.stringValue = Self.phoneStatusText(count)
             AppLog.write(count > 0 ? "A phone is connected as a remote" : "No phone is connected as a remote")
-            if count == 0, self.phonePadPlugged {
-                self.session.sendHIDClose(id: Self.phonePadID)
-                self.phonePadPlugged = false
-            }
+            if count == 0 { self.phoneInput.unplug() }
         }
         phoneRemote = remote
         return remote
@@ -783,39 +784,6 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate, 
         let controller = NSViewController()
         controller.view = stack
         return controller
-    }
-
-    private func phoneInput(_ input: PhoneRemote.Input) {
-        switch input {
-        case let .pad(lx, ly, rx, ry, lt, rt, buttons, hat):
-            let report = GamepadBridge.report(leftX: lx, leftY: ly, rightX: rx, rightY: ry,
-                                              leftTrigger: lt, rightTrigger: rt, buttons: buttons, hat: hat)
-            // Plugged in with the first use, so a phone used only as a touchpad isn't a controller.
-            if !phonePadPlugged {
-                guard buttons != 0 || hat != 0 || lt > 0 || rt > 0 || lx != 0 || ly != 0 || rx != 0 || ry != 0 else { return }
-                session.sendHIDOpen(id: Self.phonePadID, vendor: 0x045E, product: 0x028E, name: "Microsoft X-Box 360 Pad",
-                                    descriptor: GamepadBridge.descriptor)
-                phonePadPlugged = true
-            }
-            // A controller's buttons go to the app in focus, which a click on the Mac doesn't change
-            // and touches on another window do; so the phone's controller brings its app into focus
-            // when it starts being used again.
-            let active = buttons != 0 || hat != 0 || lt > 0 || rt > 0 || lx != 0 || ly != 0 || rx != 0 || ry != 0
-            if active, Date().timeIntervalSince(phonePadFocused) > 2, let task = watchedTask {
-                phonePadFocused = Date()
-                DispatchQueue.global().async { AndroidRuntime.shared.focus(task: task) }
-            }
-            if active { phonePadFocused = Date() }
-            session.sendHIDInput(id: Self.phonePadID, report: report)
-        case let .touch(action, x, y, finger):
-            let width = Int(displaySize.width), height = Int(displaySize.height)
-            guard width > 0, height > 0 else { return }
-            // Fingers of their own, apart from the mouse's and the keyboard controls'.
-            session.sendTouch(action, x: Int(x * Double(width)), y: Int(y * Double(height)),
-                              width: width, height: height, finger: Int64(20 + finger))
-        case .assistant:
-            askAssistant()
-        }
     }
 
     /// The app's sound: Android's music volume, which all its apps share as on a phone, its
@@ -992,7 +960,7 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate, 
         }
         displayView.controls.releaseAll()
         phoneRemote?.stop()
-        if phonePadPlugged { session.sendHIDClose(id: Self.phonePadID) }
+        phoneInput.unplug()
         watch?.invalidate()
         fpsTimer?.invalidate()
         gamepads?.stop()
