@@ -665,7 +665,32 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate, 
     /// Android's assistant (Gemini) over this app, reading what it shows.
     @objc func askAssistant() {
         guard let task = watchedTask else { return }
-        DispatchQueue.global().async { AndroidRuntime.shared.showAssistant(task: task) }
+        DispatchQueue.global().async { [weak self] in
+            let runtime = AndroidRuntime.shared
+            let missing = runtime.missingAssistantApps()
+            if missing?.isEmpty == true { return runtime.showAssistant(task: task) }
+            DispatchQueue.main.async { self?.askToInstallAssistant(missing: missing, task: task) }
+        }
+    }
+
+    /// Gemini needs apps a phone comes with; Google Play has them, and the user installs them there.
+    private func askToInstallAssistant(missing: [(package: String, name: String)]?, task: Int) {
+        let alert = NSAlert()
+        guard let missing else {
+            alert.messageText = "Gemini needs Google Play"
+            alert.informativeText = "Choose Install Google Play… from Inquiline in the menu bar, then install the Google app and Gemini from it."
+            alert.beginSheetModal(for: window)
+            return
+        }
+        let names = missing.map(\.name).joined(separator: " and ")
+        alert.messageText = missing.count == 1 ? "Gemini needs the \(names) app" : "Gemini needs the \(names) apps"
+        alert.informativeText = "Install \(missing.count == 1 ? "it" : "them") from Google Play, then click the Assistant button again."
+        alert.addButton(withTitle: "Open Google Play")
+        alert.addButton(withTitle: "Cancel")
+        alert.beginSheetModal(for: window) { response in
+            guard response == .alertFirstButtonReturn else { return }
+            DispatchQueue.global().async { AndroidRuntime.shared.openInGooglePlay(package: missing[0].package, task: task) }
+        }
     }
 
 

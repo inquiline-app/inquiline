@@ -229,22 +229,12 @@ final class AndroidRuntime {
     /// services are patched for that: Scripts/vm/build-services.sh).
     func showAssistant(task: Int) {
         let agent = NotificationBridge.agent
-        // A phone comes with an assistant; Android here has none until the Google app is there.
-        // With the Google app, it becomes the assistant, as on a phone; without it, Google Play
-        // shows the Google app in this window, so the button never does nothing.
-        let google = "com.google.android.googlequicksearchbox"
+        // A phone comes with an assistant; Android here has none until the Google app is there
+        // (missingAssistantApps): it becomes the assistant then, as on a phone.
         let current = (try? shell("settings get secure voice_interaction_service"))?
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         if current.isEmpty || current == "null" {
-            if (try? shell("pm path \(google)"))?.contains("package:") == true {
-                _ = try? shell("cmd role add-role-holder --user 0 android.app.role.ASSISTANT \(google)")
-            } else {
-                _ = try? shell("d=$(am stack list | awk -v t=\(task) '/^RootTask/ { for (i = 3; i <= NF; i++) "
-                               + "if ($i ~ /^displayId=/) d = substr($i, 11) } /^  taskId=/ { if (substr($1, 8) + 0 == t) "
-                               + "print d }'); [ -n \"$d\" ] && su 0 am start --display $d -a android.intent.action.VIEW "
-                               + "-d 'market://details?id=\(google)' -p com.android.vending")
-                return
-            }
+            _ = try? shell("cmd role add-role-holder --user 0 android.app.role.ASSISTANT \(Self.assistantApps[0].package)")
         }
         // The assistant reuses its open screen, which is left on another screen when the window it
         // was over closed (Android moves a closed screen's tasks to the main screen), or over
@@ -266,6 +256,27 @@ final class AndroidRuntime {
             """
         _ = try? shell(stale + "; CLASSPATH=$(pm path \(agent) | cut -d: -f2) app_process / \(agent).Focus \(task); "
                        + "su 1000 cmd voiceinteraction show >/dev/null 2>&1")
+    }
+
+    /// The apps Android's assistant, Gemini, needs, which a phone comes with: the Google app, which
+    /// is the assistant, and Gemini.
+    static let assistantApps = [(package: "com.google.android.googlequicksearchbox", name: "Google"),
+                                (package: "com.google.android.apps.bard", name: "Gemini")]
+
+    /// Those of the assistant's apps not installed yet; nil without Google Play, which has them.
+    func missingAssistantApps() -> [(package: String, name: String)]? {
+        guard let list = try? shell("pm list packages") else { return nil }
+        let installed = Set(list.split(whereSeparator: \.isNewline).map { $0.trimmingCharacters(in: .whitespaces) })
+        guard installed.contains("package:com.android.vending") else { return nil }
+        return Self.assistantApps.filter { !installed.contains("package:\($0.package)") }
+    }
+
+    /// An app's page in Google Play, in the window of the given task.
+    func openInGooglePlay(package: String, task: Int) {
+        _ = try? shell("d=$(am stack list | awk -v t=\(task) '/^RootTask/ { for (i = 3; i <= NF; i++) "
+                       + "if ($i ~ /^displayId=/) d = substr($i, 11) } /^  taskId=/ { if (substr($1, 8) + 0 == t) "
+                       + "print d }'); [ -n \"$d\" ] && su 0 am start --display $d -a android.intent.action.VIEW "
+                       + "-d 'market://details?id=\(package)' -p com.android.vending")
     }
 
     /// When no window shows Android, the assistant stops listening (Gemini Live): on a phone its
