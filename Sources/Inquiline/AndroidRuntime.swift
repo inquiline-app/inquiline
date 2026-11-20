@@ -105,6 +105,7 @@ final class AndroidRuntime {
         followMacFreeSpace()
         setFullVolume()
         keepLogs()
+        shareVideoDecoders()
         turnOffBluetooth()
         letGoogleLocate()
         letGoogleFill()
@@ -333,6 +334,16 @@ final class AndroidRuntime {
         let grants = permissions.map { "pm grant \(gms) android.permission.\($0)" }.joined(separator: "; ")
         _ = try? shell("su 0 sh -c '\(grants); appops set \(gms) COARSE_LOCATION allow; appops set \(gms) FINE_LOCATION allow'")
         AppLog.write("Google Play services may now locate, as on a phone")
+    }
+
+    /// Android's video decoders (VideoDecoders) learn where the Mac listens, in a file only
+    /// their service reads.
+    private func shareVideoDecoders() {
+        VideoDecoders.shared.start()
+        guard VideoDecoders.shared.port != 0 else { return }
+        _ = try? shell("su 0 sh -c 'mkdir -p /data/vendor/inquiline && echo \(VideoDecoders.shared.key) > /data/vendor/inquiline/decoder"
+                       + " && chown -R mediacodec:mediacodec /data/vendor/inquiline && chmod 700 /data/vendor/inquiline"
+                       + " && chmod 400 /data/vendor/inquiline/decoder'")
     }
 
     private func turnOffBluetooth() {

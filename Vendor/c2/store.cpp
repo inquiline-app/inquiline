@@ -11,6 +11,19 @@
 #include <android/binder_manager.h>
 #include <android/binder_process.h>
 #include <android-base/logging.h>
+#include <SimpleC2Component.h>
+#include <system/graphics.h>
+
+#include <arpa/inet.h>
+#include <fcntl.h>
+#include <netinet/in.h>
+#include <netinet/tcp.h>
+#include <sys/ioctl.h>
+#include <sys/socket.h>
+#include <unistd.h>
+
+#include <fstream>
+#include <mutex>
 
 namespace android {
 
@@ -288,6 +301,287 @@ private:
     std::shared_ptr<C2StreamPixelFormatInfo::output> mPixelFormat;
 };
 
+
+/// Talks to Inquiline on the Mac, which decodes the video with VideoToolbox and writes each
+/// picture straight into the GPU buffer of the picture Android gave for it. Little-endian.
+///   hello  "IQC1", 32-byte token, u8 codec (1 H.264)
+///   'D' u64 index, u64 timestamp, u32 flags (1 codec config, 2 end of stream), u32 size, bytes
+///   'E' drain: every picture still held
+///   'F' flush: drop them
+///       each answered with u32 count, then per picture u64 index, u32 width, u32 height
+///       (width 0: the input made no picture)
+///   'P' u64 index, u32 resource, u32 width, u32 height: write that picture into the resource
+///       (YV12, as Android lays it out), answered with a status byte, 0 on success
+class Mac {
+public:
+    struct Picture { uint64_t index; uint32_t width, height; };
+
+    ~Mac() { if (mSocket >= 0) close(mSocket); }
+
+    bool connect(uint8_t codec) {
+        // Inquiline writes its port and token here as Android starts, for this service alone.
+        std::ifstream file("/data/vendor/inquiline/decoder");
+        unsigned port = 0;
+        std::string token;
+        if (!(file >> port >> token) || token.size() != 64) return false;
+        mSocket = socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0);
+        if (mSocket < 0) return false;
+        int on = 1;
+        setsockopt(mSocket, IPPROTO_TCP, TCP_NODELAY, &on, sizeof(on));
+        sockaddr_in address = {};
+        address.sin_family = AF_INET;
+        address.sin_port = htons(port);
+        inet_pton(AF_INET, "10.0.2.2", &address.sin_addr);
+        if (::connect(mSocket, reinterpret_cast<sockaddr*>(&address), sizeof(address)) != 0) return false;
+        uint8_t hello[37] = {'I', 'Q', 'C', '1'};
+        for (int i = 0; i < 32; i++) hello[4 + i] = std::stoi(token.substr(2 * i, 2), nullptr, 16);
+        hello[36] = codec;
+        uint8_t status = 1;
+        return send(hello, sizeof(hello)) && receive(&status, 1) && status == 0;
+    }
+
+    bool decode(uint64_t index, uint64_t timestamp, uint32_t flags, const uint8_t* data, uint32_t size,
+                std::vector<Picture>* pictures) {
+        uint8_t head[25] = {'D'};
+        memcpy(head + 1, &index, 8);
+        memcpy(head + 9, &timestamp, 8);
+        memcpy(head + 17, &flags, 4);
+        memcpy(head + 21, &size, 4);
+        return send(head, sizeof(head)) && (size == 0 || send(data, size)) && receivePictures(pictures);
+    }
+
+    bool drain(std::vector<Picture>* pictures) {
+        uint8_t request = 'E';
+        return send(&request, 1) && receivePictures(pictures);
+    }
+
+    bool flush() {
+        uint8_t request = 'F';
+        std::vector<Picture> dropped;
+        return send(&request, 1) && receivePictures(&dropped);
+    }
+
+    bool write(uint64_t index, uint32_t resource, uint32_t width, uint32_t height) {
+        uint8_t request[21] = {'P'};
+        memcpy(request + 1, &index, 8);
+        memcpy(request + 9, &resource, 4);
+        memcpy(request + 13, &width, 4);
+        memcpy(request + 17, &height, 4);
+        uint8_t status = 1;
+        return send(request, sizeof(request)) && receive(&status, 1) && status == 0;
+    }
+
+private:
+    bool send(const void* data, size_t size) {
+        auto* bytes = static_cast<const uint8_t*>(data);
+        while (size > 0) {
+            ssize_t sent = ::send(mSocket, bytes, size, MSG_NOSIGNAL);
+            if (sent <= 0) return false;
+            bytes += sent;
+            size -= sent;
+        }
+        return true;
+    }
+
+    bool receive(void* data, size_t size) {
+        auto* bytes = static_cast<uint8_t*>(data);
+        while (size > 0) {
+            ssize_t got = recv(mSocket, bytes, size, 0);
+            if (got <= 0) return false;
+            bytes += got;
+            size -= got;
+        }
+        return true;
+    }
+
+    bool receivePictures(std::vector<Picture>* pictures) {
+        uint32_t count;
+        if (!receive(&count, 4) || count > 64) return false;
+        pictures->resize(count);
+        for (auto& picture : *pictures) {
+            uint8_t entry[16];
+            if (!receive(entry, sizeof(entry))) return false;
+            memcpy(&picture.index, entry, 8);
+            memcpy(&picture.width, entry + 8, 4);
+            memcpy(&picture.height, entry + 12, 4);
+        }
+        return true;
+    }
+
+    int mSocket = -1;
+};
+
+/// The virtio-gpu resource behind a gralloc buffer: the one the Mac's GPU knows it by.
+uint32_t ResourceOf(const C2Handle* handle) {
+    static int gpu = open("/dev/dri/renderD128", O_RDWR | O_CLOEXEC);
+    if (gpu < 0 || !handle || handle->numFds < 1) return 0;
+    struct { uint32_t handle, flags; int32_t fd; } prime = {0, 0, handle->data[0]};
+    if (ioctl(gpu, _IOWR('d', 0x2e, decltype(prime)), &prime) != 0) return 0;
+    struct { uint32_t bo, resource, size, blobMem; } info = {prime.handle, 0, 0, 0};
+    int failed = ioctl(gpu, _IOWR('d', 0x40 + 0x05, decltype(info)), &info);
+    struct { uint32_t handle, pad; } gemClose = {prime.handle, 0};
+    ioctl(gpu, _IOW('d', 0x09, decltype(gemClose)), &gemClose);
+    return failed ? 0 : info.resource;
+}
+
+class Decoder : public SimpleC2Component {
+public:
+    Decoder(const char* name, c2_node_id_t id, uint8_t codec, const std::shared_ptr<AvcIntf>& intf)
+        : SimpleC2Component(std::make_shared<SimpleInterface<AvcIntf>>(name, id, intf)),
+          mIntf(intf), mCodec(codec) {}
+
+    bool connect() {
+        mMac = std::make_unique<Mac>();
+        return mMac->connect(mCodec);
+    }
+
+protected:
+    c2_status_t onInit() override { return mMac ? C2_OK : C2_CORRUPTED; }
+    c2_status_t onStop() override { return flushMac(); }
+    void onReset() override { flushMac(); mSignalledEos = mFailed = false; }
+    void onRelease() override { mMac.reset(); }
+    c2_status_t onFlush_sm() override { mSignalledEos = false; return flushMac(); }
+
+    void process(const std::unique_ptr<C2Work>& work, const std::shared_ptr<C2BlockPool>& pool) override {
+        work->result = C2_OK;
+        work->workletsProcessed = 0u;
+        work->worklets.front()->output.flags = work->input.flags;
+        if (mFailed || mSignalledEos) {
+            work->result = C2_BAD_VALUE;
+            return;
+        }
+        const bool eos = work->input.flags & C2FrameData::FLAG_END_OF_STREAM;
+        const bool config = work->input.flags & C2FrameData::FLAG_CODEC_CONFIG;
+        const uint64_t index = work->input.ordinal.frameIndex.peeku();
+        C2ReadView view = mDummyReadView;
+        if (!work->input.buffers.empty()) {
+            view = work->input.buffers[0]->data().linearBlocks().front().map().get();
+            if (view.error()) return fail(work);
+        }
+        std::vector<Mac::Picture> pictures;
+        if (view.capacity() > 0) {
+            uint32_t flags = (config ? 1 : 0) | (eos ? 2 : 0);
+            if (!mMac->decode(index, work->input.ordinal.timestamp.peeku(), flags, view.data(),
+                              view.capacity(), &pictures)) {
+                return fail(work);
+            }
+        }
+        bool done = config || view.capacity() == 0;
+        for (const auto& picture : pictures) {
+            if (!deliver(picture, pool, work, eos)) return fail(work);
+            if (picture.index == index) done = true;
+        }
+        if (eos) {
+            if (!mMac->drain(&pictures)) return fail(work);
+            for (const auto& picture : pictures) {
+                if (!deliver(picture, pool, work, true)) return fail(work);
+            }
+            mSignalledEos = true;
+            done = true;
+        }
+        if (done && work->workletsProcessed == 0u) fillEmpty(work);
+        work->input.buffers.clear();
+    }
+
+    c2_status_t drain(uint32_t mode, const std::shared_ptr<C2BlockPool>& pool) override {
+        if (mode == NO_DRAIN) return C2_OK;
+        if (mode == DRAIN_CHAIN) return C2_OMITTED;
+        std::vector<Mac::Picture> pictures;
+        if (!mMac->drain(&pictures)) return C2_CORRUPTED;
+        std::unique_ptr<C2Work> none;
+        for (const auto& picture : pictures) {
+            if (!deliver(picture, pool, none, false)) return C2_CORRUPTED;
+        }
+        return C2_OK;
+    }
+
+private:
+    static void fillEmpty(const std::unique_ptr<C2Work>& work) {
+        work->worklets.front()->output.flags =
+                (C2FrameData::flags_t)(work->input.flags & C2FrameData::FLAG_END_OF_STREAM);
+        work->worklets.front()->output.buffers.clear();
+        work->worklets.front()->output.ordinal = work->input.ordinal;
+        work->workletsProcessed = 1u;
+    }
+
+    void fail(const std::unique_ptr<C2Work>& work) {
+        mFailed = true;
+        work->workletsProcessed = 1u;
+        work->result = C2_CORRUPTED;
+    }
+
+    c2_status_t flushMac() {
+        return !mMac || mMac->flush() ? C2_OK : C2_CORRUPTED;
+    }
+
+    /// One picture the Mac decoded, into a buffer of Android's, to the work its input came in.
+    bool deliver(const Mac::Picture& picture, const std::shared_ptr<C2BlockPool>& pool,
+                 const std::unique_ptr<C2Work>& current, bool eos) {
+        std::shared_ptr<C2Buffer> buffer;
+        std::unique_ptr<C2Param> sizeChange;
+        if (picture.width > 0) {
+            if (picture.width != mWidth || picture.height != mHeight) {
+                C2StreamPictureSizeInfo::output size(0u, picture.width, picture.height);
+                std::vector<std::unique_ptr<C2SettingResult>> failures;
+                if (mIntf->config({&size}, C2_MAY_BLOCK, &failures) != C2_OK) return false;
+                mWidth = picture.width;
+                mHeight = picture.height;
+                sizeChange = C2Param::Copy(size);
+            }
+            std::shared_ptr<C2GraphicBlock> block;
+            C2MemoryUsage usage = {C2MemoryUsage::CPU_READ, C2MemoryUsage::CPU_WRITE};
+            if (pool->fetchGraphicBlock(mWidth, mHeight, HAL_PIXEL_FORMAT_YV12, usage, &block) != C2_OK) {
+                return false;
+            }
+            uint32_t resource = ResourceOf(block->handle());
+            if (!resource || !mMac->write(picture.index, resource, block->width(), block->height())) {
+                LOG(ERROR) << "Inquiline's decoder couldn't write a picture";
+                return false;
+            }
+            buffer = createGraphicBuffer(std::move(block), C2Rect(mWidth, mHeight));
+            auto lock = mIntf->lock();
+            buffer->setInfo(mIntf->getColorAspects_l());
+        }
+        std::shared_ptr<C2Param> change(sizeChange.release());
+        auto fill = [buffer, change](const std::unique_ptr<C2Work>& work) {
+            work->worklets.front()->output.flags = (C2FrameData::flags_t)0;
+            work->worklets.front()->output.buffers.clear();
+            if (buffer) work->worklets.front()->output.buffers.push_back(buffer);
+            if (change) work->worklets.front()->output.configUpdate.push_back(C2Param::Copy(*change));
+            work->worklets.front()->output.ordinal = work->input.ordinal;
+            work->workletsProcessed = 1u;
+        };
+        if (current && current->input.ordinal.frameIndex.peeku() == picture.index) {
+            if (eos) {
+                // The end of the stream goes on its own, after this picture.
+                if (buffer) {
+                    C2WorkOrdinalStruct ordinal = current->input.ordinal;
+                    cloneAndSend(picture.index, current, [buffer, change, ordinal](const std::unique_ptr<C2Work>& work) {
+                        work->worklets.front()->output.flags = C2FrameData::FLAG_INCOMPLETE;
+                        work->worklets.front()->output.buffers.clear();
+                        work->worklets.front()->output.buffers.push_back(buffer);
+                        if (change) work->worklets.front()->output.configUpdate.push_back(C2Param::Copy(*change));
+                        work->worklets.front()->output.ordinal = ordinal;
+                        work->workletsProcessed = 1u;
+                        work->result = C2_OK;
+                    });
+                }
+            } else {
+                fill(current);
+            }
+        } else {
+            finish(picture.index, fill);
+        }
+        return true;
+    }
+
+    std::shared_ptr<AvcIntf> mIntf;
+    std::unique_ptr<Mac> mMac;
+    const uint8_t mCodec;
+    uint32_t mWidth = 0, mHeight = 0;
+    bool mSignalledEos = false, mFailed = false;
+};
+
 /// The store: its components' names and interfaces, as Android lists codecs.
 class Store : public C2ComponentStore {
 public:
@@ -297,7 +591,13 @@ public:
 
     c2_status_t createComponent(C2String name, std::shared_ptr<C2Component>* const component) override {
         component->reset();
-        return C2_NOT_FOUND;
+        if (name != COMPONENT_NAME) return C2_NOT_FOUND;
+        static std::atomic<c2_node_id_t> nextId;
+        auto decoder = std::make_shared<Decoder>(COMPONENT_NAME, nextId++, 1, std::make_shared<AvcIntf>(mReflector));
+        // Without Inquiline on the other end, Android takes its software decoder instead.
+        if (!decoder->connect()) return C2_NO_MEMORY;
+        *component = decoder;
+        return C2_OK;
     }
 
     c2_status_t createInterface(C2String name, std::shared_ptr<C2ComponentInterface>* const interface) override {
