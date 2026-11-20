@@ -23,7 +23,13 @@ An app you add to Inquiline doesn't open inside a phone-shaped box. It gets a wi
 
 <p align="center"><img src="docs/images/install.gif" width="720" alt="Double-clicking Wikipedia.apk in Finder installs it, and Wikipedia opens in its own window"></p>
 
-Open an `.apk` file, or an app bundle such as `.xapk`, `.apkm` or `.apks`, and a few seconds later the app is in your Applications folder. Games that download their data on first launch do so as on a phone. With Google Play added, apps come from the Play Store instead.
+Open an `.apk` file, or an app bundle such as `.xapk`, `.apkm` or `.apks`, and a few seconds later the app is in the Inquiline Apps folder in Applications. Games that download their data on first launch do so as on a phone. With Google Play added, apps come from the Play Store instead.
+
+## All your Android apps in the Dock
+
+<p align="center"><img src="docs/images/dock-stack.gif" width="560" alt="Clicking the Inquiline Apps stack in the Dock opens a grid of every Android app: games, Gmail, Instagram, YouTube and more"></p>
+
+Your Android apps live together in Applications › Inquiline Apps, the way your Mac keeps its Utilities, and Spotlight and Launchpad list them with the rest. If you like, choose **Show Android Apps in Dock** from Inquiline in the menu bar to keep them all in one stack in the Dock, which opens as a grid.
 
 ## Windows that fit
 
@@ -59,6 +65,11 @@ The gear in each window holds what Android's Settings would for that app:
 - **Ad Blocking** with four levels, from Off to Strong. It uses the same lists as uBlock Origin, AdGuard's list for ads in apps and games, and the list for your Mac's language, and they update on their own every day. It works in the app and in the web pages it shows, and counts what it blocked.
 - **Widgets** the app offers, to put on your desktop.
 - **Data:** how much space the app takes, its folder in Finder, and Clear Cache or Clear Data.
+- **Performance:** frames per second over the last half minute, and how much of the Mac's CPU and GPU and of Android's memory are in use. Clicking the frame rate in the toolbar opens it.
+
+<p align="center"><img src="docs/images/performance.gif" width="640" alt="Clicking the frame rate in a game's toolbar opens its settings at Performance: 60 FPS with a green graph, and CPU, GPU and memory bars that move as the game runs"></p>
+
+The settings stay open while you use the app, until you click the gear again.
 
 <p align="center"><img src="docs/images/sound.png" width="300" alt="The sound popover: a volume slider, Mute This App, an equalizer set to Custom with five bands, and Loudness"></p>
 
@@ -67,6 +78,18 @@ The speaker button holds Android's volume, a switch to mute just this app, so a 
 ## Games
 
 Games run on your Mac's GPU, with Vulkan 1.3 and OpenGL ES 3.2, at up to 60 frames a second, and macOS gives them Game Mode. Touch-only games can be played with the keyboard and mouse: put keys on buttons, a W A S D stick on the joystick, look around with the mouse, and play several taps with one key. Xbox, PlayStation and MFi controllers work in games that support them, and can also drive the on-screen controls of games that don't.
+
+## Your phone as a controller
+
+<p align="center"><img src="docs/images/phone-remote.png" width="720" alt="A game's window shows a QR code under its phone button; in front of it, a phone shows an Xbox-style controller with sticks, a d-pad, A B X Y, bumpers, triggers and a Gemini button"></p>
+
+The phone button in an app's window shows a QR code. Scan it with your phone's camera and the phone becomes an Xbox-style controller, a touchpad for the app's screen with all its fingers, and a ✨ Gemini button, for whichever app is in front. There's nothing to install on the phone: it's a web page from your Mac, which you can keep on your Home Screen. Your phone needs to be on the same Wi-Fi as your Mac, and its touches travel over WebRTC, so they stay smooth.
+
+## Screenshots and screen recordings
+
+<p align="center"><img src="docs/images/screen-capture.gif" width="640" alt="The camera button in a game's toolbar opens a menu; Take Screenshot flashes the game's screen as the picture is saved"></p>
+
+The camera button takes a screenshot of the app's screen alone, without its window, at Android's full resolution, or records it with its sound. They're saved where your Mac saves its own screenshots.
 
 ## Your data stays on your Mac
 
