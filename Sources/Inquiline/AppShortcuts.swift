@@ -206,7 +206,8 @@ enum AppShortcuts {
                 found[package] = bundle
             }
         }
-        for directory in Set([folder, ownFolder]) {
+        // Where apps were before too, so one whose bookmark is lost moves rather than being made twice.
+        for directory in Set([folder, ownFolder, oldFolder]) {
             for name in (try? FileManager.default.contentsOfDirectory(atPath: directory.path)) ?? [] where name.hasSuffix(".app") {
                 let bundle = directory.appendingPathComponent(name)
                 if let package = package(of: bundle), found[package] == nil { found[package] = bundle }
