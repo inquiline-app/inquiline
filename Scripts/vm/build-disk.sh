@@ -248,6 +248,9 @@ W=810 H=1440 D=320
 for arg in $(cat /proc/cmdline); do
   case $arg in inquiline.screen=*x*x*) S=${arg#*=}; W=${S%%x*}; S=${S#*x}; H=${S%%x*}; D=${S#*x} ;; esac
 done
+# Video as sharp as the screen: 4K on Macs whose screen is 4K, up to 1440p on the others.
+CODECS=$A/media_codecs.xml
+[ "$H" -lt 3840 ] && CODECS=$A/media_codecs-2k.xml
 EXTRA=""
 [ -d $G/product ] && EXTRA="-v $G/product:/system/product -v $G/system_ext:/system/system_ext"
 # podman's default of 2048 tasks counts threads, and a large game with Android's own
@@ -261,7 +264,7 @@ exec podman run --rm $EXTRA --name redroid --ip 10.88.0.2 --privileged --pull=ne
   -v $A/android.hardware.gnss-service.inquiline:/vendor/bin/hw/android.hardware.gnss-service.inquiline:ro \
   -v $A/gnss.xml:/vendor/etc/vintf/manifest/gnss-inquiline.xml:ro \
   -v $A/inquiline-c2:/system/bin/inquiline-c2:ro -v $A/inquiline-c2.xml:/vendor/etc/vintf/manifest/inquiline-c2.xml:ro \
-  -v $A/media_codecs.xml:/vendor/etc/media_codecs.xml:ro \
+  -v $CODECS:/vendor/etc/media_codecs.xml:ro \
   -v $A/gps.xml:/vendor/etc/permissions/android.hardware.location.gps.xml:ro \
   -v $A/vulkan-version.xml:/vendor/etc/permissions/android.hardware.vulkan.version-1_1.xml:ro \
   -v $A/no-aep.xml:/vendor/etc/permissions/android.hardware.opengles.aep.xml:ro \
@@ -395,6 +398,9 @@ cat > "$ROOT/var/inquiline/media_codecs.xml" <<'EOF'
     </Decoders>
 </MediaCodecs>
 EOF
+# Up to 1440p, for Macs with less than 16 GB of memory (inquiline-android picks it).
+sed -e 's/max="4096x4096"/max="2560x2560"/' -e '/3840x2160/d' "$ROOT/var/inquiline/media_codecs.xml" \
+    > "$ROOT/var/inquiline/media_codecs-2k.xml"
 cat > "$ROOT/var/inquiline/gnss.xml" <<'EOF'
 <manifest version="1.0" type="device">
     <hal format="aidl">
