@@ -711,9 +711,9 @@ final class AndroidRuntime {
     /// A disk from an earlier release gets the new system files while the user's apps and
     /// data stay, as a phone's system update does. Android isn't started for this: Linux
     /// alone unpacks disk-update.tar onto the disk and stops, in about a second. A new disk
-    /// gets it too, so the disk image needn't be built again for each revision.
+    /// gets it only when the bundled disk is older than this revision.
     private func updateDiskIfNeeded(firstLaunch: Bool, status: (String) -> Void) throws {
-        let revision = firstLaunch ? 0
+        let revision = firstLaunch ? VMInstaller.bundledRevision
             : (try? String(contentsOf: revisionFile, encoding: .utf8)).flatMap { Int($0) } ?? 1
         if revision < Self.diskRevision {
             guard let qemu = Bundle.main.url(forAuxiliaryExecutable: AndroidRuntime.engineName),
@@ -1333,8 +1333,20 @@ final class AndroidRuntime {
         _ = try shell("su 0 rm -rf \(target).old")
     }
 
+    /// Only Android starts again, as Waydroid restarts its container: Linux and the engine keep
+    /// running. Android's reboot ends its container, and the VM's init starts a new one
+    /// (inquiline-android), which mounts the Google files when they exist.
     private func restart(status: @escaping (String) -> Void) throws {
-        shutdown()
+        status("Restarting Android…")
+        AppLog.write("Restarting Android")
+        AndroidFiles.eject()
+        // The container's /dev is its own, so the mark goes with the old Android.
+        _ = try? shell("su 0 sh -c 'touch /dev/.inquiline-old; sync; (sleep 1; reboot) >/dev/null 2>&1 &'")
+        let deadline = Date().addingTimeInterval(60)
+        while (try? AdbClient.shell("ls /dev/.inquiline-old", timeout: 3))?.contains("inquiline-old") != false {
+            if Date() > deadline { throw RuntimeError("Android did not restart.") }
+            Thread.sleep(forTimeInterval: 0.5)
+        }
         try ensureReady(status: status)
     }
 

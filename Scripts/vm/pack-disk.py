@@ -1,11 +1,13 @@
 """Packs a sparse disk for VMInstaller: its data, cut into separately compressed chunks
 so they unpack on every core, and an index saying where each chunk's bytes belong.
-Usage: pack-disk.py disk index payload [chunk_mib]"""
+Usage: pack-disk.py disk index payload [chunk_mib] [revision]
+The revision is the disk-update revision the disk already has (refresh-disk.sh)."""
 import json, lzma, os, sys
 from concurrent.futures import ThreadPoolExecutor
 
 source, index, payload = sys.argv[1:4]
 CHUNK = int(sys.argv[4] if len(sys.argv) > 4 else 32) << 20
+REVISION = int(sys.argv[5]) if len(sys.argv) > 5 else 0
 BLOCK = 1 << 20
 
 fd = os.open(source, os.O_RDONLY)
@@ -57,6 +59,6 @@ with open(payload, "wb") as out, ThreadPoolExecutor(os.cpu_count()) as pool:
         out.write(packed)
         entries.append({"packed": len(packed), "length": length, "extents": extents})
 with open(index, "w") as out:
-    json.dump({"size": size, "chunks": entries}, out)
+    json.dump({"size": size, "revision": REVISION, "chunks": entries}, out)
 print("chunks", len(entries), "data_MB", sum(e["length"] for e in entries) // 1000000,
       "payload_MB", sum(e["packed"] for e in entries) // 1000000)

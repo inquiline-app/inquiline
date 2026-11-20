@@ -8,7 +8,18 @@ enum VMInstaller {
     /// Written by Scripts/vm/pack-disk.py.
     private struct Index: Decodable {
         let size: Int
+        /// The disk-update revision the packed disk already has (Scripts/vm/refresh-disk.sh).
+        let revision: Int?
         let chunks: [Chunk]
+    }
+
+    /// The disk-update revision of the disk in the app bundle: a new install needs only
+    /// what came after it.
+    static var bundledRevision: Int {
+        guard let url = Bundle.main.url(forResource: "android-disk", withExtension: "json"),
+              let index = try? JSONDecoder().decode(Index.self, from: Data(contentsOf: url))
+        else { return 0 }
+        return index.revision ?? 0
     }
 
     private struct Chunk: Decodable {
