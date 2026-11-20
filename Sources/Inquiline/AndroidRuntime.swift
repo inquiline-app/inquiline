@@ -688,6 +688,8 @@ final class AndroidRuntime {
     /// 23: a GPS (Vendor/gnss) that reports where the Mac is.
     /// 24: a broadcast too large for its app is dropped alone, not retried by killing the app.
     private static let diskRevision = 25
+
+    private var builtInScreen: ScrcpySession.Screen { ScrcpySession.Resolution.forThisMac.screen(landscape: false) }
     /// The VM's memory map fits the 36-bit (64 GB) address space Apple's M1 and M2 give a VM:
     /// above the RAM, the window for 64-bit device memory, such as the GPU's 2 GB, is 16 GB,
     /// not QEMU's 512 GB, which only M3 and later have room for (see the QEMU patch 0102).
@@ -760,7 +762,10 @@ final class AndroidRuntime {
             "-M", Self.machine, "-accel", "hvf", "-cpu", "host",
             "-smp", "\(cores)", "-m", "\(memory)",
             "-kernel", kernel.path,
-            "-append", "root=/dev/vda rw selinux=0 quiet page_reporting.page_reporting_order=2 sysctl.vm.compaction_proactiveness=100",
+            // Android's built-in screen is as sharp as its apps' windows (ScrcpySession), as a
+            // phone's is its panel: apps size video by it, YouTube's quality list among them.
+            "-append", "root=/dev/vda rw selinux=0 quiet page_reporting.page_reporting_order=2 sysctl.vm.compaction_proactiveness=100"
+                + " inquiline.screen=\(builtInScreen.width)x\(builtInScreen.height)x\(builtInScreen.density)",
             "-drive", "if=virtio,format=raw,file=\(disk.path),cache=writeback,discard=unmap",
             // Android's Vulkan goes to the Mac's GPU through gfxstream and MoltenVK, and its
             // GLES is ANGLE on that Vulkan, so the Mac needs no GLES of its own. Android 15

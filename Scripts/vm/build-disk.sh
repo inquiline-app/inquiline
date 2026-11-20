@@ -242,6 +242,12 @@ mkdir -p $A/data $A/files
 podman rm -f redroid >/dev/null 2>&1
 # Google Play, if the user added it: Android's product and system_ext folders with Google's files merged in.
 G=$A/data/inquiline-gapps
+# The built-in screen's size and density, from Inquiline (inquiline.screen=WxHxDPI); a phone's
+# own until it says.
+W=810 H=1440 D=320
+for arg in $(cat /proc/cmdline); do
+  case $arg in inquiline.screen=*x*x*) S=${arg#*=}; W=${S%%x*}; S=${S#*x}; H=${S%%x*}; D=${S#*x} ;; esac
+done
 EXTRA=""
 [ -d $G/product ] && EXTRA="-v $G/product:/system/product -v $G/system_ext:/system/system_ext"
 # podman's default of 2048 tasks counts threads, and a large game with Android's own
@@ -265,7 +271,7 @@ exec podman run --rm $EXTRA --name redroid --ip 10.88.0.2 --privileged --pull=ne
   -v $A/inquiline.rc:/vendor/etc/init/inquiline.rc:ro \
   -v $A/product-build.prop:/system/product/etc/build.prop:ro \
   docker.io/redroid/redroid:15.0.0_64only-latest androidboot.redroid_gpu_mode=host androidboot.use_memfd=1 \
-  androidboot.redroid_width=810 androidboot.redroid_height=1440 androidboot.redroid_dpi=320 androidboot.redroid_fps=60
+  androidboot.redroid_width=$W androidboot.redroid_height=$H androidboot.redroid_dpi=$D androidboot.redroid_fps=60
 EOF
 # Android's sleep service decides to sleep by writing "mem" to /sys/power/state, which redroid
 # binds to /data/.empty so Android can't suspend the VM. Made the service's own before it starts
@@ -321,6 +327,15 @@ cat > "$ROOT/var/inquiline/media_codecs.xml" <<'EOF'
             <Limit name="block-count" range="1-65536" />
             <Limit name="blocks-per-second" range="1-3932160" />
             <Limit name="bitrate" range="1-120000000" />
+            <Limit name="performance-point-3840x2160" value="60" />
+            <Limit name="performance-point-2560x1440" value="120" />
+            <Limit name="performance-point-1920x1080" value="240" />
+            <Limit name="performance-point-1280x720" value="480" />
+            <Limit name="measured-frame-rate-320x240" range="480-960" />
+            <Limit name="measured-frame-rate-720x480" range="480-960" />
+            <Limit name="measured-frame-rate-1280x720" range="300-480" />
+            <Limit name="measured-frame-rate-1920x1080" range="200-400" />
+            <Limit name="measured-frame-rate-3840x2160" range="60-100" />
             <Feature name="adaptive-playback" />
         </MediaCodec>
         <MediaCodec name="c2.inquiline.vp9.decoder" type="video/x-vnd.on2.vp9">
@@ -330,6 +345,15 @@ cat > "$ROOT/var/inquiline/media_codecs.xml" <<'EOF'
             <Limit name="block-count" range="1-65536" />
             <Limit name="blocks-per-second" range="1-3932160" />
             <Limit name="bitrate" range="1-120000000" />
+            <Limit name="performance-point-3840x2160" value="60" />
+            <Limit name="performance-point-2560x1440" value="120" />
+            <Limit name="performance-point-1920x1080" value="240" />
+            <Limit name="performance-point-1280x720" value="480" />
+            <Limit name="measured-frame-rate-320x240" range="480-960" />
+            <Limit name="measured-frame-rate-720x480" range="480-960" />
+            <Limit name="measured-frame-rate-1280x720" range="300-480" />
+            <Limit name="measured-frame-rate-1920x1080" range="200-400" />
+            <Limit name="measured-frame-rate-3840x2160" range="60-100" />
             <Feature name="adaptive-playback" />
         </MediaCodec>
         <MediaCodec name="c2.inquiline.av1.decoder" type="video/av01">
@@ -339,6 +363,15 @@ cat > "$ROOT/var/inquiline/media_codecs.xml" <<'EOF'
             <Limit name="block-count" range="1-65536" />
             <Limit name="blocks-per-second" range="1-3932160" />
             <Limit name="bitrate" range="1-120000000" />
+            <Limit name="performance-point-3840x2160" value="60" />
+            <Limit name="performance-point-2560x1440" value="120" />
+            <Limit name="performance-point-1920x1080" value="240" />
+            <Limit name="performance-point-1280x720" value="480" />
+            <Limit name="measured-frame-rate-320x240" range="480-960" />
+            <Limit name="measured-frame-rate-720x480" range="480-960" />
+            <Limit name="measured-frame-rate-1280x720" range="300-480" />
+            <Limit name="measured-frame-rate-1920x1080" range="200-400" />
+            <Limit name="measured-frame-rate-3840x2160" range="60-100" />
             <Feature name="adaptive-playback" />
         </MediaCodec>
     </Decoders>
