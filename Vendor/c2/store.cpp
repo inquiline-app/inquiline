@@ -610,11 +610,12 @@ private:
             }
             GpuBuffer gpu(block->handle());
             uint32_t resource = gpu.resource();
-            bool written = resource && gpu.settle() &&
+            // Without a Surface the app reads the picture from memory: its buffers are made as it
+            // asks, so the Mac waits for them, and the picture is brought into memory.
+            const bool inMemory = pool->getAllocatorId() == C2PlatformAllocatorStore::GRALLOC;
+            bool written = resource && (!inMemory || gpu.settle()) &&
                            mMac->write(picture.index, resource, block->width(), block->height());
-            // Without a Surface the app reads the picture from memory: bring it there.
-            if (written && pool->getAllocatorId() == C2PlatformAllocatorStore::GRALLOC &&
-                !gpu.readBack(block->width(), block->height())) {
+            if (written && inMemory && !gpu.readBack(block->width(), block->height())) {
                 PLOG(ERROR) << "Inquiline's decoder couldn't bring a picture into memory";
                 written = false;
             }
