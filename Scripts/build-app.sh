@@ -38,6 +38,8 @@ fi
 cp Vendor/scrcpy-server "$APP/Contents/Resources/scrcpy-server"
 cp Vendor/libinquiline-frames.so "$APP/Contents/Resources/libinquiline-frames.so"
 cp Vendor/inquiline-notifications.apk "$APP/Contents/Resources/inquiline-notifications.apk"
+# KDE Connect's Android app, unmodified from F-Droid (GPL; see THIRD-PARTY-NOTICES.md): notifications.
+cp Vendor/kdeconnect.apk "$APP/Contents/Resources/kdeconnect.apk"
 cp "$CACHE/LICENSE" "$APP/Contents/Resources/scrcpy-LICENSE.txt"
 cp LICENSE "$APP/Contents/Resources/LICENSE.txt"
 cp Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"

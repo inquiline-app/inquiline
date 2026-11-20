@@ -3,12 +3,14 @@ import UserNotifications
 
 /// Android's notifications in the Mac's Notification Center, as a phone shows them.
 ///
-/// A small app inside Android (Scripts/vm/notifications-agent) reads them with Android's
-/// notification access and hands them over adb, which only Inquiline holds. What Android would
-/// alert with, from apps the user let post notifications, shows on the Mac; clicking one opens
-/// its app where the notification points, as tapping it on a phone does, and a chat's can be
-/// answered from the Mac. Android keeps them coming while it rests (EngineControl).
-/// Nothing of what they say is logged or kept.
+/// KDE Connect inside Android reads them and sends them to Inquiline (KDEConnect). They show
+/// as the Mac's own notifications, by app; clicking one opens its app where the notification
+/// points, as tapping it on a phone does; a chat's can be answered and an app's buttons pressed
+/// from the Mac; and closing one closes it in Android too, and the other way round. Android keeps
+/// them coming while it rests (EngineControl). Nothing of what they say is logged or kept.
+///
+/// The small app Inquiline keeps in Android (Scripts/vm/notifications-agent) opens a
+/// notification's screen (Open) and carries the GPS and the desktop widgets, over adb.
 final class NotificationBridge: NSObject, UNUserNotificationCenterDelegate {
     static let shared = NotificationBridge()
 
@@ -29,10 +31,11 @@ final class NotificationBridge: NSObject, UNUserNotificationCenterDelegate {
     private var connecting = false
     /// What each shown notification said, so an update that changes nothing doesn't alert again.
     private var shown: [String: String] = [:]
-    /// Each shown notification's group, which Android may gather it into.
-    private var groupOf: [String: String] = [:]
 
     private static let replyCategory = "reply"
+    private static let plainCategory = "plain"
+    /// The categories registered so far: one per set of an app's buttons.
+    private var categories: [String: UNNotificationCategory] = [:]
     /// The last answer written on the Mac, by app: the chat then adds it to its notification,
     /// which is nothing new for the user.
     private var sentReplies: [String: String] = [:]
@@ -43,10 +46,29 @@ final class NotificationBridge: NSObject, UNUserNotificationCenterDelegate {
         center.delegate = self
         LocationBridge.shared.send = { [weak self] in self?.send($0) }
         DesktopWidgets.shared.send = { [weak self] in self?.send($0) }
-        let reply = UNTextInputNotificationAction(identifier: Self.replyCategory, title: "Reply", options: [],
-                                                  textInputButtonTitle: "Send", textInputPlaceholder: "")
-        center.setNotificationCategories([UNNotificationCategory(identifier: Self.replyCategory, actions: [reply],
-                                                                 intentIdentifiers: [])])
+        _ = category(reply: false, actions: [])
+        _ = category(reply: true, actions: [])
+        KDEConnect.shared.received = { [weak self] type, body in
+            DispatchQueue.main.async { self?.received(type, body) }
+        }
+    }
+
+    /// The category for a notification with a reply box and these buttons, registered once.
+    /// Closing any tells Android, which closes it there too.
+    private func category(reply: Bool, actions: [String]) -> String {
+        let identifier = ([reply ? Self.replyCategory : Self.plainCategory] + actions).joined(separator: "\u{1f}")
+        if categories[identifier] == nil {
+            var buttons: [UNNotificationAction] = []
+            if reply {
+                buttons.append(UNTextInputNotificationAction(identifier: Self.replyCategory, title: "Reply", options: [],
+                                                             textInputButtonTitle: "Send", textInputPlaceholder: ""))
+            }
+            buttons += actions.map { UNNotificationAction(identifier: "action:" + $0, title: $0, options: []) }
+            categories[identifier] = UNNotificationCategory(identifier: identifier, actions: buttons, intentIdentifiers: [],
+                                                             options: [.customDismissAction])
+            UNUserNotificationCenter.current().setNotificationCategories(Set(categories.values))
+        }
+        return identifier
     }
 
     /// Called whenever Android is ready; connects once, and again after Android restarts.
@@ -55,6 +77,7 @@ final class NotificationBridge: NSObject, UNUserNotificationCenterDelegate {
             guard connection < 0, !connecting else { return }
             connecting = true
             defer { connecting = false }
+            KDEConnect.shared.start()
             do {
                 try installAgentIfNeeded()
                 connection = try connect()
@@ -154,57 +177,56 @@ final class NotificationBridge: NSObject, UNUserNotificationCenterDelegate {
             LocationBridge.shared.set(wanted: location == "start")
             return
         }
+    }
+
+    /// A packet from Android's KDE Connect.
+    private func received(_ type: String, _ body: [String: Any]) {
+        guard type == "kdeconnect.notification", let key = body["id"] as? String else { return }
         let center = UNUserNotificationCenter.current()
-        if let key = message["removed"] as? String {
-            // Gathered into its group, as Gmail does a second after posting: the group shows
-            // on, on a phone, so the Mac's stays. When the group goes, all of it goes.
-            if message["groupRemains"] as? Bool == true { return }
-            let group = message["group"] as? String
-            let keys = [key] + groupOf.filter { $0.value == group && group != nil }.map(\.key)
-            if keys.contains(where: { shown[$0] != nil }) { AppLog.write("Notification removed in Android, so on the Mac too") }
-            for gone in keys {
-                shown[gone] = nil
-                groupOf[gone] = nil
-            }
-            center.removeDeliveredNotifications(withIdentifiers: keys)
+        if body["isCancel"] as? Bool == true {
+            if shown[key] != nil { AppLog.write("Notification removed in Android, so on the Mac too") }
+            shown[key] = nil
+            center.removeDeliveredNotifications(withIdentifiers: [key])
             return
         }
-        guard let key = message["posted"] as? String, let package = message["package"] as? String else { return }
-        let title = message["title"] as? String ?? ""
-        let text = message["text"] as? String ?? ""
+        // Android's key: user|package|id|tag|uid.
+        let parts = key.split(separator: "|", omittingEmptySubsequences: false)
+        let package = parts.count > 1 ? String(parts[1]) : (body["appName"] as? String ?? "")
+        let title = body["title"] as? String ?? ""
+        let text = body["text"] as? String ?? ""
         // The time the app gives the message too: the same words sent again are a new message.
-        let said = title + "\n" + text + "\n" + String(describing: message["when"] ?? "")
-        // An app that updates a notification in place, as a chat adding a message, alerts
-        // again unless it asked to alert once.
-        if let before = shown[key], before == said || message["silent"] as? Bool == true {
-            AppLog.write("Notification from \(package): an update, not shown again")
+        let said = title + "\n" + text + "\n" + String(describing: body["time"] ?? "")
+        // Already there when Android connected, or an update that changes nothing or asked to
+        // alert once: kept, not alerted again.
+        if shown[key] == said || body["silent"] as? Bool == true {
+            if shown[key] != said { AppLog.write("Notification from \(package): an update, not shown again") }
+            shown[key] = said
             return
         }
         // A chat adding the user's own reply to the conversation, as after answering from the Mac:
-        // nothing new for the user, as on a phone. Android marks such messages as the user's, and
-        // apps that don't still show the very words just written.
-        if message["fromMe"] as? Bool == true
-            || sentReplies[package].map({ !$0.isEmpty && text.hasSuffix($0) }) == true {
+        // nothing new for the user, as on a phone.
+        if sentReplies[package].map({ !$0.isEmpty && text.hasSuffix($0) }) == true {
             sentReplies[package] = nil
             shown[key] = said
             AppLog.write("Notification from \(package): the user's own message, not shown")
             return
         }
         shown[key] = said
-        if let group = message["group"] as? String { groupOf[key] = group }
 
+        let replyId = body["requestReplyId"] as? String
+        let actions = body["actions"] as? [String] ?? []
         let info = appInfo?(package)
         let content = UNMutableNotificationContent()
-        content.title = title.isEmpty ? (info?.label ?? "") : title
-        if !title.isEmpty, let label = info?.label { content.subtitle = label }
+        content.title = title.isEmpty ? (info?.label ?? body["appName"] as? String ?? "") : title
+        if !title.isEmpty { content.subtitle = info?.label ?? body["appName"] as? String ?? "" }
         content.body = text
         content.sound = .default
         content.threadIdentifier = package
-        content.userInfo = ["key": key, "package": package, "group": message["group"] as? String ?? ""]
-        // A chat's notification can be answered, as from a phone's notification shade.
-        if message["replies"] as? Bool == true { content.categoryIdentifier = Self.replyCategory }
+        content.userInfo = ["key": key, "package": package, "replyId": replyId ?? "",
+                            "clearable": body["isClearable"] as? Bool ?? true]
+        content.categoryIdentifier = category(reply: replyId != nil, actions: actions)
         // The app's icon beside the words; not on a chat's, where it would fill the answer box.
-        if message["replies"] as? Bool != true, let icon = info?.icon, let file = iconFile(package: package, icon: icon),
+        if replyId == nil, let icon = info?.icon, let file = iconFile(package: package, icon: icon),
            let attachment = try? UNNotificationAttachment(identifier: "icon", url: file) {
             content.attachments = [attachment]
         }
@@ -331,12 +353,22 @@ final class NotificationBridge: NSObject, UNUserNotificationCenterDelegate {
             completionHandler()
             return
         }
-        if let reply = response as? UNTextInputNotificationResponse, !reply.userText.isEmpty {
+        if let reply = response as? UNTextInputNotificationResponse, !reply.userText.isEmpty,
+           let replyId = info["replyId"] as? String, !replyId.isEmpty {
             DispatchQueue.main.async { self.sentReplies[package] = reply.userText }
-            send(["reply": key, "text": reply.userText])
+            KDEConnect.shared.send("kdeconnect.notification.reply", ["requestReplyId": replyId, "message": reply.userText])
+        } else if response.actionIdentifier.hasPrefix("action:") {
+            KDEConnect.shared.send("kdeconnect.notification.action",
+                                   ["key": key, "action": String(response.actionIdentifier.dropFirst("action:".count))])
+        } else if response.actionIdentifier == UNNotificationDismissActionIdentifier {
+            // Closed on the Mac: closed in Android too, as clearing it there.
+            DispatchQueue.main.async { self.shown[key] = nil }
+            if info["clearable"] as? Bool != false {
+                KDEConnect.shared.send("kdeconnect.notification.request", ["cancel": key])
+            }
         } else if response.actionIdentifier == UNNotificationDefaultActionIdentifier {
             AppLog.write("Opening \(package) from its notification")
-            open(key: key, group: info["group"] as? String ?? "", package: package)
+            open(key: key, group: "", package: package)
         }
         completionHandler()
     }

@@ -27,6 +27,7 @@ For the parts licensed under the GPL or LGPL, the complete corresponding source 
 | [libslirp](https://gitlab.freedesktop.org/slirp/libslirp) | 4.9.7 | BSD-3-Clause | <https://gitlab.freedesktop.org/slirp/libslirp> | none |
 | [Sparkle](https://sparkle-project.org) | 2.10.1 | MIT, with parts under other permissive licenses (see its LICENSE) | <https://github.com/sparkle-project/Sparkle> (tag 2.10.1) | none; updates |
 | [scrcpy](https://github.com/Genymobile/scrcpy) server | 5.0.1 | Apache-2.0 | <https://github.com/Genymobile/scrcpy> (tag v5.0.1) | `Vendor/scrcpy-server.patch`; runs inside Android |
+| [KDE Connect](https://kdeconnect.kde.org) for Android | 1.37.3 | GPL-2.0-only or GPL-3.0-only | <https://invent.kde.org/network/kdeconnect-android> (tag v1.37.3); the app as F-Droid builds it, <https://f-droid.org/packages/org.kde.kdeconnect_tp/> | none; a separate app installed inside Android, which brings its notifications to the Mac |
 
 GLib, with what it takes in, is a separate dynamic library in `Inquiline.app/Contents/Frameworks`, which you can replace with your own build. `Scripts/vm/build-qemu.sh` builds all of these from the sources above.
 

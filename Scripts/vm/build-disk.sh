@@ -160,6 +160,7 @@ cat > "$ROOT/etc/inittab" <<'EOF'
 ::respawn:/usr/local/bin/inquiline-android
 ::respawn:/bin/busybox mdev -df
 ::respawn:/usr/bin/socat TCP-LISTEN:5555,fork,reuseaddr TCP:10.88.0.2:5555
+::respawn:/usr/bin/socat TCP-LISTEN:1716,fork,reuseaddr TCP:10.88.0.2:1716
 ::respawn:/usr/bin/socat TCP-LISTEN:5000,bind=0.0.0.0,reuseaddr SYSTEM:/usr/local/bin/inquiline-poweroff
 ::respawn:/usr/sbin/smbd --foreground --no-process-group
 ::shutdown:/usr/local/bin/inquiline-stop

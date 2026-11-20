@@ -22,6 +22,10 @@ final class AndroidRuntime {
     /// Mac user reaches: a port on 127.0.0.1 any app could connect to, sandboxed ones and
     /// other users' too, and adb on it is root in Android, Google sign-in included.
     var adbSocket: URL { vmHome.appendingPathComponent("adb.sock") }
+    /// Android's KDE Connect, which brings its notifications to the Mac (KDEConnect).
+    var kdeConnectSocket: URL { vmHome.appendingPathComponent("kdeconnect.sock") }
+    /// The Mac's certificate as Android's KDE Connect knows it.
+    var kdeConnectCertificate: URL { vmHome.appendingPathComponent("kdeconnect.cer") }
     /// Connecting to it makes the VM shut down cleanly.
     private var powerOffSocket: URL { vmHome.appendingPathComponent("power.sock") }
     /// Samba in the VM, for AndroidFiles.
@@ -692,7 +696,8 @@ final class AndroidRuntime {
     /// 28: video up to 4K on every Mac again.
     /// 29: Android's video decoders as in revision 25's first release to testers.
     /// 30: they work as a phone's hardware decoders do: inputs never wait for pictures.
-    private static let diskRevision = 30
+    /// 31: Android's KDE Connect is reached through the VM (its TCP port 1716), for notifications.
+    private static let diskRevision = 31
 
     private var builtInScreen: ScrcpySession.Screen { ScrcpySession.Resolution.forThisMac.screen(landscape: false) }
     /// The VM's memory map fits the 36-bit (64 GB) address space Apple's M1 and M2 give a VM:
@@ -783,7 +788,7 @@ final class AndroidRuntime {
             // which gives it back to the Mac through memory-release.c.
             "-device", "virtio-balloon-pci,free-page-reporting=on",
             "-device", "virtio-net-pci,netdev=n,romfile=",
-            "-netdev", "user,id=n,hostfwd=unix:\(adbSocket.path)-:5555,hostfwd=unix:\(powerOffSocket.path)-:5000,hostfwd=tcp:127.0.0.1:\(Self.filesPort)-:445",
+            "-netdev", "user,id=n,hostfwd=unix:\(adbSocket.path)-:5555,hostfwd=unix:\(kdeConnectSocket.path)-:1716,hostfwd=unix:\(powerOffSocket.path)-:5000,hostfwd=tcp:127.0.0.1:\(Self.filesPort)-:445",
             "-display", "none", "-serial", "none", "-monitor", "none",
             "-qmp", "unix:\(EngineControl.socket.path),server=on,wait=off",
             // A second one, which Inquiline keeps open for the engine's events.
@@ -1236,7 +1241,8 @@ final class AndroidRuntime {
                 let text = line.trimmingCharacters(in: .whitespaces)
                 return text.hasPrefix("package:") ? String(text.dropFirst("package:".count)) : nil
             }
-            .filter { $0 != NotificationBridge.agent }
+            // Inquiline's own helpers inside Android, which the user never sees.
+            .filter { $0 != NotificationBridge.agent && $0 != KDEConnect.package }
     }
 
     /// The launcher already renders each app's icon, adaptive ones included, and
