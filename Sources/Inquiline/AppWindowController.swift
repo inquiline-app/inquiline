@@ -529,11 +529,13 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate, 
     private func addToolbar() {
         fpsLabel.font = .monospacedDigitSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
         fpsLabel.textColor = .secondaryLabelColor
-        fpsLabel.toolTip = "Frames per second"
         // As wide as a toolbar button, so it sits as far from the window's edge as one.
         fpsLabel.alignment = .center
         fpsLabel.translatesAutoresizingMaskIntoConstraints = false
         fpsLabel.widthAnchor.constraint(equalToConstant: 44).isActive = true
+        // A click shows how the app runs: its frame rate over time, and the CPU, GPU and memory.
+        fpsLabel.addGestureRecognizer(NSClickGestureRecognizer(target: self, action: #selector(showMonitor(_:))))
+        fpsLabel.toolTip = "Frames per second. Click for more."
         let counter = frameCount
         let engine = EngineLoad()
         var still = 0, moving = 0, busyFor = 0, idleFor = 0
@@ -560,7 +562,9 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate, 
             // must last, so a lone frame or a short burst of work doesn't make the note flicker.
             still = fps > 0 ? 0 : still + 1
             moving = fps > 0 ? moving + 1 : 0
-            let busy = engine.cores() >= 3
+            let cores = engine.cores()
+            let busy = cores >= 3
+            self.updateMonitor(fps: fps, cores: cores)
             busyFor = busy ? busyFor + 1 : 0
             idleFor = busy ? 0 : idleFor + 1
             if self.loading {
@@ -718,6 +722,48 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate, 
             : "Install the Google and Gemini apps from Google Play, then click the Assistant button again."
         alert.beginSheetModal(for: window)
     }
+
+    // MARK: - Performance
+
+    private var fpsHistory: [Int] = []
+    private weak var monitor: PerformanceMonitor?
+    private var androidMemory: (used: Double, total: Double)?
+    private var askingMemory = false
+
+    @objc private func showMonitor(_ sender: Any?) {
+        let popover = NSPopover()
+        popover.behavior = .transient
+        let monitor = PerformanceMonitor()
+        popover.contentViewController = monitor
+        self.monitor = monitor
+        popover.show(relativeTo: fpsLabel.bounds, of: fpsLabel, preferredEdge: .minY)
+        updateMonitor(fps: nil, cores: 0)
+    }
+
+    /// Each second; the monitor shows it while it's open. Android's memory is asked of it then
+    /// only, every other second, off the main queue.
+    private func updateMonitor(fps: Int?, cores: Double) {
+        if let fps {
+            fpsHistory.append(fps)
+            if fpsHistory.count > 30 { fpsHistory.removeFirst(fpsHistory.count - 30) }
+        }
+        guard let monitor else { return }
+        if !askingMemory, fps == nil || fpsHistory.count % 2 == 0 {
+            askingMemory = true
+            DispatchQueue.global(qos: .utility).async { [weak self] in
+                let memory = PerformanceMonitor.androidMemory()
+                DispatchQueue.main.async {
+                    self?.androidMemory = memory
+                    self?.askingMemory = false
+                }
+            }
+        }
+        monitor.update(history: fpsHistory, cores: fps == nil ? lastCores : cores,
+                       gpu: PerformanceMonitor.gpuUtilization(), memory: androidMemory)
+        if fps != nil { lastCores = cores }
+    }
+
+    private var lastCores = 0.0
 
     // MARK: - Screenshots and recordings
 
