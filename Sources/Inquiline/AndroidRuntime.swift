@@ -691,7 +691,8 @@ final class AndroidRuntime {
     /// 27: video up to 1080p on Macs whose chip doesn't decode AV1 (M1, M2).
     /// 28: video up to 4K on every Mac again.
     /// 29: Android's video decoders as in revision 25's first release to testers.
-    private static let diskRevision = 29
+    /// 30: they work as a phone's hardware decoders do: inputs never wait for pictures.
+    private static let diskRevision = 30
 
     private var builtInScreen: ScrcpySession.Screen { ScrcpySession.Resolution.forThisMac.screen(landscape: false) }
     /// The VM's memory map fits the 36-bit (64 GB) address space Apple's M1 and M2 give a VM:

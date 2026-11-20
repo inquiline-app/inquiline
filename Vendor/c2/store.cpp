@@ -23,7 +23,13 @@
 #include <unistd.h>
 
 #include <fstream>
+#include <condition_variable>
+#include <deque>
+#include <functional>
 #include <mutex>
+#include <optional>
+#include <set>
+#include <thread>
 
 namespace android {
 
@@ -343,21 +349,27 @@ private:
 };
 
 
-/// Talks to Inquiline on the Mac, which decodes the video with VideoToolbox and writes each
-/// picture straight into the GPU buffer of the picture Android gave for it. Little-endian.
-///   hello  "IQC1", 32-byte token, u8 codec (1 H.264, 2 VP9, 3 AV1, 4 HEVC)
+/// Talks to Inquiline's engine on the Mac, which decodes the video with the Mac's media engine
+/// and copies each picture on the GPU straight into the buffer Android gave for it. Requests go
+/// out without waiting, as to a phone's hardware decoder; events come back on their own thread.
+/// Little-endian.
+///   hello  "IQC1", 32-byte token, u8 codec (1 H.264, 2 VP9, 3 AV1, 4 HEVC); answered with a status byte
 ///   'D' u64 index, u64 timestamp, u32 flags (1 codec config, 2 end of stream), u32 size, bytes
-///   'E' drain: every picture still held
-///   'F' flush: drop them
-///       each answered with u32 count, then per picture u64 index, u32 width, u32 height
-///       (width 0: the input made no picture)
-///   'P' u64 index, u32 resource, u32 width, u32 height: write that picture into the resource
-///       (YV12, as Android lays it out), answered with a status byte, 0 on success
+///   'E' drain, answered with 'X' once every picture held back is told
+///   'F' flush, answered with 'L'
+///   'P' u64 index, u32 resource, u32 width, u32 height: copy that picture into the resource,
+///       answered with 'S' and a status byte, 0 on success
+///   event 'R' u64 index, u32 width, u32 height: a picture to show, in the order pictures are
+///       shown (width 0: the input made no picture)
 class Mac {
 public:
-    struct Picture { uint64_t index; uint32_t width, height; };
+    struct Event {
+        enum Kind { Picture, Drained } kind;
+        uint64_t index = 0;
+        uint32_t width = 0, height = 0;
+    };
 
-    ~Mac() { if (mSocket >= 0) close(mSocket); }
+    ~Mac() { close(); }
 
     bool connect(uint8_t codec) {
         unsigned port = 0;
@@ -376,42 +388,110 @@ public:
         for (int i = 0; i < 32; i++) hello[4 + i] = std::stoi(token.substr(2 * i, 2), nullptr, 16);
         hello[36] = codec;
         uint8_t status = 1;
-        return send(hello, sizeof(hello)) && receive(&status, 1) && status == 0;
+        return sendAll(hello, sizeof(hello)) && receive(&status, 1) && status == 0;
     }
 
-    bool decode(uint64_t index, uint64_t timestamp, uint32_t flags, const uint8_t* data, uint32_t size,
-                std::vector<Picture>* pictures) {
+    /// Starts reading events; pictures and drains go to |onEvent|, on the reading thread.
+    void start(std::function<void(const Event&)> onEvent) {
+        mOnEvent = std::move(onEvent);
+        mReader = std::thread([this] { read(); });
+    }
+
+    void close() {
+        if (mSocket >= 0) shutdown(mSocket, SHUT_RDWR);
+        if (mReader.joinable()) mReader.join();
+        if (mSocket >= 0) ::close(mSocket);
+        mSocket = -1;
+    }
+
+    bool decode(uint64_t index, uint64_t timestamp, uint32_t flags, const uint8_t* data, uint32_t size) {
         uint8_t head[25] = {'D'};
         memcpy(head + 1, &index, 8);
         memcpy(head + 9, &timestamp, 8);
         memcpy(head + 17, &flags, 4);
         memcpy(head + 21, &size, 4);
-        return send(head, sizeof(head)) && (size == 0 || send(data, size)) && receivePictures(pictures);
+        std::lock_guard<std::mutex> lock(mSendLock);
+        return sendAll(head, sizeof(head)) && (size == 0 || sendAll(data, size));
     }
 
-    bool drain(std::vector<Picture>* pictures) {
+    bool drain() {
         uint8_t request = 'E';
-        return send(&request, 1) && receivePictures(pictures);
+        std::lock_guard<std::mutex> lock(mSendLock);
+        return sendAll(&request, 1);
     }
 
+    /// Drops every picture not yet shown; pictures told before it returns are of the old stream.
     bool flush() {
-        uint8_t request = 'F';
-        std::vector<Picture> dropped;
-        return send(&request, 1) && receivePictures(&dropped);
+        std::unique_lock<std::mutex> lock(mLock);
+        const uint64_t flushes = mFlushes;
+        {
+            uint8_t request = 'F';
+            std::lock_guard<std::mutex> sending(mSendLock);
+            if (!sendAll(&request, 1)) return false;
+        }
+        mChanged.wait(lock, [&] { return mFlushes != flushes || mClosed; });
+        return !mClosed;
     }
 
+    /// Copies a picture into a buffer's resource; one at a time.
     bool write(uint64_t index, uint32_t resource, uint32_t width, uint32_t height) {
-        uint8_t request[21] = {'P'};
-        memcpy(request + 1, &index, 8);
-        memcpy(request + 9, &resource, 4);
-        memcpy(request + 13, &width, 4);
-        memcpy(request + 17, &height, 4);
-        uint8_t status = 1;
-        return send(request, sizeof(request)) && receive(&status, 1) && status == 0;
+        std::unique_lock<std::mutex> lock(mLock);
+        const uint64_t writes = mWrites;
+        {
+            uint8_t request[21] = {'P'};
+            memcpy(request + 1, &index, 8);
+            memcpy(request + 9, &resource, 4);
+            memcpy(request + 13, &width, 4);
+            memcpy(request + 17, &height, 4);
+            std::lock_guard<std::mutex> sending(mSendLock);
+            if (!sendAll(request, sizeof(request))) return false;
+        }
+        mChanged.wait(lock, [&] { return mWrites != writes || mClosed; });
+        return !mClosed && mWriteStatus == 0;
+    }
+
+    /// How many flushes the engine has answered: pictures told before the last belong to a
+    /// stream that is gone.
+    uint64_t flushes() {
+        std::lock_guard<std::mutex> lock(mLock);
+        return mFlushes;
     }
 
 private:
-    bool send(const void* data, size_t size) {
+    void read() {
+        uint8_t kind;
+        while (receive(&kind, 1)) {
+            if (kind == 'R') {
+                uint8_t body[16];
+                if (!receive(body, sizeof(body))) break;
+                Event event{Event::Picture};
+                memcpy(&event.index, body, 8);
+                memcpy(&event.width, body + 8, 4);
+                memcpy(&event.height, body + 12, 4);
+                mOnEvent(event);
+            } else if (kind == 'X') {
+                mOnEvent(Event{Event::Drained});
+            } else if (kind == 'L') {
+                std::lock_guard<std::mutex> lock(mLock);
+                mFlushes++;
+                mChanged.notify_all();
+            } else if (kind == 'S') {
+                uint8_t status;
+                if (!receive(&status, 1)) break;
+                std::lock_guard<std::mutex> lock(mLock);
+                mWriteStatus = status;
+                mWrites++;
+                mChanged.notify_all();
+            } else {
+                break;
+            }
+        }
+        std::lock_guard<std::mutex> lock(mLock);
+        mClosed = true;
+        mChanged.notify_all();
+    }
+
+    bool sendAll(const void* data, size_t size) {
         auto* bytes = static_cast<const uint8_t*>(data);
         while (size > 0) {
             ssize_t sent = ::send(mSocket, bytes, size, MSG_NOSIGNAL);
@@ -433,44 +513,75 @@ private:
         return true;
     }
 
-    bool receivePictures(std::vector<Picture>* pictures) {
-        uint32_t count;
-        if (!receive(&count, 4) || count > 64) return false;
-        pictures->resize(count);
-        for (auto& picture : *pictures) {
-            uint8_t entry[16];
-            if (!receive(entry, sizeof(entry))) return false;
-            memcpy(&picture.index, entry, 8);
-            memcpy(&picture.width, entry + 8, 4);
-            memcpy(&picture.height, entry + 12, 4);
-        }
-        return true;
-    }
-
     int mSocket = -1;
+    std::thread mReader;
+    std::function<void(const Event&)> mOnEvent;
+    std::mutex mSendLock;
+    std::mutex mLock;
+    std::condition_variable mChanged;
+    uint64_t mFlushes = 0, mWrites = 0;
+    uint8_t mWriteStatus = 1;
+    bool mClosed = false;
 };
 
-/// gralloc's BufferUsage::VIDEO_DECODER, which Codec2's usage names lack.
-constexpr uint64_t kVideoDecoderUsage = 1ull << 22;
+/// A gralloc buffer as the VM's GPU knows it: its GEM handle here and the virtio-gpu resource the
+/// Mac's GPU knows it by. DRM's and virtio-gpu's ioctls, as minigbm makes them.
+class GpuBuffer {
+public:
+    explicit GpuBuffer(const C2Handle* handle) {
+        if (Gpu() < 0 || !handle || handle->numFds < 1) return;
+        struct { uint32_t handle, flags; int32_t fd; } prime = {0, 0, handle->data[0]};
+        if (ioctl(Gpu(), _IOWR('d', 0x2e, decltype(prime)), &prime) != 0) return;
+        mGem = prime.handle;
+        struct { uint32_t bo, resource, size, blobMem; } info = {mGem, 0, 0, 0};
+        if (ioctl(Gpu(), _IOWR('d', 0x40 + 0x05, decltype(info)), &info) == 0) mResource = info.resource;
+    }
 
-/// The virtio-gpu resource behind a gralloc buffer: the one the Mac's GPU knows it by.
-uint32_t ResourceOf(const C2Handle* handle) {
-    static int gpu = open("/dev/dri/renderD128", O_RDWR | O_CLOEXEC);
-    if (gpu < 0 || !handle || handle->numFds < 1) return 0;
-    struct { uint32_t handle, flags; int32_t fd; } prime = {0, 0, handle->data[0]};
-    if (ioctl(gpu, _IOWR('d', 0x2e, decltype(prime)), &prime) != 0) return 0;
-    struct { uint32_t bo, resource, size, blobMem; } info = {prime.handle, 0, 0, 0};
-    int failed = ioctl(gpu, _IOWR('d', 0x40 + 0x05, decltype(info)), &info);
-    struct { uint32_t handle, pad; } gemClose = {prime.handle, 0};
-    ioctl(gpu, _IOW('d', 0x09, decltype(gemClose)), &gemClose);
-    return failed ? 0 : info.resource;
-}
+    ~GpuBuffer() {
+        if (!mGem) return;
+        struct { uint32_t handle, pad; } gemClose = {mGem, 0};
+        ioctl(Gpu(), _IOW('d', 0x09, decltype(gemClose)), &gemClose);
+    }
 
+    uint32_t resource() const { return mResource; }
+
+    /// Waits until the VM's GPU has done what it was asked for this buffer, its making included:
+    /// the Mac is told of it by another way, which may come first.
+    bool settle() {
+        struct { uint32_t handle, flags; } wait = {mGem, 0};
+        return mGem && ioctl(Gpu(), _IOWR('d', 0x40 + 0x08, decltype(wait)), &wait) == 0;
+    }
+
+    /// Brings what the Mac's GPU wrote into the buffer's memory in the VM, for an app that reads
+    /// the picture there, as gralloc does when a buffer the GPU renders to is locked for reading.
+    bool readBack(uint32_t width, uint32_t height) {
+        struct { uint32_t x, y, z, w, h, d; } box = {0, 0, 0, width, height, 1};
+        struct { uint32_t bo; decltype(box) box; uint32_t level, offset, stride, layerStride; } transfer =
+            {mGem, box, 0, 0, 0, 0};
+        if (ioctl(Gpu(), _IOWR('d', 0x40 + 0x06, decltype(transfer)), &transfer) != 0) return false;
+        return settle();
+    }
+
+private:
+    static int Gpu() {
+        static int gpu = open("/dev/dri/renderD128", O_RDWR | O_CLOEXEC);
+        return gpu;
+    }
+
+    uint32_t mGem = 0, mResource = 0;
+};
+
+/// A decoder as a phone's hardware one works (Android's v4l2_codec2): process() hands each input
+/// to the Mac and returns at once; pictures come back as events, and an output thread puts each
+/// into a buffer of Android's, which may wait for the app to give one back, without holding up
+/// the inputs behind it.
 class Decoder : public SimpleC2Component {
 public:
     Decoder(const char* name, c2_node_id_t id, uint8_t codec, const std::shared_ptr<VideoIntf>& intf)
         : SimpleC2Component(std::make_shared<SimpleInterface<VideoIntf>>(name, id, intf)),
           mIntf(intf), mCodec(codec) {}
+
+    ~Decoder() override { stopThreads(); }
 
     bool connect() {
         mMac = std::make_unique<Mac>();
@@ -478,66 +589,200 @@ public:
     }
 
 protected:
-    c2_status_t onInit() override { return mMac ? C2_OK : C2_CORRUPTED; }
+    c2_status_t onInit() override {
+        if (!mMac) return C2_CORRUPTED;
+        mMac->start([this](const Mac::Event& event) { arrive(event); });
+        mOutput = std::thread([this] { output(); });
+        return C2_OK;
+    }
+
     c2_status_t onStop() override { return flushMac(); }
-    void onReset() override { flushMac(); mSignalledEos = mFailed = false; }
-    void onRelease() override { mMac.reset(); }
-    c2_status_t onFlush_sm() override { mSignalledEos = false; return flushMac(); }
+
+    void onReset() override {
+        flushMac();
+        std::lock_guard<std::mutex> lock(mLock);
+        mEosIndex.reset();
+        mFailed = false;
+    }
+
+    void onRelease() override { stopThreads(); }
+
+    c2_status_t onFlush_sm() override {
+        c2_status_t status = flushMac();
+        std::lock_guard<std::mutex> lock(mLock);
+        mEosIndex.reset();
+        return status;
+    }
 
     void process(const std::unique_ptr<C2Work>& work, const std::shared_ptr<C2BlockPool>& pool) override {
         work->result = C2_OK;
         work->workletsProcessed = 0u;
         work->worklets.front()->output.flags = work->input.flags;
-        if (mFailed || mSignalledEos) {
-            work->result = C2_BAD_VALUE;
-            return;
+        const uint64_t index = work->input.ordinal.frameIndex.peeku();
+        {
+            // Every work before this one is among the pending ones now: their pictures may go.
+            std::lock_guard<std::mutex> lock(mLock);
+            mPool = pool;
+            mStarted = index;
+            mStartedAny = true;
+            // The end's picture, if it has one, waits for this work rather than the pending ones.
+            if (work->input.flags & C2FrameData::FLAG_END_OF_STREAM) mEosIndex = index;
+            mChanged.notify_all();
+            if (mFailed) {
+                work->result = C2_CORRUPTED;
+                work->workletsProcessed = 1u;
+                return;
+            }
         }
         const bool eos = work->input.flags & C2FrameData::FLAG_END_OF_STREAM;
         const bool config = work->input.flags & C2FrameData::FLAG_CODEC_CONFIG;
-        const uint64_t index = work->input.ordinal.frameIndex.peeku();
         C2ReadView view = mDummyReadView;
         if (!work->input.buffers.empty()) {
             view = work->input.buffers[0]->data().linearBlocks().front().map().get();
             if (view.error()) return fail(work);
         }
-        std::vector<Mac::Picture> pictures;
         if (view.capacity() > 0) {
             uint32_t flags = (config ? 1 : 0) | (eos ? 2 : 0);
             if (!mMac->decode(index, work->input.ordinal.timestamp.peeku(), flags, view.data(),
-                              view.capacity(), &pictures)) {
+                              view.capacity())) {
                 return fail(work);
             }
         }
-        bool done = config || view.capacity() == 0;
-        for (const auto& picture : pictures) {
-            if (!deliver(picture, pool, work, eos)) return fail(work);
-            if (picture.index == index) done = true;
-        }
         if (eos) {
-            if (!mMac->drain(&pictures)) return fail(work);
-            for (const auto& picture : pictures) {
-                if (!deliver(picture, pool, work, true)) return fail(work);
-            }
-            mSignalledEos = true;
-            done = true;
+            // The end: every picture held back comes first, as a phone's decoder drains; this
+            // work's own picture, if any, comes with it.
+            std::unique_lock<std::mutex> lock(mLock);
+            const uint64_t drains = mDrains;
+            lock.unlock();
+            if (!mMac->drain()) return fail(work);
+            lock.lock();
+            mChanged.wait(lock, [&] { return mDrains != drains || mStopping; });
+            auto buffer = std::move(mEosBuffer);
+            auto change = std::move(mEosChange);
+            mEosIndex.reset();
+            lock.unlock();
+            fillEmpty(work);
+            if (buffer) work->worklets.front()->output.buffers.push_back(buffer);
+            if (change) work->worklets.front()->output.configUpdate.push_back(C2Param::Copy(*change));
+        } else if (config || view.capacity() == 0) {
+            // No picture comes of it.
+            fillEmpty(work);
         }
-        if (done && work->workletsProcessed == 0u) fillEmpty(work);
         work->input.buffers.clear();
     }
 
     c2_status_t drain(uint32_t mode, const std::shared_ptr<C2BlockPool>& pool) override {
         if (mode == NO_DRAIN) return C2_OK;
         if (mode == DRAIN_CHAIN) return C2_OMITTED;
-        std::vector<Mac::Picture> pictures;
-        if (!mMac->drain(&pictures)) return C2_CORRUPTED;
-        std::unique_ptr<C2Work> none;
-        for (const auto& picture : pictures) {
-            if (!deliver(picture, pool, none, false)) return C2_CORRUPTED;
-        }
+        std::unique_lock<std::mutex> lock(mLock);
+        mPool = pool;
+        const uint64_t drains = mDrains;
+        lock.unlock();
+        if (!mMac->drain()) return C2_CORRUPTED;
+        lock.lock();
+        mChanged.wait(lock, [&] { return mDrains != drains || mStopping; });
         return C2_OK;
     }
 
 private:
+    struct Item {
+        Mac::Event event;
+        uint64_t flushes;  // of the stream it belongs to
+    };
+
+    /// On the Mac connection's reading thread: an event joins the output thread's queue.
+    void arrive(const Mac::Event& event) {
+        uint64_t flushes = mMac->flushes();
+        std::lock_guard<std::mutex> lock(mLock);
+        mQueue.push_back({event, flushes});
+        mChanged.notify_all();
+    }
+
+    void output() {
+        while (true) {
+            std::unique_lock<std::mutex> lock(mLock);
+            mChanged.wait(lock, [&] { return mStopping || !mQueue.empty(); });
+            if (mStopping) return;
+            Item item = mQueue.front();
+            mQueue.pop_front();
+            if (item.flushes != mMac->flushes()) continue;  // a stream flushed away
+            if (item.event.kind == Mac::Event::Drained) {
+                mDrains++;
+                mChanged.notify_all();
+                continue;
+            }
+            // A work is among the pending ones once a later one has started: Android's codec
+            // framework files it just after process() returns.
+            const uint64_t index = item.event.index;
+            mChanged.wait(lock, [&] {
+                return mStopping || (mStartedAny && mStarted > index) || (mEosIndex && *mEosIndex >= index) ||
+                       item.flushes != mMac->flushes();
+            });
+            if (mStopping) return;
+            if (item.flushes != mMac->flushes()) continue;
+            const bool isEos = mEosIndex && *mEosIndex == index;
+            auto pool = mPool;
+            lock.unlock();
+            std::shared_ptr<C2Buffer> buffer;
+            std::shared_ptr<C2Param> change;
+            picture(item.event, pool, &buffer, &change);
+            if (isEos) {
+                // The end's own work is being processed: it takes its picture itself.
+                std::lock_guard<std::mutex> relock(mLock);
+                mEosBuffer = buffer;
+                mEosChange = change;
+                continue;
+            }
+            finish(index, [buffer, change](const std::unique_ptr<C2Work>& work) {
+                work->worklets.front()->output.flags = (C2FrameData::flags_t)0;
+                work->worklets.front()->output.buffers.clear();
+                if (buffer) work->worklets.front()->output.buffers.push_back(buffer);
+                if (change) work->worklets.front()->output.configUpdate.push_back(C2Param::Copy(*change));
+                work->worklets.front()->output.ordinal = work->input.ordinal;
+                work->workletsProcessed = 1u;
+            });
+        }
+    }
+
+    /// One picture the Mac decoded, in a buffer of Android's; none when the input made none.
+    void picture(const Mac::Event& picture, const std::shared_ptr<C2BlockPool>& pool,
+                 std::shared_ptr<C2Buffer>* outBuffer, std::shared_ptr<C2Param>* outChange) {
+        std::shared_ptr<C2Buffer>& buffer = *outBuffer;
+        std::shared_ptr<C2Param>& change = *outChange;
+        if (picture.width > 0 && pool) {
+            if (picture.width != mWidth || picture.height != mHeight) {
+                C2StreamPictureSizeInfo::output size(0u, picture.width, picture.height);
+                std::vector<std::unique_ptr<C2SettingResult>> failures;
+                if (mIntf->config({&size}, C2_MAY_BLOCK, &failures) == C2_OK) {
+                    mWidth = picture.width;
+                    mHeight = picture.height;
+                    change = C2Param::Copy(size);
+                }
+            }
+            std::shared_ptr<C2GraphicBlock> block;
+            C2MemoryUsage usage = {C2MemoryUsage::CPU_READ, C2MemoryUsage::CPU_WRITE};
+            if (pool->fetchGraphicBlock(mWidth, mHeight, HAL_PIXEL_FORMAT_YV12, usage, &block) == C2_OK) {
+                GpuBuffer gpu(block->handle());
+                uint32_t resource = gpu.resource();
+                // Without a Surface the app reads the picture from memory: its buffers are made as
+                // it asks, so the Mac waits for them, and the picture is brought into memory.
+                const bool inMemory = pool->getAllocatorId() == C2PlatformAllocatorStore::GRALLOC;
+                // A buffer seen for the first time may still be being made: the Mac waits for it.
+                const bool fresh = mKnown.insert(resource).second;
+                bool written = resource && (!(inMemory || fresh) || gpu.settle()) &&
+                               mMac->write(picture.index, resource, block->width(), block->height()) &&
+                               (!inMemory || gpu.readBack(block->width(), block->height()));
+                if (written) {
+                    buffer = createGraphicBuffer(std::move(block), C2Rect(mWidth, mHeight));
+                    auto lock = mIntf->lock();
+                    buffer->setInfo(mIntf->getColorAspects_l());
+                } else {
+                    LOG(ERROR) << "Inquiline's decoder couldn't write a picture (resource " << resource << ")";
+                }
+            }
+        }
+    }
+
     static void fillEmpty(const std::unique_ptr<C2Work>& work) {
         work->worklets.front()->output.flags =
                 (C2FrameData::flags_t)(work->input.flags & C2FrameData::FLAG_END_OF_STREAM);
@@ -547,6 +792,7 @@ private:
     }
 
     void fail(const std::unique_ptr<C2Work>& work) {
+        std::lock_guard<std::mutex> lock(mLock);
         mFailed = true;
         work->workletsProcessed = 1u;
         work->result = C2_CORRUPTED;
@@ -556,76 +802,32 @@ private:
         return !mMac || mMac->flush() ? C2_OK : C2_CORRUPTED;
     }
 
-    /// One picture the Mac decoded, into a buffer of Android's, to the work its input came in.
-    bool deliver(const Mac::Picture& picture, const std::shared_ptr<C2BlockPool>& pool,
-                 const std::unique_ptr<C2Work>& current, bool eos) {
-        std::shared_ptr<C2Buffer> buffer;
-        std::unique_ptr<C2Param> sizeChange;
-        if (picture.width > 0) {
-            if (picture.width != mWidth || picture.height != mHeight) {
-                C2StreamPictureSizeInfo::output size(0u, picture.width, picture.height);
-                std::vector<std::unique_ptr<C2SettingResult>> failures;
-                if (mIntf->config({&size}, C2_MAY_BLOCK, &failures) != C2_OK) return false;
-                mWidth = picture.width;
-                mHeight = picture.height;
-                sizeChange = C2Param::Copy(size);
-            }
-            std::shared_ptr<C2GraphicBlock> block;
-            // Written by the video decoder (gralloc's VIDEO_DECODER), as a phone's hardware
-            // decoder's buffers are: an app that reads a picture into memory, not to a Surface,
-            // then gets it from the GPU.
-            C2MemoryUsage usage = {C2MemoryUsage::CPU_READ, C2MemoryUsage::CPU_WRITE | kVideoDecoderUsage};
-            if (pool->fetchGraphicBlock(mWidth, mHeight, HAL_PIXEL_FORMAT_YV12, usage, &block) != C2_OK) {
-                return false;
-            }
-            uint32_t resource = ResourceOf(block->handle());
-            if (!resource || !mMac->write(picture.index, resource, block->width(), block->height())) {
-                LOG(ERROR) << "Inquiline's decoder couldn't write a picture (resource " << resource << ", "
-                           << block->width() << "x" << block->height() << ")";
-                return false;
-            }
-            buffer = createGraphicBuffer(std::move(block), C2Rect(mWidth, mHeight));
-            auto lock = mIntf->lock();
-            buffer->setInfo(mIntf->getColorAspects_l());
+    void stopThreads() {
+        {
+            std::lock_guard<std::mutex> lock(mLock);
+            mStopping = true;
+            mChanged.notify_all();
         }
-        std::shared_ptr<C2Param> change(sizeChange.release());
-        auto fill = [buffer, change](const std::unique_ptr<C2Work>& work) {
-            work->worklets.front()->output.flags = (C2FrameData::flags_t)0;
-            work->worklets.front()->output.buffers.clear();
-            if (buffer) work->worklets.front()->output.buffers.push_back(buffer);
-            if (change) work->worklets.front()->output.configUpdate.push_back(C2Param::Copy(*change));
-            work->worklets.front()->output.ordinal = work->input.ordinal;
-            work->workletsProcessed = 1u;
-        };
-        if (current && current->input.ordinal.frameIndex.peeku() == picture.index) {
-            if (eos) {
-                // The end of the stream goes on its own, after this picture.
-                if (buffer) {
-                    C2WorkOrdinalStruct ordinal = current->input.ordinal;
-                    cloneAndSend(picture.index, current, [buffer, change, ordinal](const std::unique_ptr<C2Work>& work) {
-                        work->worklets.front()->output.flags = C2FrameData::FLAG_INCOMPLETE;
-                        work->worklets.front()->output.buffers.clear();
-                        work->worklets.front()->output.buffers.push_back(buffer);
-                        if (change) work->worklets.front()->output.configUpdate.push_back(C2Param::Copy(*change));
-                        work->worklets.front()->output.ordinal = ordinal;
-                        work->workletsProcessed = 1u;
-                        work->result = C2_OK;
-                    });
-                }
-            } else {
-                fill(current);
-            }
-        } else {
-            finish(picture.index, fill);
-        }
-        return true;
+        if (mMac) mMac->close();
+        if (mOutput.joinable()) mOutput.join();
     }
 
     std::shared_ptr<VideoIntf> mIntf;
     std::unique_ptr<Mac> mMac;
     const uint8_t mCodec;
+    std::thread mOutput;
+    // Guards what process(), the output thread and the Mac's events share.
+    std::mutex mLock;
+    std::condition_variable mChanged;
+    std::deque<Item> mQueue;
+    std::shared_ptr<C2BlockPool> mPool;
+    uint64_t mStarted = 0, mDrains = 0;
+    bool mStartedAny = false, mStopping = false, mFailed = false;
+    std::optional<uint64_t> mEosIndex;
+    std::shared_ptr<C2Buffer> mEosBuffer;
+    std::shared_ptr<C2Param> mEosChange;
     uint32_t mWidth = 0, mHeight = 0;
-    bool mSignalledEos = false, mFailed = false;
+    std::set<uint32_t> mKnown;  // resources already written to (output thread only)
 };
 
 /// The store: its components' names and interfaces, as Android lists codecs.

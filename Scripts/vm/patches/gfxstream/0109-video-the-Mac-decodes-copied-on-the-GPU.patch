@@ -179,7 +179,7 @@
  elif host_machine.system() == 'qnx'
 --- /dev/null
 +++ b/host/inquiline_video_decoder.mm
-@@ -0,0 +1,756 @@
+@@ -0,0 +1,805 @@
 +// Inquiline: Android's video decoders, as a phone maker's are its own chip's. Inquiline's
 +// decoders in Android (Vendor/c2) hand each video to this engine, which decodes it with the
 +// Mac's media engine (VideoToolbox) and copies each picture on the GPU, with Metal, straight
@@ -189,13 +189,15 @@
 +// INQUILINE_DECODER_PORT, with the token in INQUILINE_DECODER_TOKEN (hex), which Inquiline
 +// leaves where only Android's decoders read it. Little-endian.
 +//   hello  "IQC1", 32-byte token, u8 codec (1 H.264, 2 VP9, 3 AV1, 4 HEVC); answered with a status byte
++// Then requests, none waiting for an answer but 'P':
 +//   'D' u64 index, u64 timestamp, u32 flags (1 codec config, 2 end of stream), u32 size, bytes
-+//   'E' drain: every picture still held
-+//   'F' flush: drop them
-+//       each answered with u32 count, then per picture u64 index, u32 width, u32 height
-+//       (width 0: the input made no picture)
++//   'E' drain: every picture still held back, then 'X'
++//   'F' flush: drop them, then 'L'
 +//   'P' u64 index, u32 resource, u32 width, u32 height: copy that picture into the resource,
-+//       answered with a status byte, 0 on success
++//       then 'S' and a status byte, 0 on success
++// and events, as they come:
++//   'R' u64 index, u32 width, u32 height: a picture to show, in the order pictures are shown
++//       (width 0: the input made no picture)
 +
 +#import <CoreMedia/CoreMedia.h>
 +#import <CoreVideo/CoreVideo.h>
@@ -215,6 +217,7 @@
 +
 +#include <algorithm>
 +#include <map>
++#include <mutex>
 +#include <optional>
 +#include <string>
 +#include <thread>
@@ -596,14 +599,18 @@
 +
 +// MARK: - A decoder's session
 +
++/// One of Android's decoders, for as long as it lives. It works as a phone's hardware decoder
++/// does (Android's v4l2_codec2): inputs queue up without waiting for pictures, the Mac's media
++/// engine decodes them on its own threads (Chromium's VideoToolbox decoder), and each picture is
++/// told to Android the moment its turn to be shown comes, in the order pictures are shown.
 +class DecodeSession {
 +public:
 +    DecodeSession(int socket, const Bytes& token) : mSocket(socket), mToken(token) {}
 +
 +    ~DecodeSession() {
 +        makeSession(nullptr);
-+        for (auto& entry : mWaiting) if (entry.image) CVPixelBufferRelease(entry.image);
-+        for (auto& [index, image] : mHeld) CVPixelBufferRelease(image);
++        std::lock_guard<std::mutex> lock(mLock);
++        dropLocked();
 +        if (mLastImage) CVPixelBufferRelease(mLastImage);
 +        if (mFormat) CFRelease(mFormat);
 +        close(mSocket);
@@ -617,7 +624,7 @@
 +        }
 +        mCodec = hello[36];
 +        mReorderDepth = mCodec == 1 ? 4 : mCodec == 4 ? 6 : 0;
-+        if (!sendByte(0)) return;
++        if (!sendEvent({0})) return;
 +        uint8_t request;
 +        while (receive(&request, 1)) {
 +            if (request == 'D') {
@@ -635,16 +642,18 @@
 +                @autoreleasepool {
 +                    decode(data, index, (int64_t)time, flags & 1);
 +                }
-+                if (!answer(ready(false))) return;
 +            } else if (request == 'E') {
++                // Drain: every picture still held back, then the end.
 +                if (mSession) VTDecompressionSessionWaitForAsynchronousFrames(mSession);
-+                if (!answer(ready(true))) return;
++                std::lock_guard<std::mutex> lock(mLock);
++                showLocked(true);
++                if (!sendEventLocked({'X'})) return;
 +            } else if (request == 'F') {
-+                for (auto& entry : mWaiting) if (entry.image) CVPixelBufferRelease(entry.image);
-+                for (auto& [index, image] : mHeld) CVPixelBufferRelease(image);
-+                mWaiting.clear();
-+                mHeld.clear();
-+                if (!answer({})) return;
++                // Flush: what was decoded and not shown goes.
++                if (mSession) VTDecompressionSessionWaitForAsynchronousFrames(mSession);
++                std::lock_guard<std::mutex> lock(mLock);
++                dropLocked();
++                if (!sendEventLocked({'L'})) return;
 +            } else if (request == 'P') {
 +                uint8_t body[20];
 +                if (!receive(body, sizeof(body))) return;
@@ -652,16 +661,23 @@
 +                uint32_t resource;
 +                memcpy(&index, body, 8);
 +                memcpy(&resource, body + 8, 4);
-+                bool written = false;
-+                auto it = mHeld.find(index);
-+                if (it != mHeld.end()) {
-+                    @autoreleasepool {
-+                        written = CopyIntoResource(it->second, resource);
++                CVPixelBufferRef image = nullptr;
++                {
++                    std::lock_guard<std::mutex> lock(mLock);
++                    auto it = mHeld.find(index);
++                    if (it != mHeld.end()) {
++                        image = it->second;
++                        mHeld.erase(it);
 +                    }
-+                    CVPixelBufferRelease(it->second);
-+                    mHeld.erase(it);
 +                }
-+                if (!sendByte(written ? 0 : 1)) return;
++                bool written = false;
++                if (image) {
++                    @autoreleasepool {
++                        written = CopyIntoResource(image, resource);
++                    }
++                    CVPixelBufferRelease(image);
++                }
++                if (!sendEvent({'S', (uint8_t)(written ? 0 : 1)})) return;
 +            } else {
 +                return;
 +            }
@@ -669,14 +685,11 @@
 +    }
 +
 +private:
++    /// A decoded picture waiting for its turn, or an input that made none (image null).
 +    struct Waiting {
 +        uint64_t index;
 +        int64_t time;
-+        CVPixelBufferRef image;  // retained; null when the input made no picture
-+    };
-+    struct Picture {
-+        uint64_t index;
-+        uint32_t width, height;
++        CVPixelBufferRef image;  // retained
 +    };
 +
 +    void decode(const Bytes& data, uint64_t index, int64_t time, bool configOnly) {
@@ -690,14 +703,14 @@
 +            CFRelease(header->description);
 +        }
 +        if (configOnly) return;
-+        CVPixelBufferRef image = data.empty() ? nullptr : decodeSample(data, time);
-+        // A frame that only shows an earlier one again.
-+        if (!image && header && header->showsExisting && mLastImage) image = CVPixelBufferRetain(mLastImage);
-+        if (image) {
-+            if (mLastImage) CVPixelBufferRelease(mLastImage);
-+            mLastImage = CVPixelBufferRetain(image);
++        if (header && header->showsExisting) {
++            // A frame that only shows an earlier one again, once that one is decoded.
++            if (mSession) VTDecompressionSessionWaitForAsynchronousFrames(mSession);
++            std::lock_guard<std::mutex> lock(mLock);
++            arriveLocked(index, time, mLastImage ? CVPixelBufferRetain(mLastImage) : nullptr);
++            return;
 +        }
-+        mWaiting.push_back({index, time, image});
++        decodeSample(data, index, time);
 +    }
 +
 +    /// The kind of an H.264 or HEVC NAL unit, from its header.
@@ -728,6 +741,7 @@
 +            if (fresh != mParameterSets) {
 +                mParameterSets = fresh;
 +                CMVideoFormatDescriptionRef description = nullptr;
++                int depth = mReorderDepth;
 +                if (mParameterSets.size() == setTypes.size()) {
 +                    std::vector<const uint8_t*> pointers;
 +                    std::vector<size_t> sizes;
@@ -736,23 +750,28 @@
 +                        sizes.push_back(set.size());
 +                    }
 +                    if (hevc) {
-+                        mReorderDepth = HEVCReorderDepth(mParameterSets[1]);
++                        depth = HEVCReorderDepth(mParameterSets[1]);
 +                        CMVideoFormatDescriptionCreateFromHEVCParameterSets(nullptr, 3, pointers.data(), sizes.data(), 4,
 +                                                                           nullptr, &description);
 +                    } else {
 +                        // Baseline streams show each picture as it comes; others may hold some back.
-+                        mReorderDepth = mParameterSets[0].size() > 1 && mParameterSets[0][1] == 66 ? 0 : 4;
++                        depth = mParameterSets[0].size() > 1 && mParameterSets[0][1] == 66 ? 0 : 4;
 +                        CMVideoFormatDescriptionCreateFromH264ParameterSets(nullptr, 2, pointers.data(), sizes.data(), 4,
 +                                                                           &description);
 +                    }
 +                }
 +                makeSession(description);
++                {
++                    std::lock_guard<std::mutex> lock(mLock);
++                    mReorderDepth = depth;
++                }
 +                if (description) CFRelease(description);
 +            }
 +        }
 +        if (configOnly) return;
 +        if (units.empty()) {
-+            mWaiting.push_back({index, time, nullptr});
++            std::lock_guard<std::mutex> lock(mLock);
++            arriveLocked(index, time, nullptr);
 +            return;
 +        }
 +        Bytes sample;
@@ -761,33 +780,74 @@
 +            sample.insert(sample.end(), (uint8_t*)&length, (uint8_t*)&length + 4);
 +            sample.insert(sample.end(), unit.begin(), unit.end());
 +        }
-+        mWaiting.push_back({index, time, decodeSample(sample, time)});
++        decodeSample(sample, index, time);
 +    }
 +
-+    /// Decodes one sample in the session as it is now; null if it made no picture.
-+    CVPixelBufferRef decodeSample(const Bytes& sample, int64_t time) {
-+        if (!mSession || !mFormat) return nullptr;
-+        CMBlockBufferRef block = nullptr;
-+        if (CMBlockBufferCreateWithMemoryBlock(nullptr, nullptr, sample.size(), nullptr, nullptr, 0,
-+                                               sample.size(), kCMBlockBufferAssureMemoryNowFlag,
-+                                               &block) != noErr) {
-+            return nullptr;
-+        }
-+        CMBlockBufferReplaceDataBytes(sample.data(), block, 0, sample.size());
-+        CMSampleTimingInfo timing = {kCMTimeInvalid, CMTimeMake(time, 1000000), kCMTimeInvalid};
-+        size_t size = sample.size();
++    /// Hands one sample to the Mac's decoder, which decodes it on its own; its picture arrives
++    /// when made.
++    void decodeSample(const Bytes& sample, uint64_t index, int64_t time) {
 +        CMSampleBufferRef buffer = nullptr;
-+        CMSampleBufferCreateReady(nullptr, block, mFormat, 1, 1, &timing, 1, &size, &buffer);
-+        CFRelease(block);
-+        if (!buffer) return nullptr;
-+        __block CVPixelBufferRef image = nullptr;
-+        VTDecompressionSessionDecodeFrameWithOutputHandler(
-+            mSession, buffer, 0, nullptr,
-+            ^(OSStatus status, VTDecodeInfoFlags, CVImageBufferRef decoded, CMTime, CMTime) {
-+              if (status == noErr && decoded) image = CVPixelBufferRetain(decoded);
-+            });
-+        CFRelease(buffer);
-+        return image;
++        CMBlockBufferRef block = nullptr;
++        if (mSession && mFormat && !sample.empty() &&
++            CMBlockBufferCreateWithMemoryBlock(nullptr, nullptr, sample.size(), nullptr, nullptr, 0,
++                                               sample.size(), kCMBlockBufferAssureMemoryNowFlag,
++                                               &block) == noErr) {
++            CMBlockBufferReplaceDataBytes(sample.data(), block, 0, sample.size());
++            CMSampleTimingInfo timing = {kCMTimeInvalid, CMTimeMake(time, 1000000), kCMTimeInvalid};
++            size_t size = sample.size();
++            CMSampleBufferCreateReady(nullptr, block, mFormat, 1, 1, &timing, 1, &size, &buffer);
++            CFRelease(block);
++        }
++        OSStatus started = -1;
++        if (buffer) {
++            started = VTDecompressionSessionDecodeFrameWithOutputHandler(
++                mSession, buffer, kVTDecodeFrame_EnableAsynchronousDecompression, nullptr,
++                ^(OSStatus status, VTDecodeInfoFlags, CVImageBufferRef decoded, CMTime, CMTime) {
++                  std::lock_guard<std::mutex> lock(mLock);
++                  CVPixelBufferRef image = status == noErr && decoded ? CVPixelBufferRetain(decoded) : nullptr;
++                  if (image) {
++                      if (mLastImage) CVPixelBufferRelease(mLastImage);
++                      mLastImage = CVPixelBufferRetain(image);
++                  }
++                  arriveLocked(index, time, image);
++                });
++            CFRelease(buffer);
++        }
++        if (started != noErr) {
++            std::lock_guard<std::mutex> lock(mLock);
++            arriveLocked(index, time, nullptr);
++        }
++    }
++
++    /// A picture is decoded, or an input made none: those are told at once; pictures are told
++    /// in the order they are shown, once as many have come as may come before one.
++    void arriveLocked(uint64_t index, int64_t time, CVPixelBufferRef image) {
++        if (!image) {
++            sendPictureLocked(index, 0, 0);
++            return;
++        }
++        mWaiting.push_back({index, time, image});
++        showLocked(false);
++    }
++
++    void showLocked(bool all) {
++        std::stable_sort(mWaiting.begin(), mWaiting.end(), [](auto& a, auto& b) { return a.time < b.time; });
++        while (!mWaiting.empty() && (all || mWaiting.size() > (size_t)mReorderDepth)) {
++            Waiting entry = mWaiting.front();
++            mWaiting.erase(mWaiting.begin());
++            auto old = mHeld.find(entry.index);
++            if (old != mHeld.end()) CVPixelBufferRelease(old->second);
++            mHeld[entry.index] = entry.image;
++            sendPictureLocked(entry.index, (uint32_t)CVPixelBufferGetWidth(entry.image) & ~1u,
++                              (uint32_t)CVPixelBufferGetHeight(entry.image) & ~1u);
++        }
++    }
++
++    void dropLocked() {
++        for (auto& entry : mWaiting) CVPixelBufferRelease(entry.image);
++        for (auto& [index, image] : mHeld) CVPixelBufferRelease(image);
++        mWaiting.clear();
++        mHeld.clear();
 +    }
 +
 +    void makeSession(CMVideoFormatDescriptionRef description) {
@@ -820,36 +880,24 @@
 +        mFormat = (CMVideoFormatDescriptionRef)CFRetain(description);
 +    }
 +
-+    /// Pictures whose turn has come, in the order they are shown; all of them at the end.
-+    std::vector<Picture> ready(bool all) {
-+        std::vector<Picture> out;
-+        // An input that made no picture is done at once.
-+        for (auto& entry : mWaiting) if (!entry.image) out.push_back({entry.index, 0, 0});
-+        mWaiting.erase(std::remove_if(mWaiting.begin(), mWaiting.end(), [](auto& e) { return !e.image; }),
-+                       mWaiting.end());
-+        std::stable_sort(mWaiting.begin(), mWaiting.end(), [](auto& a, auto& b) { return a.time < b.time; });
-+        while (!mWaiting.empty() && (all || mWaiting.size() > (size_t)mReorderDepth)) {
-+            Waiting entry = mWaiting.front();
-+            mWaiting.erase(mWaiting.begin());
-+            auto old = mHeld.find(entry.index);
-+            if (old != mHeld.end()) CVPixelBufferRelease(old->second);
-+            mHeld[entry.index] = entry.image;
-+            out.push_back({entry.index, (uint32_t)CVPixelBufferGetWidth(entry.image) & ~1u,
-+                           (uint32_t)CVPixelBufferGetHeight(entry.image) & ~1u});
-+        }
-+        return out;
++    // MARK: The connection: requests come in on this thread; events go out from any.
++
++    bool sendPictureLocked(uint64_t index, uint32_t width, uint32_t height) {
++        uint8_t event[17] = {'R'};
++        memcpy(event + 1, &index, 8);
++        memcpy(event + 9, &width, 4);
++        memcpy(event + 13, &height, 4);
++        return sendAll(event, sizeof(event));
 +    }
 +
-+    bool answer(const std::vector<Picture>& pictures) {
-+        Bytes out(4 + 16 * pictures.size());
-+        uint32_t count = pictures.size();
-+        memcpy(out.data(), &count, 4);
-+        for (size_t i = 0; i < pictures.size(); i++) {
-+            memcpy(out.data() + 4 + 16 * i, &pictures[i].index, 8);
-+            memcpy(out.data() + 12 + 16 * i, &pictures[i].width, 4);
-+            memcpy(out.data() + 16 + 16 * i, &pictures[i].height, 4);
-+        }
-+        return sendAll(out.data(), out.size());
++    bool sendEventLocked(std::initializer_list<uint8_t> bytes) {
++        Bytes event(bytes);
++        return sendAll(event.data(), event.size());
++    }
++
++    bool sendEvent(std::initializer_list<uint8_t> bytes) {
++        std::lock_guard<std::mutex> lock(mLock);
++        return sendEventLocked(bytes);
 +    }
 +
 +    bool receive(void* data, size_t size) {
@@ -874,8 +922,6 @@
 +        return true;
 +    }
 +
-+    bool sendByte(uint8_t byte) { return sendAll(&byte, 1); }
-+
 +    /// Compares in the same time whatever the bytes, so the token can't be guessed by timing.
 +    bool same(const uint8_t* token) {
 +        uint8_t difference = mToken.size() == 32 ? 0 : 1;
@@ -886,11 +932,14 @@
 +    int mSocket;
 +    Bytes mToken;
 +    int mCodec = 1;
-+    int mReorderDepth = 4;
 +    VTDecompressionSessionRef mSession = nullptr;
 +    CMVideoFormatDescriptionRef mFormat = nullptr;
 +    std::vector<Bytes> mParameterSets;
 +    Bytes mStreamFormat;
++    // The decoder's threads deliver pictures; the lock guards what they touch and the socket's
++    // sending side.
++    std::mutex mLock;
++    int mReorderDepth = 4;
 +    CVPixelBufferRef mLastImage = nullptr;
 +    std::vector<Waiting> mWaiting;
 +    std::map<uint64_t, CVPixelBufferRef> mHeld;
