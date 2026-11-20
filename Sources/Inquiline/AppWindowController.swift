@@ -738,8 +738,7 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate, 
         let monitor = PerformanceMonitor()
         popover.contentViewController = monitor
         self.monitor = monitor
-        popover.show(relativeTo: fpsLabel.bounds, of: fpsLabel, preferredEdge: .minY)
-        Self.seeThrough(popover)
+        present(popover, relativeTo: fpsLabel.bounds, of: fpsLabel, preferredEdge: .minY, seeThrough: true)
         updateMonitor(fps: nil, cores: 0)
     }
 
@@ -862,7 +861,7 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate, 
         popover.behavior = .transient
         popover.contentViewController = phoneRemoteView(url: PhoneRemote.pairingAddress())
         let anchor = (sender as? NSView) ?? window.contentView!
-        popover.show(relativeTo: anchor.bounds, of: anchor, preferredEdge: .minY)
+        present(popover, relativeTo: anchor.bounds, of: anchor, preferredEdge: .minY)
     }
 
     /// Ready for a paired phone as soon as the app shows, as the phone follows the window in front.
@@ -951,7 +950,7 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate, 
         // The bands show and hide with Custom: the popover takes the new size.
         view.onResize = { [weak popover] size in popover?.contentSize = size }
         guard let anchor = sender as? NSView else { return }
-        popover.show(relativeTo: anchor.bounds, of: anchor, preferredEdge: anchor.isFlipped ? .maxY : .minY)
+        present(popover, relativeTo: anchor.bounds, of: anchor, preferredEdge: anchor.isFlipped ? .maxY : .minY)
     }
 
     /// The app's own settings, as Android's Settings > Apps shows them for one app, in a small
@@ -971,8 +970,7 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate, 
             popover.animates = animates
         }
         // Below the button: in a flipped view, as a button is, its bottom is maxY.
-        popover.show(relativeTo: sender.bounds, of: sender, preferredEdge: sender.isFlipped ? .maxY : .minY)
-        Self.seeThrough(popover)
+        present(popover, relativeTo: sender.bounds, of: sender, preferredEdge: sender.isFlipped ? .maxY : .minY, seeThrough: true)
     }
 
     /// The settings and the performance monitor stay open while the app is used, until their
@@ -980,8 +978,23 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate, 
     private var settingsPopover: NSPopover?
     private var monitorPopover: NSPopover?
 
-    private static func seeThrough(_ popover: NSPopover) {
-        popover.contentViewController?.view.window?.alphaValue = 0.85
+    /// One popover at a time in the toolbar: opening one closes the one open.
+    private var shownPopover: NSPopover?
+
+    private func present(_ popover: NSPopover, relativeTo rect: NSRect, of view: NSView, preferredEdge edge: NSRectEdge,
+                         seeThrough: Bool = false) {
+        if let shown = shownPopover, shown !== popover, shown.isShown { shown.close() }
+        shownPopover = popover
+        guard seeThrough else { return popover.show(relativeTo: rect, of: view, preferredEdge: edge) }
+        // Faded in see-through, rather than shown solid first.
+        popover.animates = false
+        popover.show(relativeTo: rect, of: view, preferredEdge: edge)
+        guard let window = popover.contentViewController?.view.window else { return }
+        window.alphaValue = 0
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.15
+            window.animator().alphaValue = 0.85
+        }
     }
 
     /// What the app's settings show, read from Android when the window opens and again as the
