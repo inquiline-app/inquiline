@@ -609,10 +609,10 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate, 
             return item
         }
         if identifier == Self.captureItem {
-            // A click takes a screenshot; its menu also records.
+            // A click opens its menu: a screenshot, or recording.
             let item = NSMenuToolbarItem(itemIdentifier: identifier)
             item.label = "Screenshot"
-            item.showsIndicator = true
+            item.showsIndicator = false
             let menu = NSMenu()
             menu.addItem(withTitle: "Take Screenshot", action: #selector(takeScreenshot(_:)), keyEquivalent: "").target = self
             let record = menu.addItem(withTitle: "Record Screen", action: #selector(toggleRecording(_:)), keyEquivalent: "")
@@ -763,7 +763,7 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate, 
         let started = Date()
         recordingTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
             let seconds = Int(Date().timeIntervalSince(started))
-            self?.captureToolbarItem?.toolTip = String(format: "Recording %d:%02d. Click to stop.", seconds / 60, seconds % 60)
+            self?.captureToolbarItem?.toolTip = String(format: "Recording %d:%02d", seconds / 60, seconds % 60)
         }
         updateCaptureItem()
         AppLog.write("Recording the app's screen")
@@ -790,16 +790,13 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate, 
             let red = NSImage.SymbolConfiguration(paletteColors: [.white, .systemRed])
             item.image = NSImage(systemSymbolName: "stop.circle.fill", accessibilityDescription: "Stop Recording")?
                 .withSymbolConfiguration(red)
-            item.toolTip = "Recording. Click to stop."
-            item.action = #selector(toggleRecording(_:))
+            item.toolTip = "Recording"
             recordMenuItem?.title = "Stop Recording"
         } else {
             item.image = NSImage(systemSymbolName: "camera", accessibilityDescription: "Screenshot")
-            item.toolTip = "Take a Screenshot of the App"
-            item.action = #selector(takeScreenshot(_:))
+            item.toolTip = "Screenshot or Recording"
             recordMenuItem?.title = "Record Screen"
         }
-        item.target = self
     }
 
     // MARK: - Phone remote
