@@ -686,9 +686,7 @@ final class AndroidRuntime {
     /// 22: Android's disk in Finder takes a password only Inquiline knows (Samba).
     /// 23: a GPS (Vendor/gnss) that reports where the Mac is.
     /// 24: a broadcast too large for its app is dropped alone, not retried by killing the app.
-    /// 25: Android's video decoders hand video to the Mac's hardware (VideoDecoders).
-    /// 26: video up to 1440p on Macs whose Android screen is that sharp.
-    private static let diskRevision = 26
+    private static let diskRevision = 25
 
     private var builtInScreen: ScrcpySession.Screen { ScrcpySession.Resolution.forThisMac.screen(landscape: false) }
     /// The VM's memory map fits the 36-bit (64 GB) address space Apple's M1 and M2 give a VM:
