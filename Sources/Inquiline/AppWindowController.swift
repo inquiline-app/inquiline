@@ -733,7 +733,7 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate, 
     private var androidMemory: (used: Double, total: Double)?
     private var askingMemory = false
 
-    /// The frame rate's click: the settings, with their Monitor section open.
+    /// The frame rate's click: the settings, with their Performance section open.
     @objc private func showMonitor(_ sender: Any?) {
         UserDefaults.standard.set(true, forKey: AppSettingsView.monitorKey)
         if let settings = settingsView, settings.window?.isVisible == true {
@@ -1384,12 +1384,12 @@ private final class AppSettingsView: NSView {
     /// A fresh snapshot, for the next time the settings open.
     var loaded: ((Snapshot) -> Void)?
 
-    /// Whether the Monitor section is open, as last left.
+    /// Whether the Performance section is open, as last left.
     static let monitorKey = "AppSettingsMonitorOpen"
     private let monitor: PerformanceMonitor
     private let monitorRows = NSStackView()
     private let monitorTriangle: NSButton
-    /// Called as the Monitor section opens, for it to show at once.
+    /// Called as the Performance section opens, for it to show at once.
     var monitorOpened: (() -> Void)?
 
     init(package: String, label: String, snapshot: Snapshot?, monitor: PerformanceMonitor) {
@@ -1446,7 +1446,7 @@ private final class AppSettingsView: NSView {
         adRows.addArrangedSubview(resetCounts)
         // How the app runs, first, as the frame rate's click opens it.
         monitorRows.addArrangedSubview(monitor.view)
-        let monitorHeader = Self.header("Monitor", rows: monitorRows, trailing: nil, triangle: monitorTriangle) { [weak self] open in
+        let monitorHeader = Self.header("Performance", rows: monitorRows, trailing: nil, triangle: monitorTriangle) { [weak self] open in
             UserDefaults.standard.set(open, forKey: Self.monitorKey)
             if open { self?.monitorOpened?() }
         }
@@ -1550,7 +1550,7 @@ private final class AppSettingsView: NSView {
         return row
     }
 
-    /// Opens the Monitor section, for the frame rate's click.
+    /// Opens the Performance section, for the frame rate's click.
     func openMonitor() {
         guard monitorTriangle.state == .off else { return }
         (objc_getAssociatedObject(monitorTriangle, "toggle") as? SectionToggle)?.labelClicked()

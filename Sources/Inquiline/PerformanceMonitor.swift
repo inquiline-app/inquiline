@@ -1,7 +1,7 @@
 import AppKit
 import IOKit
 
-/// The app's performance at a glance, in its settings' Monitor section, which a click on the
+/// The app's performance at a glance, in its settings' Performance section, which a click on the
 /// frame rate in the toolbar opens: frames a second over the last half minute, and how much of
 /// the Mac's CPU and GPU, and of Android's memory, are in use now. Nothing it needs asks for a
 /// permission.
