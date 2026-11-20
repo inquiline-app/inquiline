@@ -29,20 +29,67 @@ namespace android {
 
 namespace {
 constexpr size_t kMinInputBufferSize = 2 * 1024 * 1024;
-constexpr char COMPONENT_NAME[] = "c2.inquiline.avc.decoder";
+
+/// A kind of video the Mac decodes, as Android knows it.
+struct Kind {
+    uint8_t codec;  // as the Mac numbers them
+    const char* word;  // as the Mac names them
+    const char* name;
+    const char* mediaType;
+    C2Config::profile_t defaultProfile;
+    C2Config::level_t defaultLevel;
+    std::vector<C2Config::profile_t> profiles;
+    std::vector<C2Config::level_t> levels;
+};
+
+const std::vector<Kind>& Kinds() {
+    static const std::vector<Kind> kinds = {
+        {1, "avc", "c2.inquiline.avc.decoder", MEDIA_MIMETYPE_VIDEO_AVC,
+         C2Config::PROFILE_AVC_CONSTRAINED_BASELINE, C2Config::LEVEL_AVC_5_2,
+         {C2Config::PROFILE_AVC_CONSTRAINED_BASELINE, C2Config::PROFILE_AVC_BASELINE, C2Config::PROFILE_AVC_MAIN,
+          C2Config::PROFILE_AVC_CONSTRAINED_HIGH, C2Config::PROFILE_AVC_PROGRESSIVE_HIGH, C2Config::PROFILE_AVC_HIGH},
+         {C2Config::LEVEL_AVC_1, C2Config::LEVEL_AVC_1B, C2Config::LEVEL_AVC_1_1, C2Config::LEVEL_AVC_1_2,
+          C2Config::LEVEL_AVC_1_3, C2Config::LEVEL_AVC_2, C2Config::LEVEL_AVC_2_1, C2Config::LEVEL_AVC_2_2,
+          C2Config::LEVEL_AVC_3, C2Config::LEVEL_AVC_3_1, C2Config::LEVEL_AVC_3_2, C2Config::LEVEL_AVC_4,
+          C2Config::LEVEL_AVC_4_1, C2Config::LEVEL_AVC_4_2, C2Config::LEVEL_AVC_5, C2Config::LEVEL_AVC_5_1,
+          C2Config::LEVEL_AVC_5_2}},
+        {2, "vp9", "c2.inquiline.vp9.decoder", MEDIA_MIMETYPE_VIDEO_VP9,
+         C2Config::PROFILE_VP9_0, C2Config::LEVEL_VP9_5,
+         {C2Config::PROFILE_VP9_0},
+         {C2Config::LEVEL_VP9_1, C2Config::LEVEL_VP9_1_1, C2Config::LEVEL_VP9_2, C2Config::LEVEL_VP9_2_1,
+          C2Config::LEVEL_VP9_3, C2Config::LEVEL_VP9_3_1, C2Config::LEVEL_VP9_4, C2Config::LEVEL_VP9_4_1,
+          C2Config::LEVEL_VP9_5, C2Config::LEVEL_VP9_5_1, C2Config::LEVEL_VP9_5_2, C2Config::LEVEL_VP9_6}},
+        {3, "av1", "c2.inquiline.av1.decoder", MEDIA_MIMETYPE_VIDEO_AV1,
+         C2Config::PROFILE_AV1_0, C2Config::LEVEL_AV1_5,
+         {C2Config::PROFILE_AV1_0},
+         {C2Config::LEVEL_AV1_2, C2Config::LEVEL_AV1_2_1, C2Config::LEVEL_AV1_2_2, C2Config::LEVEL_AV1_2_3,
+          C2Config::LEVEL_AV1_3, C2Config::LEVEL_AV1_3_1, C2Config::LEVEL_AV1_3_2, C2Config::LEVEL_AV1_3_3,
+          C2Config::LEVEL_AV1_4, C2Config::LEVEL_AV1_4_1, C2Config::LEVEL_AV1_4_2, C2Config::LEVEL_AV1_4_3,
+          C2Config::LEVEL_AV1_5, C2Config::LEVEL_AV1_5_1, C2Config::LEVEL_AV1_5_2, C2Config::LEVEL_AV1_5_3,
+          C2Config::LEVEL_AV1_6}},
+    };
+    return kinds;
+}
+
+/// Inquiline writes its port, its token and the kinds of video this Mac decodes here as Android
+/// starts, for this service alone.
+bool ReadKey(unsigned* port, std::string* token, std::string* kinds) {
+    std::ifstream file("/data/vendor/inquiline/decoder");
+    return file >> *port >> *token >> *kinds && token->size() == 64;
+}
 constexpr uint32_t kDefaultOutputDelay = 8;
 constexpr uint32_t kMaxOutputDelay = 34;
 }  // namespace
 
-class AvcIntf : public SimpleInterface<void>::BaseParams {
+class VideoIntf : public SimpleInterface<void>::BaseParams {
 public:
-    explicit AvcIntf(const std::shared_ptr<C2ReflectorHelper> &helper)
+    VideoIntf(const std::shared_ptr<C2ReflectorHelper> &helper, const Kind& kind)
         : SimpleInterface<void>::BaseParams(
                 helper,
-                COMPONENT_NAME,
+                kind.name,
                 C2Component::KIND_DECODER,
                 C2Component::DOMAIN_VIDEO,
-                MEDIA_MIMETYPE_VIDEO_AVC) {
+                kind.mediaType) {
         noPrivateBuffers(); // TODO: account for our buffers here
         noInputReferences();
         noOutputReferences();
@@ -87,24 +134,10 @@ public:
 
         addParameter(
                 DefineParam(mProfileLevel, C2_PARAMKEY_PROFILE_LEVEL)
-                .withDefault(new C2StreamProfileLevelInfo::input(0u,
-                        C2Config::PROFILE_AVC_CONSTRAINED_BASELINE, C2Config::LEVEL_AVC_5_2))
+                .withDefault(new C2StreamProfileLevelInfo::input(0u, kind.defaultProfile, kind.defaultLevel))
                 .withFields({
-                    C2F(mProfileLevel, profile).oneOf({
-                            C2Config::PROFILE_AVC_CONSTRAINED_BASELINE,
-                            C2Config::PROFILE_AVC_BASELINE,
-                            C2Config::PROFILE_AVC_MAIN,
-                            C2Config::PROFILE_AVC_CONSTRAINED_HIGH,
-                            C2Config::PROFILE_AVC_PROGRESSIVE_HIGH,
-                            C2Config::PROFILE_AVC_HIGH}),
-                    C2F(mProfileLevel, level).oneOf({
-                            C2Config::LEVEL_AVC_1, C2Config::LEVEL_AVC_1B, C2Config::LEVEL_AVC_1_1,
-                            C2Config::LEVEL_AVC_1_2, C2Config::LEVEL_AVC_1_3,
-                            C2Config::LEVEL_AVC_2, C2Config::LEVEL_AVC_2_1, C2Config::LEVEL_AVC_2_2,
-                            C2Config::LEVEL_AVC_3, C2Config::LEVEL_AVC_3_1, C2Config::LEVEL_AVC_3_2,
-                            C2Config::LEVEL_AVC_4, C2Config::LEVEL_AVC_4_1, C2Config::LEVEL_AVC_4_2,
-                            C2Config::LEVEL_AVC_5, C2Config::LEVEL_AVC_5_1, C2Config::LEVEL_AVC_5_2
-                    })
+                    C2F(mProfileLevel, profile).oneOf(std::vector<uint32_t>(kind.profiles.begin(), kind.profiles.end())),
+                    C2F(mProfileLevel, level).oneOf(std::vector<uint32_t>(kind.levels.begin(), kind.levels.end()))
                 })
                 .withSetter(ProfileLevelSetter, mSize)
                 .build());
@@ -304,7 +337,7 @@ private:
 
 /// Talks to Inquiline on the Mac, which decodes the video with VideoToolbox and writes each
 /// picture straight into the GPU buffer of the picture Android gave for it. Little-endian.
-///   hello  "IQC1", 32-byte token, u8 codec (1 H.264)
+///   hello  "IQC1", 32-byte token, u8 codec (1 H.264, 2 VP9, 3 AV1)
 ///   'D' u64 index, u64 timestamp, u32 flags (1 codec config, 2 end of stream), u32 size, bytes
 ///   'E' drain: every picture still held
 ///   'F' flush: drop them
@@ -319,11 +352,9 @@ public:
     ~Mac() { if (mSocket >= 0) close(mSocket); }
 
     bool connect(uint8_t codec) {
-        // Inquiline writes its port and token here as Android starts, for this service alone.
-        std::ifstream file("/data/vendor/inquiline/decoder");
         unsigned port = 0;
-        std::string token;
-        if (!(file >> port >> token) || token.size() != 64) return false;
+        std::string token, kinds;
+        if (!ReadKey(&port, &token, &kinds)) return false;
         mSocket = socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0);
         if (mSocket < 0) return false;
         int on = 1;
@@ -426,8 +457,8 @@ uint32_t ResourceOf(const C2Handle* handle) {
 
 class Decoder : public SimpleC2Component {
 public:
-    Decoder(const char* name, c2_node_id_t id, uint8_t codec, const std::shared_ptr<AvcIntf>& intf)
-        : SimpleC2Component(std::make_shared<SimpleInterface<AvcIntf>>(name, id, intf)),
+    Decoder(const char* name, c2_node_id_t id, uint8_t codec, const std::shared_ptr<VideoIntf>& intf)
+        : SimpleC2Component(std::make_shared<SimpleInterface<VideoIntf>>(name, id, intf)),
           mIntf(intf), mCodec(codec) {}
 
     bool connect() {
@@ -575,7 +606,7 @@ private:
         return true;
     }
 
-    std::shared_ptr<AvcIntf> mIntf;
+    std::shared_ptr<VideoIntf> mIntf;
     std::unique_ptr<Mac> mMac;
     const uint8_t mCodec;
     uint32_t mWidth = 0, mHeight = 0;
@@ -591,9 +622,11 @@ public:
 
     c2_status_t createComponent(C2String name, std::shared_ptr<C2Component>* const component) override {
         component->reset();
-        if (name != COMPONENT_NAME) return C2_NOT_FOUND;
+        const Kind* kind = find(name);
+        if (!kind) return C2_NOT_FOUND;
         static std::atomic<c2_node_id_t> nextId;
-        auto decoder = std::make_shared<Decoder>(COMPONENT_NAME, nextId++, 1, std::make_shared<AvcIntf>(mReflector));
+        auto decoder = std::make_shared<Decoder>(kind->name, nextId++, kind->codec,
+                                                 std::make_shared<VideoIntf>(mReflector, *kind));
         // Without Inquiline on the other end, Android takes its software decoder instead.
         if (!decoder->connect()) return C2_NO_MEMORY;
         *component = decoder;
@@ -601,21 +634,31 @@ public:
     }
 
     c2_status_t createInterface(C2String name, std::shared_ptr<C2ComponentInterface>* const interface) override {
-        if (name != COMPONENT_NAME) return C2_NOT_FOUND;
-        *interface = std::shared_ptr<C2ComponentInterface>(new SimpleInterface<AvcIntf>(
-                COMPONENT_NAME, 0, std::make_shared<AvcIntf>(mReflector)));
+        const Kind* kind = find(name);
+        if (!kind) return C2_NOT_FOUND;
+        *interface = std::shared_ptr<C2ComponentInterface>(new SimpleInterface<VideoIntf>(
+                kind->name, 0, std::make_shared<VideoIntf>(mReflector, *kind)));
         return C2_OK;
     }
 
+    /// The kinds this Mac decodes in its hardware.
     std::vector<std::shared_ptr<const C2Component::Traits>> listComponents() override {
-        auto traits = std::make_shared<C2Component::Traits>();
-        traits->name = COMPONENT_NAME;
-        traits->domain = C2Component::DOMAIN_VIDEO;
-        traits->kind = C2Component::KIND_DECODER;
-        traits->mediaType = MEDIA_MIMETYPE_VIDEO_AVC;
-        traits->rank = 0x100;
-        traits->owner = "inquiline";
-        return {traits};
+        std::vector<std::shared_ptr<const C2Component::Traits>> list;
+        unsigned port;
+        std::string token, kinds;
+        if (!ReadKey(&port, &token, &kinds)) return list;
+        for (const auto& kind : Kinds()) {
+            if (("," + kinds + ",").find(std::string(",") + kind.word + ",") == std::string::npos) continue;
+            auto traits = std::make_shared<C2Component::Traits>();
+            traits->name = kind.name;
+            traits->domain = C2Component::DOMAIN_VIDEO;
+            traits->kind = C2Component::KIND_DECODER;
+            traits->mediaType = kind.mediaType;
+            traits->rank = 0x100;
+            traits->owner = "inquiline";
+            list.push_back(traits);
+        }
+        return list;
     }
 
     c2_status_t copyBuffer(std::shared_ptr<C2GraphicBuffer>, std::shared_ptr<C2GraphicBuffer>) override {
@@ -631,6 +674,11 @@ public:
     c2_status_t querySupportedValues_sm(std::vector<C2FieldSupportedValuesQuery>&) const override { return C2_OK; }
 
 private:
+    static const Kind* find(const C2String& name) {
+        for (const auto& kind : Kinds()) if (name == kind.name) return &kind;
+        return nullptr;
+    }
+
     std::shared_ptr<C2ReflectorHelper> mReflector;
 };
 

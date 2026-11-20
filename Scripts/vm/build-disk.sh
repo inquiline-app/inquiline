@@ -3,7 +3,7 @@
 # that built it. Run as root in a Fedora guest with the same kernel, the guest GPU
 # libraries in $1 (libdrm.so from Mesa, vulkan.gfxstream.so from build-guest-vulkan.sh and
 # audio.primary.redroid.so from build-guest-audio.sh, android.hardware.gnss-service.inquiline from
-# build-guest-gnss.sh, services.jar and oat-arm64 from build-services.sh, and Vendor/inquiline-framework-overlay.apk
+# build-guest-gnss.sh, inquiline-c2 from build-guest-c2.sh, services.jar and oat-arm64 from build-services.sh, and Vendor/inquiline-framework-overlay.apk
 # from build-framework-overlay.sh), the Redroid image in podman, and the empty target disk at $2.
 set -eu
 
@@ -254,6 +254,8 @@ exec podman run --rm $EXTRA --name redroid --ip 10.88.0.2 --privileged --pull=ne
   -v $A/services.jar:/system/framework/services.jar:ro -v $A/oat-arm64:/system/framework/oat/arm64:ro \
   -v $A/android.hardware.gnss-service.inquiline:/vendor/bin/hw/android.hardware.gnss-service.inquiline:ro \
   -v $A/gnss.xml:/vendor/etc/vintf/manifest/gnss-inquiline.xml:ro \
+  -v $A/inquiline-c2:/system/bin/inquiline-c2:ro -v $A/inquiline-c2.xml:/vendor/etc/vintf/manifest/inquiline-c2.xml:ro \
+  -v $A/media_codecs.xml:/vendor/etc/media_codecs.xml:ro \
   -v $A/gps.xml:/vendor/etc/permissions/android.hardware.location.gps.xml:ro \
   -v $A/vulkan-version.xml:/vendor/etc/permissions/android.hardware.vulkan.version-1_1.xml:ro \
   -v $A/no-aep.xml:/vendor/etc/permissions/android.hardware.opengles.aep.xml:ro \
@@ -275,12 +277,72 @@ on post-fs
     # The tunnel device Android's VPNs use, as its own ueventd rules give it.
     chown system vpn /dev/tun
     chmod 0660 /dev/tun
+    # Codec2's AIDL services, as Inquiline's decoders are, before the media services start; and
+    # codec input in gralloc buffers (BLOB), as the VM has no DMA-BUF heap.
+    setprop media.c2.hal.selection aidl
+    setprop debug.stagefright.c2-poolmask 851968
 
 # Android's GPS, which reports where the Mac is (Vendor/gnss).
 service vendor.gnss-inquiline /vendor/bin/hw/android.hardware.gnss-service.inquiline
     class hal
     user root
     group root
+
+# Inquiline's video decoders, which hand video to the Mac (Vendor/c2). They use the codec
+# package's libraries; Android's own come first, as the media framework they also load needs.
+service vendor.c2-inquiline /system/bin/inquiline-c2
+    class hal
+    user mediacodec
+    group camera mediadrm drmrpc graphics inet
+    setenv LD_LIBRARY_PATH /system/lib64:/apex/com.android.media.swcodec/lib64
+EOF
+# Inquiline's video decoders (build-guest-c2.sh), registered as a phone maker's are, and their
+# limits in Android's codec list. Inquiline tells them which kinds the Mac decodes.
+cp "$LIBS/inquiline-c2" "$ROOT/var/inquiline/"
+chmod 755 "$ROOT/var/inquiline/inquiline-c2"
+cat > "$ROOT/var/inquiline/inquiline-c2.xml" <<'EOF'
+<manifest version="1.0" type="device">
+    <hal format="aidl">
+        <name>android.hardware.media.c2</name>
+        <version>1</version>
+        <fqname>IComponentStore/default</fqname>
+    </hal>
+</manifest>
+EOF
+cat > "$ROOT/var/inquiline/media_codecs.xml" <<'EOF'
+<?xml version="1.0" encoding="utf-8" ?>
+<!-- Inquiline's decoders, which hand video to the Mac's hardware: as large and fast as it plays. -->
+<MediaCodecs>
+    <Decoders>
+        <MediaCodec name="c2.inquiline.avc.decoder" type="video/avc">
+            <Limit name="size" min="2x2" max="4096x4096" />
+            <Limit name="alignment" value="2x2" />
+            <Limit name="block-size" value="16x16" />
+            <Limit name="block-count" range="1-65536" />
+            <Limit name="blocks-per-second" range="1-3932160" />
+            <Limit name="bitrate" range="1-120000000" />
+            <Feature name="adaptive-playback" />
+        </MediaCodec>
+        <MediaCodec name="c2.inquiline.vp9.decoder" type="video/x-vnd.on2.vp9">
+            <Limit name="size" min="2x2" max="4096x4096" />
+            <Limit name="alignment" value="2x2" />
+            <Limit name="block-size" value="16x16" />
+            <Limit name="block-count" range="1-65536" />
+            <Limit name="blocks-per-second" range="1-3932160" />
+            <Limit name="bitrate" range="1-120000000" />
+            <Feature name="adaptive-playback" />
+        </MediaCodec>
+        <MediaCodec name="c2.inquiline.av1.decoder" type="video/av01">
+            <Limit name="size" min="2x2" max="4096x4096" />
+            <Limit name="alignment" value="2x2" />
+            <Limit name="block-size" value="16x16" />
+            <Limit name="block-count" range="1-65536" />
+            <Limit name="blocks-per-second" range="1-3932160" />
+            <Limit name="bitrate" range="1-120000000" />
+            <Feature name="adaptive-playback" />
+        </MediaCodec>
+    </Decoders>
+</MediaCodecs>
 EOF
 cat > "$ROOT/var/inquiline/gnss.xml" <<'EOF'
 <manifest version="1.0" type="device">

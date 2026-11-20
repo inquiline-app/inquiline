@@ -336,14 +336,18 @@ final class AndroidRuntime {
         AppLog.write("Google Play services may now locate, as on a phone")
     }
 
-    /// Android's video decoders (VideoDecoders) learn where the Mac listens, in a file only
-    /// their service reads.
+    /// Android's video decoders (VideoDecoders) learn where the Mac listens and which kinds of
+    /// video it decodes, in a file only their service reads. Android lists its codecs as it
+    /// starts, from the file the last start left: when the kinds changed (the first start, or
+    /// another Mac), its media service lists them again.
     private func shareVideoDecoders() {
         VideoDecoders.shared.start()
         guard VideoDecoders.shared.port != 0 else { return }
-        _ = try? shell("su 0 sh -c 'mkdir -p /data/vendor/inquiline && echo \(VideoDecoders.shared.key) > /data/vendor/inquiline/decoder"
-                       + " && chown -R mediacodec:mediacodec /data/vendor/inquiline && chmod 700 /data/vendor/inquiline"
-                       + " && chmod 400 /data/vendor/inquiline/decoder'")
+        let file = "/data/vendor/inquiline/decoder"
+        _ = try? shell("su 0 sh -c 'old=$(cut -d\" \" -f3 \(file) 2>/dev/null); mkdir -p /data/vendor/inquiline"
+                       + " && echo \(VideoDecoders.shared.key) > \(file) && chown -R mediacodec:mediacodec /data/vendor/inquiline"
+                       + " && chmod 700 /data/vendor/inquiline && chmod 400 \(file)"
+                       + " && [ \"$old\" = \"$(cut -d\" \" -f3 \(file))\" ] || { stop media; start media; }'")
     }
 
     private func turnOffBluetooth() {
@@ -683,7 +687,7 @@ final class AndroidRuntime {
     /// 22: Android's disk in Finder takes a password only Inquiline knows (Samba).
     /// 23: a GPS (Vendor/gnss) that reports where the Mac is.
     /// 24: a broadcast too large for its app is dropped alone, not retried by killing the app.
-    private static let diskRevision = 24
+    private static let diskRevision = 25
     /// The VM's memory map fits the 36-bit (64 GB) address space Apple's M1 and M2 give a VM:
     /// above the RAM, the window for 64-bit device memory, such as the GPU's 2 GB, is 16 GB,
     /// not QEMU's 512 GB, which only M3 and later have room for (see the QEMU patch 0102).

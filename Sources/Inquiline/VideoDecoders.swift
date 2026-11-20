@@ -22,8 +22,17 @@ final class VideoDecoders {
     private var listener: Int32 = -1
     private(set) var port: UInt16 = 0
 
-    /// What Android's decoders read: the port and the token, in hex.
-    var key: String { "\(port) " + token.map { String(format: "%02x", $0) }.joined() }
+    /// What Android's decoders read: the port, the token in hex, and the kinds of video this Mac
+    /// decodes in its hardware, which Android lists as its own.
+    var key: String {
+        "\(port) " + token.map { String(format: "%02x", $0) }.joined() + " " + Self.supported.map(\.name).joined(separator: ",")
+    }
+
+    /// H.264 on every Mac; VP9 on Apple silicon; AV1 from M3 on.
+    static let supported: [Codec] = Codec.allCases.filter { codec in
+        if codec != .avc { VTRegisterSupplementalVideoDecoderIfAvailable(codec.type) }
+        return VTIsHardwareDecodeSupported(codec.type)
+    }
 
     /// Listens on the Mac's own loopback only, where the VM's network reaches it.
     func start() {
@@ -59,6 +68,20 @@ final class VideoDecoders {
     }
 }
 
+enum Codec: UInt8, CaseIterable {
+    case avc = 1, vp9 = 2, av1 = 3
+
+    var name: String { "\(self)" }
+
+    var type: CMVideoCodecType {
+        switch self {
+        case .avc: kCMVideoCodecType_H264
+        case .vp9: kCMVideoCodecType_VP9
+        case .av1: kCMVideoCodecType_AV1
+        }
+    }
+}
+
 /// One of Android's decoders, for as long as it lives: its video's pictures decoded in turn,
 /// held until Android gives a buffer for each, in the order they are shown.
 private final class DecodeSession {
@@ -66,7 +89,12 @@ private final class DecodeSession {
     private let token: [UInt8]
     private var session: VTDecompressionSession?
     private var format: CMVideoFormatDescription?
+    private var codec = Codec.avc
     private var parameterSets: [Data] = []
+    /// What the stream's pictures are made with, from its headers: the session is made anew when it changes.
+    private var streamFormat: Data?
+    /// The last picture shown, which a VP9 or AV1 frame may show again.
+    private var lastImage: CVPixelBuffer?
     /// Pictures decoded but not yet shown, which a later one may still come before.
     private var waiting: [(index: UInt64, time: Int64, image: CVPixelBuffer?)] = []
     /// Pictures Android was told of, waiting for its buffers.
@@ -90,8 +118,11 @@ private final class DecodeSession {
             close(socket)
         }
         guard let hello = receive(37), hello.prefix(4) == Data("IQC1".utf8),
-              same(Array(hello[4..<36]), token), hello[36] == 1
+              same(Array(hello[4..<36]), token), let codec = Codec(rawValue: hello[36]),
+              VideoDecoders.supported.contains(codec)
         else { return }
+        self.codec = codec
+        reorderDepth = codec == .avc ? 4 : 0
         guard send(Data([0])) else { return }
         while let request = receive(1)?.first {
             switch request {
@@ -126,10 +157,29 @@ private final class DecodeSession {
         }
     }
 
-    // MARK: - Decoding (H.264)
+    // MARK: - Decoding
+
+    private func decode(_ data: Data, index: UInt64, time: Int64, configOnly: Bool) {
+        switch codec {
+        case .avc: decodeAVC(data, index: index, time: time, configOnly: configOnly)
+        case .vp9, .av1: decodeFrame(data, index: index, time: time, configOnly: configOnly)
+        }
+    }
+
+    /// Decodes one sample in the session as it is now; nil if it made no picture.
+    private func decodeSample(_ sample: Data, time: Int64) -> CVPixelBuffer? {
+        guard let session, let format, let buffer = Self.sampleBuffer(sample, format: format, time: time) else { return nil }
+        var image: CVPixelBuffer?
+        VTDecompressionSessionDecodeFrame(session, sampleBuffer: buffer, flags: [], infoFlagsOut: nil) { status, _, decoded, _, _ in
+            if status == noErr { image = decoded }
+        }
+        return image
+    }
+
+    // MARK: H.264
 
     /// One access unit as Android gives it, NAL units with start codes.
-    private func decode(_ data: Data, index: UInt64, time: Int64, configOnly: Bool) {
+    private func decodeAVC(_ data: Data, index: UInt64, time: Int64, configOnly: Bool) {
         var units: [Data] = []
         var sets: [Data] = []
         for unit in Self.units(of: data) {
@@ -152,29 +202,16 @@ private final class DecodeSession {
             if !configOnly { waiting.append((index, time, nil)) }
             return
         }
-        guard let session, let format else {
-            waiting.append((index, time, nil))
-            return
-        }
         var sample = Data(capacity: units.reduce(0) { $0 + $1.count + 4 })
         for unit in units {
             withUnsafeBytes(of: UInt32(unit.count).bigEndian) { sample.append(contentsOf: $0) }
             sample.append(unit)
         }
-        var image: CVPixelBuffer?
-        if let buffer = Self.sampleBuffer(sample, format: format, time: time) {
-            VTDecompressionSessionDecodeFrame(session, sampleBuffer: buffer, flags: [], infoFlagsOut: nil) { status, _, decoded, _, _ in
-                if status == noErr { image = decoded }
-            }
-        }
-        waiting.append((index, time, image))
+        waiting.append((index, time, decodeSample(sample, time: time)))
     }
 
     private func makeSession() {
-        if let session { VTDecompressionSessionInvalidate(session) }
-        session = nil
-        format = nil
-        guard parameterSets.count == 2 else { return }
+        guard parameterSets.count == 2 else { return makeSession(nil) }
         let sps = parameterSets[0]
         // Baseline streams show each picture as it comes; others may hold some back.
         reorderDepth = sps.count > 1 && sps[sps.startIndex + 1] == 66 ? 0 : 4
@@ -184,6 +221,36 @@ private final class DecodeSession {
         CMVideoFormatDescriptionCreateFromH264ParameterSets(
             allocator: nil, parameterSetCount: 2, parameterSetPointers: pointers, parameterSetSizes: sizes,
             nalUnitHeaderLength: 4, formatDescriptionOut: &description)
+        makeSession(description)
+    }
+
+    // MARK: VP9 and AV1
+
+    /// One frame as Android gives it: a VP9 frame or superframe, or an AV1 temporal unit. Each
+    /// shows one picture, in the order they come.
+    private func decodeFrame(_ data: Data, index: UInt64, time: Int64, configOnly: Bool) {
+        let header = codec == .vp9 ? VP9Header(data) : AV1Header(data)
+        if let header, header.description != nil, header.key != streamFormat {
+            streamFormat = header.key
+            makeSession(header.description)
+        }
+        if configOnly { return }
+        var image = data.isEmpty ? nil : decodeSample(data, time: time)
+        // A frame that only shows an earlier one again.
+        if image == nil, header?.showsExisting == true { image = lastImage }
+        if let image { lastImage = image }
+        waiting.append((index, time, image))
+    }
+
+    // MARK: Sessions
+
+    private func makeSession(_ description: CMVideoFormatDescription?) {
+        if let session {
+            VTDecompressionSessionWaitForAsynchronousFrames(session)
+            VTDecompressionSessionInvalidate(session)
+        }
+        session = nil
+        format = nil
         guard let description else { return }
         let attributes: [CFString: Any] = [
             kCVPixelBufferPixelFormatTypeKey: kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange,
@@ -392,6 +459,215 @@ private final class DecodeSession {
                                   sampleSizeArray: &size, sampleBufferOut: &buffer)
         return buffer
     }
+}
+
+/// What a VP9 key frame or an AV1 sequence header says the pictures are made with.
+private struct StreamHeader {
+    /// Changes when the session must be made anew.
+    var key: Data
+    var description: CMVideoFormatDescription?
+    var showsExisting = false
+}
+
+/// Reads bits, the most significant first, as the VP9 and AV1 specifications write them.
+private struct Bits {
+    let bytes: [UInt8]
+    var position = 0
+
+    init(_ bytes: [UInt8]) { self.bytes = bytes }
+
+    var left: Int { bytes.count * 8 - position }
+
+    mutating func f(_ count: Int) -> Int {
+        var value = 0
+        for _ in 0..<count {
+            let byte = position / 8 < bytes.count ? bytes[position / 8] : 0
+            value = value << 1 | Int((byte >> (7 - UInt8(position % 8))) & 1)
+            position += 1
+        }
+        return value
+    }
+
+    mutating func uvlc() -> Int {
+        var zeros = 0
+        while left > 0, f(1) == 0 { zeros += 1 }
+        return zeros >= 32 ? Int(UInt32.max) : f(zeros) + (1 << zeros) - 1
+    }
+}
+
+/// A VP9 key frame's uncompressed header (VP9 bitstream specification, 6.2).
+private func VP9Header(_ data: Data) -> StreamHeader? {
+    var bits = Bits(Array(data.prefix(32)))
+    guard bits.f(2) == 2 else { return nil }
+    let low = bits.f(1)
+    let profile = bits.f(1) << 1 | low
+    if profile == 3 { _ = bits.f(1) }
+    if bits.f(1) == 1 { return StreamHeader(key: Data(), description: nil, showsExisting: true) }
+    guard bits.f(1) == 0 else { return nil }  // a key frame
+    _ = bits.f(2)
+    guard bits.f(8) == 0x49, bits.f(8) == 0x83, bits.f(8) == 0x42 else { return nil }
+    let depth = profile >= 2 ? (bits.f(1) == 1 ? 12 : 10) : 8
+    let space = bits.f(3)
+    var fullRange = 1
+    var subsampling = 1  // 4:2:0
+    if space != 7 {
+        fullRange = bits.f(1)
+        if profile == 1 || profile == 3 {
+            let x = bits.f(1), y = bits.f(1)
+            _ = bits.f(1)
+            subsampling = x == 1 && y == 1 ? 1 : x == 1 ? 2 : 3
+        }
+    } else if profile == 1 || profile == 3 {
+        subsampling = 3
+        _ = bits.f(1)
+    }
+    let width = bits.f(16) + 1, height = bits.f(16) + 1
+    // ITU-T H.273 codes for its colour space.
+    let (primaries, transfer, matrix): (UInt8, UInt8, UInt8) = switch space {
+    case 1, 3: (6, 6, 6)
+    case 2: (1, 1, 1)
+    case 4: (7, 7, 7)
+    case 5: (9, 14, 9)
+    case 7: (1, 13, 0)
+    default: (2, 2, 2)
+    }
+    let vpcC = Data([1, 0, 0, 0, UInt8(profile), 0, UInt8(depth << 4 | subsampling << 1 | fullRange),
+                     primaries, transfer, matrix, 0, 0])
+    let key = vpcC + withUnsafeBytes(of: (UInt32(width), UInt32(height))) { Data($0) }
+    var description: CMVideoFormatDescription?
+    let extensions = [kCMFormatDescriptionExtension_SampleDescriptionExtensionAtoms: ["vpcC": vpcC]] as CFDictionary
+    CMVideoFormatDescriptionCreate(allocator: nil, codecType: kCMVideoCodecType_VP9, width: Int32(width),
+                                   height: Int32(height), extensions: extensions, formatDescriptionOut: &description)
+    return StreamHeader(key: key, description: description)
+}
+
+/// An AV1 sequence header (AV1 specification, 5.5), from a temporal unit's OBUs or from the
+/// AV1CodecConfigurationRecord an app gives first.
+private func AV1Header(_ data: Data) -> StreamHeader? {
+    var bytes = Array(data)
+    if bytes.count >= 4, bytes[0] == 0x81 { bytes.removeFirst(4) }
+    var at = 0
+    while at < bytes.count {
+        let header = bytes[at]
+        let type = Int(header >> 3) & 0xf
+        let hasExtension = header & 4 != 0, hasSize = header & 2 != 0
+        var payload = at + 1 + (hasExtension ? 1 : 0)
+        var size = bytes.count - payload
+        if hasSize {
+            size = 0
+            for i in 0..<8 {
+                guard payload < bytes.count else { return nil }
+                let byte = bytes[payload]
+                payload += 1
+                size |= Int(byte & 0x7f) << (7 * i)
+                if byte & 0x80 == 0 { break }
+            }
+        }
+        guard payload + size <= bytes.count else { return nil }
+        if type == 1 {
+            return AV1SequenceHeader(obu: Array(bytes[at..<(payload + size)]), payload: Array(bytes[payload..<(payload + size)]))
+        }
+        at = payload + size
+    }
+    return nil
+}
+
+private func AV1SequenceHeader(obu: [UInt8], payload: [UInt8]) -> StreamHeader? {
+    var bits = Bits(payload)
+    let profile = bits.f(3)
+    _ = bits.f(1)  // still_picture
+    let reduced = bits.f(1) == 1
+    var level = 0, tier = 0
+    if reduced {
+        level = bits.f(5)
+    } else {
+        var decoderModel = false
+        var bufferDelayLength = 0
+        if bits.f(1) == 1 {  // timing_info
+            _ = bits.f(32)
+            _ = bits.f(32)
+            if bits.f(1) == 1 { _ = bits.uvlc() }
+            decoderModel = bits.f(1) == 1
+            if decoderModel {
+                bufferDelayLength = bits.f(5) + 1
+                _ = bits.f(32)
+                _ = bits.f(5)
+                _ = bits.f(5)
+            }
+        }
+        let initialDisplayDelay = bits.f(1) == 1
+        let points = bits.f(5) + 1
+        for point in 0..<points {
+            _ = bits.f(12)
+            let pointLevel = bits.f(5)
+            let pointTier = pointLevel > 7 ? bits.f(1) : 0
+            if point == 0 {
+                level = pointLevel
+                tier = pointTier
+            }
+            if decoderModel, bits.f(1) == 1 {
+                _ = bits.f(bufferDelayLength)
+                _ = bits.f(bufferDelayLength)
+                _ = bits.f(1)
+            }
+            if initialDisplayDelay, bits.f(1) == 1 { _ = bits.f(4) }
+        }
+    }
+    let widthBits = bits.f(4) + 1, heightBits = bits.f(4) + 1
+    let width = bits.f(widthBits) + 1, height = bits.f(heightBits) + 1
+    if !reduced, bits.f(1) == 1 {  // frame_id_numbers_present
+        _ = bits.f(4)
+        _ = bits.f(3)
+    }
+    _ = bits.f(3)  // 128x128 superblocks, filter intra, intra edge filter
+    var orderHint = false
+    if !reduced {
+        _ = bits.f(4)  // interintra, masked compound, warped motion, dual filter
+        orderHint = bits.f(1) == 1
+        if orderHint { _ = bits.f(2) }
+        var screenContent = 2
+        if bits.f(1) == 0 { screenContent = bits.f(1) }
+        if screenContent > 0, bits.f(1) == 0 { _ = bits.f(1) }
+        if orderHint { _ = bits.f(3) }
+    }
+    _ = bits.f(3)  // superres, cdef, restoration
+    let high = bits.f(1)
+    let twelve = profile == 2 && high == 1 ? bits.f(1) : 0
+    let mono = profile == 1 ? 0 : bits.f(1)
+    var primaries = 2, transfer = 2, matrix = 2
+    if bits.f(1) == 1 {
+        primaries = bits.f(8)
+        transfer = bits.f(8)
+        matrix = bits.f(8)
+    }
+    var x = 1, y = 1, position = 0
+    if mono == 0 {
+        if primaries == 1, transfer == 13, matrix == 0 {
+            x = 0
+            y = 0
+        } else {
+            _ = bits.f(1)  // color_range
+            if profile == 1 {
+                x = 0
+                y = 0
+            } else if profile == 2 {
+                if twelve == 1 {
+                    x = bits.f(1)
+                    y = x == 1 ? bits.f(1) : 0
+                } else {
+                    y = 0
+                }
+            }
+            if x == 1, y == 1 { position = bits.f(2) }
+        }
+    }
+    let record = Data([0x81, UInt8(profile << 5 | level),
+                       UInt8(tier << 7 | high << 6 | twelve << 5 | mono << 4 | x << 3 | y << 2 | position), 0]) + Data(obu)
+    var description: CMVideoFormatDescription?
+    let extensions = [kCMFormatDescriptionExtension_SampleDescriptionExtensionAtoms: ["av1C": record]] as CFDictionary
+    CMVideoFormatDescriptionCreate(allocator: nil, codecType: kCMVideoCodecType_AV1, width: Int32(width),
+                                   height: Int32(height), extensions: extensions, formatDescriptionOut: &description)
+    return StreamHeader(key: record, description: description)
 }
 
 private extension Data {
