@@ -13,7 +13,7 @@ final class NotificationBridge: NSObject, UNUserNotificationCenterDelegate {
     static let shared = NotificationBridge()
 
     static let agent = "io.github.inquiline.notifications"
-    static let agentVersion = 46
+    static let agentVersion = 47
     private static let socket = "localabstract:inquiline-notifications"
 
     /// Opens an app's window, given its package; with true, without starting the app, whose
@@ -267,7 +267,7 @@ final class NotificationBridge: NSObject, UNUserNotificationCenterDelegate {
             DispatchQueue.main.async { self.openApp?(package, !open) }
             for _ in 0..<40 {
                 // An open window's display shows the app; a new one is the display it makes.
-                let display = open ? Self.display(of: package) : Self.windowDisplays().subtracting(before).first
+                let display = open ? AndroidRuntime.display(of: package) : Self.windowDisplays().subtracting(before).first
                 if let display {
                     let line = Array("\(display)\n".utf8)
                     _ = write(helper, line, line.count)
@@ -288,7 +288,7 @@ final class NotificationBridge: NSObject, UNUserNotificationCenterDelegate {
             let before = Self.windowDisplays()
             DispatchQueue.main.async { self.openApp?(package, !open) }
             for _ in 0..<40 {
-                let display = open ? Self.display(of: package) : Self.windowDisplays().subtracting(before).first
+                let display = open ? AndroidRuntime.display(of: package) : Self.windowDisplays().subtracting(before).first
                 if let display { return run(display) }
                 Thread.sleep(forTimeInterval: 0.25)
             }
@@ -301,19 +301,6 @@ final class NotificationBridge: NSObject, UNUserNotificationCenterDelegate {
         return Set(output.split(whereSeparator: \.isNewline).compactMap { Int($0.split(separator: " ").last ?? "") })
     }
 
-    /// The display of the app's window: one of Inquiline's, not Android's own (0).
-    private static func display(of package: String) -> Int? {
-        guard let output = try? AdbClient.shell("dumpsys activity activities | grep -E '^Display #|Hist  #'") else { return nil }
-        var current: Int?
-        for line in output.split(whereSeparator: \.isNewline) {
-            if line.hasPrefix("Display #") {
-                current = Int(line.dropFirst("Display #".count).prefix { $0.isNumber })
-            } else if line.contains(" \(package)/"), let current, current > 0 {
-                return current
-            }
-        }
-        return nil
-    }
 
     private static func readLine(_ fd: Int32, seconds: Int) -> String? {
         var line = [UInt8]()

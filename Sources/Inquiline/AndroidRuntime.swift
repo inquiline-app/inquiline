@@ -192,6 +192,44 @@ final class AndroidRuntime {
         return list
     }
 
+    /// An app's shortcuts, as holding its icon on a phone shows them, from the helper's
+    /// Shortcuts: each its id, label and icon as PNG; nil if Android couldn't tell.
+    func shortcuts(package: String) -> [(id: String, label: String, icon: Data?)]? {
+        guard package.range(of: "^[A-Za-z0-9_.]+$", options: .regularExpression) != nil else { return nil }
+        let agent = NotificationBridge.agent
+        guard let output = try? shell("su 0 sh -c 'CLASSPATH=$(pm path \(agent) | cut -d: -f2) app_process / \(agent).Shortcuts list \(package)'"),
+              let line = output.split(whereSeparator: \.isNewline).last(where: { $0.hasPrefix("[") }),
+              let list = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [[String: Any]] else { return nil }
+        return list.compactMap { item in
+            guard let id = item["id"] as? String, let label = item["label"] as? String else { return nil }
+            return (id, label, (item["icon"] as? String).flatMap { Data(base64Encoded: $0) })
+        }
+    }
+
+    /// Opens one of an app's shortcuts on the display of its window.
+    func openShortcut(package: String, id: String) {
+        guard package.range(of: "^[A-Za-z0-9_.]+$", options: .regularExpression) != nil else { return }
+        // Its id goes to Android's shell, so only as base64-safe hex.
+        let hex = id.utf8.map { String(format: "%02x", $0) }.joined()
+        let display = Self.display(of: package) ?? 0
+        let agent = NotificationBridge.agent
+        _ = try? shell("su 0 sh -c 'CLASSPATH=$(pm path \(agent) | cut -d: -f2) app_process / \(agent).Shortcuts open \(package) \(hex) \(display)'")
+    }
+
+    /// The display of the app's window: one of Inquiline's, not Android's own (0).
+    static func display(of package: String) -> Int? {
+        guard let output = try? AdbClient.shell("dumpsys activity activities | grep -E '^Display #|Hist  #'") else { return nil }
+        var current: Int?
+        for line in output.split(whereSeparator: \.isNewline) {
+            if line.hasPrefix("Display #") {
+                current = Int(line.dropFirst("Display #".count).prefix { $0.isNumber })
+            } else if line.contains(" \(package)/"), let current, current > 0 {
+                return current
+            }
+        }
+        return nil
+    }
+
     /// Google's passwords and passkeys fill in apps' sign-in screens, as a phone with Google Play
     /// has them from the start: Google Play services is Android's autofill and passkey provider
     /// unless the user chose another in Android's Settings.

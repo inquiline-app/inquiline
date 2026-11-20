@@ -55,7 +55,57 @@ final class AppProcess: NSObject, NSApplicationDelegate {
                     return
                 }
                 controller.start()
+                self.appStarted = true
+                self.loadShortcuts()
             }
+        }
+    }
+
+    // MARK: - Dock menu
+
+    /// The app's shortcuts, as holding its icon on a phone shows them, in its Dock menu: those
+    /// the app offers now, read again as it comes to the front, as some change with use.
+    private var shortcuts: [(id: String, label: String, icon: Data?)] = []
+    private var loadingShortcuts = false
+    private var appStarted = false
+
+    private func loadShortcuts() {
+        guard package != AppShortcuts.settingsPackage, !loadingShortcuts else { return }
+        loadingShortcuts = true
+        DispatchQueue.global(qos: .utility).async { [package] in
+            let found = AndroidRuntime.shared.shortcuts(package: package)
+            DispatchQueue.main.async {
+                self.loadingShortcuts = false
+                if let found { self.shortcuts = found }
+            }
+        }
+    }
+
+    func applicationDidBecomeActive(_ notification: Notification) {
+        if appStarted { loadShortcuts() }
+    }
+
+    func applicationDockMenu(_ sender: NSApplication) -> NSMenu? {
+        guard !shortcuts.isEmpty else { return nil }
+        let menu = NSMenu()
+        for shortcut in shortcuts {
+            let item = menu.addItem(withTitle: shortcut.label, action: #selector(openShortcut(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = shortcut.id
+            if let data = shortcut.icon, let image = NSImage(data: data) {
+                image.size = NSSize(width: 16, height: 16)
+                item.image = image
+            }
+        }
+        return menu
+    }
+
+    @objc private func openShortcut(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? String else { return }
+        NSApp.activate(ignoringOtherApps: true)
+        controller?.window.makeKeyAndOrderFront(nil)
+        DispatchQueue.global(qos: .userInitiated).async { [package] in
+            AndroidRuntime.shared.openShortcut(package: package, id: id)
         }
     }
 
