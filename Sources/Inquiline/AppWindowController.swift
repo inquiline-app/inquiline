@@ -608,6 +608,7 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate, 
             item.image = NSImage(systemSymbolName: "keyboard", accessibilityDescription: "Keyboard Controls")
             item.showsIndicator = false
             let menu = NSMenu()
+            menu.delegate = self
             Self.addControlsItems(to: menu, target: self)
             item.menu = menu
             return item
@@ -618,6 +619,7 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate, 
             item.label = "Screenshot"
             item.showsIndicator = false
             let menu = NSMenu()
+            menu.delegate = self
             menu.addItem(withTitle: "Take Screenshot", action: #selector(takeScreenshot(_:)), keyEquivalent: "").target = self
             let record = menu.addItem(withTitle: "Record Screen", action: #selector(toggleRecording(_:)), keyEquivalent: "")
             record.target = self
@@ -979,7 +981,7 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate, 
     private var monitorPopover: NSPopover?
 
     /// One popover at a time in the toolbar: opening one closes the one open.
-    private var shownPopover: NSPopover?
+    fileprivate var shownPopover: NSPopover?
 
     private func present(_ popover: NSPopover, relativeTo rect: NSRect, of view: NSView, preferredEdge edge: NSRectEdge,
                          seeThrough: Bool = false) {
@@ -1238,6 +1240,13 @@ private final class EngineLoad {
             }
         }
         return 0
+    }
+}
+
+/// A toolbar menu opening closes the popover open, as opening another popover does.
+extension AppWindowController: NSMenuDelegate {
+    func menuWillOpen(_ menu: NSMenu) {
+        if let shown = shownPopover, shown.isShown { shown.close() }
     }
 }
 
