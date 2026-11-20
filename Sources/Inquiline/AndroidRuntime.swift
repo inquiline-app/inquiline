@@ -689,7 +689,8 @@ final class AndroidRuntime {
     /// 25: Android's video decoders hand video to the Mac's hardware (VideoDecoders).
     /// 26: they also bring pictures into memory for apps that read them there.
     /// 27: video up to 1080p on Macs whose chip doesn't decode AV1 (M1, M2).
-    private static let diskRevision = 27
+    /// 28: video up to 4K on every Mac again.
+    private static let diskRevision = 28
 
     private var builtInScreen: ScrcpySession.Screen { ScrcpySession.Resolution.forThisMac.screen(landscape: false) }
     /// The VM's memory map fits the 36-bit (64 GB) address space Apple's M1 and M2 give a VM:
@@ -767,10 +768,7 @@ final class AndroidRuntime {
             // Android's built-in screen is as sharp as its apps' windows (ScrcpySession), as a
             // phone's is its panel: apps size video by it, YouTube's quality list among them.
             "-append", "root=/dev/vda rw selinux=0 quiet page_reporting.page_reporting_order=2 sysctl.vm.compaction_proactiveness=100"
-                + " inquiline.screen=\(builtInScreen.width)x\(builtInScreen.height)x\(builtInScreen.density)"
-                // Video up to 4K on Macs whose chip decodes AV1 (M3 and later), whose media engine
-                // keeps 4K smooth; up to 1080p on the others.
-                + " inquiline.video=\(VideoDecoders.supported.contains(.av1) ? "2160p" : "1080p")",
+                + " inquiline.screen=\(builtInScreen.width)x\(builtInScreen.height)x\(builtInScreen.density)",
             "-drive", "if=virtio,format=raw,file=\(disk.path),cache=writeback,discard=unmap",
             // Android's Vulkan goes to the Mac's GPU through gfxstream and MoltenVK, and its
             // GLES is ANGLE on that Vulkan, so the Mac needs no GLES of its own. Android 15

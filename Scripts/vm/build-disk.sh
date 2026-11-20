@@ -245,11 +245,8 @@ G=$A/data/inquiline-gapps
 # The built-in screen's size and density, from Inquiline (inquiline.screen=WxHxDPI); a phone's
 # own until it says.
 W=810 H=1440 D=320
-# Video up to 4K, or 1080p on Macs whose chip decodes less (inquiline.video=1080p).
-CODECS=$A/media_codecs.xml
 for arg in $(cat /proc/cmdline); do
   case $arg in inquiline.screen=*x*x*) S=${arg#*=}; W=${S%%x*}; S=${S#*x}; H=${S%%x*}; D=${S#*x} ;; esac
-  case $arg in inquiline.video=1080p) CODECS=$A/media_codecs-1080p.xml ;; esac
 done
 EXTRA=""
 [ -d $G/product ] && EXTRA="-v $G/product:/system/product -v $G/system_ext:/system/system_ext"
@@ -264,7 +261,7 @@ exec podman run --rm $EXTRA --name redroid --ip 10.88.0.2 --privileged --pull=ne
   -v $A/android.hardware.gnss-service.inquiline:/vendor/bin/hw/android.hardware.gnss-service.inquiline:ro \
   -v $A/gnss.xml:/vendor/etc/vintf/manifest/gnss-inquiline.xml:ro \
   -v $A/inquiline-c2:/system/bin/inquiline-c2:ro -v $A/inquiline-c2.xml:/vendor/etc/vintf/manifest/inquiline-c2.xml:ro \
-  -v $CODECS:/vendor/etc/media_codecs.xml:ro \
+  -v $A/media_codecs.xml:/vendor/etc/media_codecs.xml:ro \
   -v $A/gps.xml:/vendor/etc/permissions/android.hardware.location.gps.xml:ro \
   -v $A/vulkan-version.xml:/vendor/etc/permissions/android.hardware.vulkan.version-1_1.xml:ro \
   -v $A/no-aep.xml:/vendor/etc/permissions/android.hardware.opengles.aep.xml:ro \
@@ -398,9 +395,6 @@ cat > "$ROOT/var/inquiline/media_codecs.xml" <<'EOF'
     </Decoders>
 </MediaCodecs>
 EOF
-# Up to 1080p, for Macs whose chip decodes less (inquiline-android picks it).
-sed -e 's/max="4096x4096"/max="1920x1920"/' -e '/3840x2160/d' -e '/2560x1440/d' \
-    "$ROOT/var/inquiline/media_codecs.xml" > "$ROOT/var/inquiline/media_codecs-1080p.xml"
 cat > "$ROOT/var/inquiline/gnss.xml" <<'EOF'
 <manifest version="1.0" type="device">
     <hal format="aidl">
