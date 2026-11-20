@@ -112,6 +112,10 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate, 
         window.setFrameAutosaveName("Window")
         // As left: the frame saved with it is already the app's screen alone.
         if UserDefaults.standard.bool(forKey: Self.autoHideKey) { hideBar(resize: false) }
+        if UserDefaults.standard.bool(forKey: Self.keepOnTopKey) { window.level = .floating }
+        let center = NotificationCenter.default
+        center.addObserver(self, selector: #selector(appResigned), name: NSApplication.didResignActiveNotification, object: nil)
+        center.addObserver(self, selector: #selector(appActivated), name: NSApplication.didBecomeActiveNotification, object: nil)
         if flexible {
             displayView.renderer?.keepPixelSize()
             displayView.renderer?.onContent = { [weak self] in
@@ -774,6 +778,49 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate, 
 
     private var lastCores = 0.0
 
+    // MARK: - Window options
+
+    /// The settings' Window section: each the window's own, kept for this app.
+    static let keepOnTopKey = "KeepOnTop"
+    static let muteInBackgroundKey = "MuteInBackground"
+
+    var windowOptions: [(title: String, isOn: () -> Bool, change: (Bool) -> Void)] {
+        [
+            ("Keep on Top", { [weak self] in self?.window.level == .floating }, { [weak self] on in
+                UserDefaults.standard.set(on, forKey: Self.keepOnTopKey)
+                self?.window.level = on ? .floating : .normal
+            }),
+            ("Hide Toolbar Automatically", { [weak self] in self?.autoHidesBar == true }, { [weak self] on in
+                guard let self, on != self.autoHidesBar else { return }
+                self.toggleAutoHideToolbar(nil)
+            }),
+            ("Mute in Background", { UserDefaults.standard.bool(forKey: Self.muteInBackgroundKey) }, { [weak self] on in
+                UserDefaults.standard.set(on, forKey: Self.muteInBackgroundKey)
+                // Takes effect at the next switch away; the app is in front now.
+                _ = self
+            }),
+        ]
+    }
+
+    /// With Mute in Background, the app goes quiet while another is in front, unless the user
+    /// muted it anyway, and sounds again when it's back.
+    private var mutedForBackground = false
+
+    @objc private func appResigned() {
+        guard UserDefaults.standard.bool(forKey: Self.muteInBackgroundKey),
+              !UserDefaults.standard.bool(forKey: mutedKey) else { return }
+        mutedForBackground = true
+        let package = package
+        DispatchQueue.global().async { AndroidRuntime.shared.setMuted(true, package: package) }
+    }
+
+    @objc private func appActivated() {
+        guard mutedForBackground else { return }
+        mutedForBackground = false
+        let muted = UserDefaults.standard.bool(forKey: mutedKey), package = package
+        DispatchQueue.global().async { AndroidRuntime.shared.setMuted(muted, package: package) }
+    }
+
     // MARK: - Hiding the toolbar
 
     /// The window can be the app's screen alone, its title bar and toolbar hidden until the
@@ -1096,7 +1143,8 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate, 
     /// The app's settings, sized to what is open in them as sections open and close.
     private func settingsController(resize: @escaping (NSSize) -> Void) -> NSViewController {
         let monitor = PerformanceMonitor()
-        let settings = AppSettingsView(package: package, label: window.title, snapshot: settingsSnapshot, monitor: monitor)
+        let settings = AppSettingsView(package: package, label: window.title, snapshot: settingsSnapshot, monitor: monitor,
+                                       windowOptions: windowOptions)
         self.monitor = monitor
         settingsView = settings
         settings.monitorOpened = { [weak self] in self?.updateMonitor(fps: nil, cores: 0) }
@@ -1477,7 +1525,12 @@ private final class AppSettingsView: NSView {
     /// Called as the Performance section opens, for it to show at once.
     var monitorOpened: (() -> Void)?
 
-    init(package: String, label: String, snapshot: Snapshot?, monitor: PerformanceMonitor) {
+    /// The Window section's switches, each with what it changes.
+    private let windowRows = NSStackView()
+    private var windowSwitches: [(NSSwitch, () -> Bool, (Bool) -> Void)] = []
+
+    init(package: String, label: String, snapshot: Snapshot?, monitor: PerformanceMonitor,
+         windowOptions: [(title: String, isOn: () -> Bool, change: (Bool) -> Void)]) {
         self.package = package
         self.label = label
         self.monitor = monitor
@@ -1489,7 +1542,7 @@ private final class AppSettingsView: NSView {
         notifications.isEnabled = false
 
         // Permissions, notifications first: the one most often changed.
-        for rows in [monitorRows, permissionRows, adRows, dataRows, widgetRows] {
+        for rows in [monitorRows, windowRows, permissionRows, adRows, dataRows, widgetRows] {
             rows.orientation = .vertical
             rows.alignment = .leading
             rows.spacing = 10
@@ -1539,6 +1592,16 @@ private final class AppSettingsView: NSView {
             monitorTriangle.state = .on
             monitorRows.isHidden = false
         }
+        // How the window behaves: as on top, its bar hidden, quiet behind others.
+        for option in windowOptions {
+            let toggle = NSSwitch()
+            toggle.state = option.isOn() ? .on : .off
+            toggle.target = self
+            toggle.action = #selector(windowOptionChanged(_:))
+            windowSwitches.append((toggle, option.isOn, option.change))
+            windowRows.addArrangedSubview(Self.row(option.title, toggle))
+        }
+        let windowHeader = Self.header("Window", rows: windowRows, trailing: nil)
         let permissionsHeader = Self.header("Permissions", rows: permissionRows, trailing: nil)
         let adsHeader = Self.header("Ad Blocking", rows: adRows, trailing: nil)
 
@@ -1568,7 +1631,7 @@ private final class AppSettingsView: NSView {
         let widgetsHeader = Self.header("Widgets", rows: widgetRows, trailing: nil)
         widgetsHeader.isHidden = true
         self.widgetsHeader = widgetsHeader
-        let stack = NSStackView(views: [monitorHeader, monitorRows, permissionsHeader, permissionRows, adsHeader, adRows, widgetsHeader, widgetRows,
+        let stack = NSStackView(views: [monitorHeader, monitorRows, windowHeader, windowRows, permissionsHeader, permissionRows, adsHeader, adRows, widgetsHeader, widgetRows,
                                         dataHeader, dataRows])
         stack.orientation = .vertical
         stack.alignment = .leading
@@ -1583,14 +1646,17 @@ private final class AppSettingsView: NSView {
             stack.bottomAnchor.constraint(equalTo: bottomAnchor),
             widthAnchor.constraint(equalToConstant: 270),
         ]
-        for view in [monitorHeader, monitorRows, permissionsHeader, permissionRows, adsHeader, adRows, widgetsHeader, widgetRows,
-                     dataHeader, dataRows] {
+        for view in [monitorHeader, monitorRows, windowHeader, windowRows, permissionsHeader, permissionRows, adsHeader, adRows,
+                     widgetsHeader, widgetRows, dataHeader, dataRows] {
             constraints.append(view.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -32))
         }
         for view in [level, names, levelText, countRows] as [NSView] {
             constraints.append(view.widthAnchor.constraint(equalTo: adRows.widthAnchor, constant: -18))
         }
         constraints.append(monitor.view.widthAnchor.constraint(equalTo: monitorRows.widthAnchor, constant: -18))
+        for row in windowRows.arrangedSubviews {
+            constraints.append(row.widthAnchor.constraint(equalTo: windowRows.widthAnchor, constant: -18))
+        }
         constraints.append(folder.widthAnchor.constraint(equalTo: clearing.widthAnchor))
         constraints.append(clearing.widthAnchor.constraint(equalTo: dataRows.widthAnchor, constant: -18))
         NSLayoutConstraint.activate(constraints)
@@ -1633,6 +1699,13 @@ private final class AppSettingsView: NSView {
         let row = NSStackView(views: [NSTextField(labelWithString: name), NSView(), control])
         row.orientation = .horizontal
         return row
+    }
+
+    @objc private func windowOptionChanged(_ sender: NSSwitch) {
+        guard let option = windowSwitches.first(where: { $0.0 === sender }) else { return }
+        option.2(sender.state == .on)
+        // As it now is: some can't change, as hiding the bar in full screen.
+        for (toggle, isOn, _) in windowSwitches { toggle.state = isOn() ? .on : .off }
     }
 
     /// Opens the Performance section, for the frame rate's click.
