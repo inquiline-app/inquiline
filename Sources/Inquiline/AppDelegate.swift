@@ -368,8 +368,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, SPUSta
 
     /// All the Android apps as one stack in the Dock, or not.
     @objc private func toggleAndroidDock(_ sender: Any?) {
-        let shown = AndroidDock.isShown
-        updateShortcuts { locations in AndroidDock.show(!shown, apps: Array(locations.values)) }
+        AndroidDock.show(!AndroidDock.isShown)
     }
 
     @objc private func showFiles(_ sender: Any?) {

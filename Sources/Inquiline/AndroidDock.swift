@@ -1,27 +1,27 @@
 import AppKit
 
 /// All the Android apps in the Dock, as one stack named Android, which opens as a grid, as the
-/// Dock's own stacks do: a folder Inquiline keeps, of links to each app where it is, in the
-/// Applications folder, so Spotlight and Launchpad still list each app once. Only when the
-/// user turns it on, from Inquiline's menu.
+/// Dock's own stacks do: the folder the apps are in (AppShortcuts.folder). Only when the user
+/// turns it on, from Inquiline's menu.
 enum AndroidDock {
-    static var folder: URL { AndroidRuntime.shared.home.appendingPathComponent("Android", isDirectory: true) }
+    private static var folder: URL { AppShortcuts.folder }
+    private static let dock = "com.apple.dock" as CFString
 
     /// Whether the stack is in the Dock.
     static var isShown: Bool {
-        tiles().contains(where: isOurs)
+        tiles("persistent-others").contains { path(of: $0) == folder.standardizedFileURL.path }
     }
 
-    static func show(_ shown: Bool, apps: [URL]) {
-        var tiles = tiles().filter { !isOurs($0) }
+    static func show(_ shown: Bool) {
+        var tiles = tiles("persistent-others").filter { path(of: $0) != folder.standardizedFileURL.path }
         if shown {
-            update(apps: apps, always: true)
+            try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
             NSWorkspace.shared.setIcon(NSApp.applicationIconImage, forFile: folder.path, options: [])
             tiles.append([
                 "tile-type": "directory-tile",
                 "tile-data": [
                     "file-data": ["_CFURLString": folder.absoluteString, "_CFURLStringType": 15],
-                    "file-label": "Android",
+                    "file-label": folder.lastPathComponent,
                     "file-type": 2,
                     // By name, shown as its folder, opening as a grid.
                     "arrangement": 1,
@@ -31,41 +31,53 @@ enum AndroidDock {
                 ] as [String: Any],
             ])
         }
-        CFPreferencesSetAppValue("persistent-others" as CFString, tiles as CFArray, "com.apple.dock" as CFString)
-        CFPreferencesAppSynchronize("com.apple.dock" as CFString)
-        // The Dock reads its settings as it starts.
-        let dock = Process()
-        dock.executableURL = URL(fileURLWithPath: "/usr/bin/killall")
-        dock.arguments = ["Dock"]
-        try? dock.run()
-        if !shown { try? FileManager.default.removeItem(at: folder) }
+        save("persistent-others", tiles)
+        restart()
     }
 
-    /// A link for each app, by its name, as apps come and go; kept only while the stack is shown.
-    static func update(apps: [URL], always: Bool = false) {
-        let files = FileManager.default
-        guard always || files.fileExists(atPath: folder.path) else { return }
-        try? files.createDirectory(at: folder, withIntermediateDirectories: true)
-        let wanted = Dictionary(apps.map { ($0.lastPathComponent, $0) }, uniquingKeysWith: { first, _ in first })
-        let present = (try? files.contentsOfDirectory(atPath: folder.path)) ?? []
-        for name in present where name.hasSuffix(".app") {
-            let link = folder.appendingPathComponent(name)
-            if let target = wanted[name], (try? files.destinationOfSymbolicLink(atPath: link.path)) == target.path { continue }
-            try? files.removeItem(at: link)
+    /// Apps that moved (AppShortcuts) stay in the Dock where the user kept them.
+    static func follow(_ moves: [URL: URL]) {
+        let paths = Dictionary(uniqueKeysWithValues: moves.map { ($0.key.standardizedFileURL.path, $0.value) })
+        var changed = false
+        for key in ["persistent-apps", "persistent-others"] {
+            let tiles = tiles(key).map { tile -> [String: Any] in
+                guard let old = path(of: tile), let new = paths[old] else { return tile }
+                changed = true
+                var tile = tile
+                var data = tile["tile-data"] as? [String: Any] ?? [:]
+                var file = data["file-data"] as? [String: Any] ?? [:]
+                file["_CFURLString"] = new.absoluteString
+                file["_CFURLStringType"] = 15
+                data["file-data"] = file
+                tile["tile-data"] = data
+                return tile
+            }
+            if changed { save(key, tiles) }
         }
-        for (name, app) in wanted where !files.fileExists(atPath: folder.appendingPathComponent(name).path) {
-            try? files.createSymbolicLink(at: folder.appendingPathComponent(name), withDestinationURL: app)
-        }
+        if changed { restart() }
     }
 
-    private static func tiles() -> [[String: Any]] {
-        CFPreferencesCopyAppValue("persistent-others" as CFString, "com.apple.dock" as CFString) as? [[String: Any]] ?? []
+    private static func tiles(_ key: String) -> [[String: Any]] {
+        CFPreferencesCopyAppValue(key as CFString, dock) as? [[String: Any]] ?? []
     }
 
-    private static func isOurs(_ tile: [String: Any]) -> Bool {
+    private static func save(_ key: String, _ tiles: [[String: Any]]) {
+        CFPreferencesSetAppValue(key as CFString, tiles as CFArray, dock)
+        CFPreferencesAppSynchronize(dock)
+    }
+
+    private static func path(of tile: [String: Any]) -> String? {
         let data = tile["tile-data"] as? [String: Any]
         let file = data?["file-data"] as? [String: Any]
-        guard let string = file?["_CFURLString"] as? String, let url = URL(string: string) else { return false }
-        return url.standardizedFileURL.path == folder.standardizedFileURL.path
+        guard let string = file?["_CFURLString"] as? String, let url = URL(string: string) else { return nil }
+        return url.standardizedFileURL.path
+    }
+
+    /// The Dock reads its settings as it starts.
+    private static func restart() {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/killall")
+        process.arguments = ["Dock"]
+        try? process.run()
     }
 }

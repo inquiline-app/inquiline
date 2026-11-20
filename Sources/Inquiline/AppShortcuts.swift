@@ -47,10 +47,14 @@ enum AppShortcuts {
     }
     static let orientationKey = "InquilineOrientation"
     static let homeKey = "InquilineHome"
-    /// Where new apps go: the Applications folder, next to every other app, as iPhone apps on a
-    /// Mac are. An account that can't write there gets a folder in its own Applications folder.
+    /// Where apps go: a folder named Android in the Applications folder, as the Mac keeps its
+    /// Utilities, so Spotlight and Launchpad list them with the rest and the Dock can show them
+    /// as one stack (AndroidDock). An account that can't write there gets a folder in its own
+    /// Applications folder.
     static let folder: URL = AndroidRuntime.testHome?.appendingPathComponent("Apps")
-        ?? (FileManager.default.isWritableFile(atPath: "/Applications") ? URL(fileURLWithPath: "/Applications") : ownFolder)
+        ?? (FileManager.default.isWritableFile(atPath: "/Applications") ? URL(fileURLWithPath: "/Applications/Android") : ownFolder)
+    /// Where apps were before they had a folder of their own.
+    private static let oldFolder = URL(fileURLWithPath: "/Applications")
     private static let ownFolder = AndroidRuntime.testHome?.appendingPathComponent("Apps")
         ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Applications/Inquiline Apps")
     /// Called on a background queue with the package of an app the user moved to the Trash.
@@ -92,12 +96,19 @@ enum AppShortcuts {
             }
             var locations: [String: URL] = [:]
             var kept: [String: Data] = [:]
+            var moves: [URL: URL] = [:]
             for (package, app) in wanted {
                 var bundle = found[package] ?? place(for: app, in: folder)
-                // One left in Inquiline's own folder moves to the Applications folder once it can.
-                if found[package] != nil, bundle.deletingLastPathComponent() == ownFolder, folder != ownFolder {
+                // One left in Inquiline's own folder, or where apps were before, moves to theirs
+                // once it can; one the user put elsewhere stays.
+                let parent = bundle.deletingLastPathComponent().standardizedFileURL.path
+                if found[package] != nil, folder != ownFolder,
+                   parent == ownFolder.standardizedFileURL.path || parent == oldFolder.path {
                     let moved = place(for: app, in: folder)
-                    if (try? files.moveItem(at: bundle, to: moved)) != nil { bundle = moved }
+                    if (try? files.moveItem(at: bundle, to: moved)) != nil {
+                        moves[bundle] = moved
+                        bundle = moved
+                    }
                 }
                 // A renamed app takes its new name where it is.
                 let named = place(for: app, in: bundle.deletingLastPathComponent())
@@ -118,7 +129,8 @@ enum AppShortcuts {
                 try? files.removeItem(at: ownFolder)
             }
             watchPlaces(locations.values)
-            AndroidDock.update(apps: Array(locations.values))
+            // The Dock knows its apps by where they are: those kept there go on with them.
+            if !moves.isEmpty { AndroidDock.follow(moves) }
             if let done { DispatchQueue.main.async { done(locations) } }
         }
     }
