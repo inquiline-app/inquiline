@@ -442,6 +442,9 @@ private:
     int mSocket = -1;
 };
 
+/// gralloc's BufferUsage::VIDEO_DECODER, which Codec2's usage names lack.
+constexpr uint64_t kVideoDecoderUsage = 1ull << 22;
+
 /// The virtio-gpu resource behind a gralloc buffer: the one the Mac's GPU knows it by.
 uint32_t ResourceOf(const C2Handle* handle) {
     static int gpu = open("/dev/dri/renderD128", O_RDWR | O_CLOEXEC);
@@ -560,13 +563,17 @@ private:
                 sizeChange = C2Param::Copy(size);
             }
             std::shared_ptr<C2GraphicBlock> block;
-            C2MemoryUsage usage = {C2MemoryUsage::CPU_READ, C2MemoryUsage::CPU_WRITE};
+            // Written by the video decoder (gralloc's VIDEO_DECODER), as a phone's hardware
+            // decoder's buffers are: an app that reads a picture into memory, not to a Surface,
+            // then gets it from the GPU.
+            C2MemoryUsage usage = {C2MemoryUsage::CPU_READ, C2MemoryUsage::CPU_WRITE | kVideoDecoderUsage};
             if (pool->fetchGraphicBlock(mWidth, mHeight, HAL_PIXEL_FORMAT_YV12, usage, &block) != C2_OK) {
                 return false;
             }
             uint32_t resource = ResourceOf(block->handle());
             if (!resource || !mMac->write(picture.index, resource, block->width(), block->height())) {
-                LOG(ERROR) << "Inquiline's decoder couldn't write a picture";
+                LOG(ERROR) << "Inquiline's decoder couldn't write a picture (resource " << resource << ", "
+                           << block->width() << "x" << block->height() << ")";
                 return false;
             }
             buffer = createGraphicBuffer(std::move(block), C2Rect(mWidth, mHeight));
