@@ -1,6 +1,6 @@
 import AppKit
 
-/// All the Android apps in the Dock, as one stack named Android, which opens as a grid, as the
+/// All the Android apps in the Dock, as one stack named Inquiline, which opens as a grid, as the
 /// Dock's own stacks do: the folder the apps are in (AppShortcuts.folder). Only when the user
 /// turns it on, from Inquiline's menu.
 enum AndroidDock {
