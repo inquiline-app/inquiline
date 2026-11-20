@@ -972,30 +972,19 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate, 
             popover.animates = animates
         }
         // Below the button: in a flipped view, as a button is, its bottom is maxY.
-        present(popover, relativeTo: sender.bounds, of: sender, preferredEdge: sender.isFlipped ? .maxY : .minY, seeThrough: true)
+        present(popover, relativeTo: sender.bounds, of: sender, preferredEdge: sender.isFlipped ? .maxY : .minY)
     }
 
-    /// The settings and the performance monitor stay open while the app is used, until their
-    /// button is clicked again, and let the app show through, as a game's overlay does.
+    /// The settings stay open while the app is used, until their button is clicked again.
     private var settingsPopover: NSPopover?
 
     /// One popover at a time in the toolbar: opening one closes the one open.
     fileprivate var shownPopover: NSPopover?
 
-    private func present(_ popover: NSPopover, relativeTo rect: NSRect, of view: NSView, preferredEdge edge: NSRectEdge,
-                         seeThrough: Bool = false) {
+    private func present(_ popover: NSPopover, relativeTo rect: NSRect, of view: NSView, preferredEdge edge: NSRectEdge) {
         if let shown = shownPopover, shown !== popover, shown.isShown { shown.close() }
         shownPopover = popover
-        guard seeThrough else { return popover.show(relativeTo: rect, of: view, preferredEdge: edge) }
-        // Faded in see-through, rather than shown solid first.
-        popover.animates = false
         popover.show(relativeTo: rect, of: view, preferredEdge: edge)
-        guard let window = popover.contentViewController?.view.window else { return }
-        window.alphaValue = 0
-        NSAnimationContext.runAnimationGroup { context in
-            context.duration = 0.15
-            window.animator().alphaValue = 0.85
-        }
     }
 
     /// What the app's settings show, read from Android when the window opens and again as the
