@@ -39,22 +39,3 @@
      } else if (transferInfo.packFunction) {
          // packFunction reads the natural-format pixels, which never exceed dstBufferSize. pixels is
          // guest-controlled, so reject an input smaller than that to avoid an out-of-bounds read
---- a/host/gl/yuv_converter.cpp
-+++ b/host/gl/yuv_converter.cpp
-@@ -785,9 +785,14 @@
- }
- 
- uint32_t YUVConverter::getDataSize() {
--    uint32_t align = (mFormat == GfxstreamFormat::YV12) ? 16 : 1;
-+    // As getYUVOffsets lays YV12 out: luma rows aligned to 32 bytes with minigbm.
-+    uint32_t align = (mFormat == GfxstreamFormat::YV12)
-+                         ? (get_gfxstream_guest_android_gralloc() == MINIGBM ? 32 : 16)
-+                         : 1;
-     uint32_t yStrideBytes = (mWidth + (align - 1)) & ~(align - 1);
--    uint32_t uvStride = (yStrideBytes / 2 + (align - 1)) & ~(align - 1);
-+    // Chroma rows are 16-byte aligned, as getYUVOffsets has them.
-+    uint32_t uvAlign = (mFormat == GfxstreamFormat::YV12) ? 16 : 1;
-+    uint32_t uvStride = (yStrideBytes / 2 + (uvAlign - 1)) & ~(uvAlign - 1);
-     uint32_t uvHeight = mHeight / 2;
-     uint32_t dataSize = yStrideBytes * mHeight + 2 * (uvHeight * uvStride);
-     return dataSize;
