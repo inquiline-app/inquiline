@@ -110,6 +110,8 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate, 
             window.contentMinSize = Self.smallestFlexible
         }
         window.setFrameAutosaveName("Window")
+        // As left: the frame saved with it is already the app's screen alone.
+        if UserDefaults.standard.bool(forKey: Self.autoHideKey) { hideBar(resize: false) }
         if flexible {
             displayView.renderer?.keepPixelSize()
             displayView.renderer?.onContent = { [weak self] in
@@ -484,10 +486,12 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate, 
     /// again at each reveal, flickered, and left the toolbar's place black once it went.
     func windowWillEnterFullScreen(_ notification: Notification) {
         window.styleMask.insert(.fullSizeContentView)
+        // Full screen shows its toolbar with the menu bar, its own way.
+        if autoHidesBar { stopWatchingBar(); titlebar?.isHidden = false }
     }
 
     func windowWillExitFullScreen(_ notification: Notification) {
-        window.styleMask.remove(.fullSizeContentView)
+        if !autoHidesBar { window.styleMask.remove(.fullSizeContentView) }
     }
 
     func windowDidEnterFullScreen(_ notification: Notification) {
@@ -495,6 +499,7 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate, 
     }
 
     func windowDidExitFullScreen(_ notification: Notification) {
+        if autoHidesBar { titlebar?.isHidden = true; barShown = false; watchBar() }
         UserDefaults.standard.set(false, forKey: fullScreenKey)
     }
 
@@ -768,6 +773,94 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate, 
     }
 
     private var lastCores = 0.0
+
+    // MARK: - Hiding the toolbar
+
+    /// The window can be the app's screen alone, its title bar and toolbar hidden until the
+    /// pointer reaches its top edge, as the Mac's menu bar can hide itself; each app as left.
+    static let autoHideKey = "AutoHideToolbar"
+    private(set) var autoHidesBar = false
+    private var barShown = true
+    private var barHeight: CGFloat = 0
+    private var barMonitor: Any?
+    private var barTimer: Timer?
+
+    /// The view holding the title bar and toolbar.
+    private var titlebar: NSView? { window.standardWindowButton(.closeButton)?.superview?.superview }
+
+    @objc func toggleAutoHideToolbar(_ sender: Any?) {
+        guard !isFullScreen else { return }
+        UserDefaults.standard.set(!autoHidesBar, forKey: Self.autoHideKey)
+        autoHidesBar ? showBarForGood() : hideBar(resize: true)
+    }
+
+    /// The app's screen takes the bar's place; the window loses the bar's height, so the app's
+    /// screen keeps its size and place.
+    private func hideBar(resize: Bool) {
+        let height = window.frame.height - window.contentLayoutRect.height
+        if height > 0 { barHeight = height }
+        autoHidesBar = true
+        window.styleMask.insert(.fullSizeContentView)
+        if resize {
+            var frame = window.frame
+            frame.origin.y += barHeight
+            frame.size.height -= barHeight
+            window.setFrame(frame, display: true, animate: false)
+        }
+        titlebar?.isHidden = true
+        barShown = false
+        watchBar()
+    }
+
+    private func showBarForGood() {
+        stopWatchingBar()
+        autoHidesBar = false
+        titlebar?.isHidden = false
+        barShown = true
+        var frame = window.frame
+        frame.origin.y -= barHeight
+        frame.size.height += barHeight
+        window.styleMask.remove(.fullSizeContentView)
+        window.setFrame(frame, display: true, animate: false)
+    }
+
+    /// The pointer at the window's top edge brings the bar down over the app; it goes again
+    /// once the pointer leaves it, unless a popover or menu from it is open.
+    private func watchBar() {
+        guard barMonitor == nil else { return }
+        barMonitor = NSEvent.addLocalMonitorForEvents(matching: [.mouseMoved]) { [weak self] event in
+            guard let self, event.window === self.window, !self.barShown,
+                  event.locationInWindow.y >= self.window.frame.height - 4 else { return event }
+            self.revealBar()
+            return event
+        }
+    }
+
+    private func stopWatchingBar() {
+        if let barMonitor { NSEvent.removeMonitor(barMonitor) }
+        barMonitor = nil
+        barTimer?.invalidate()
+        barTimer = nil
+    }
+
+    private func revealBar() {
+        barShown = true
+        titlebar?.isHidden = false
+        barTimer?.invalidate()
+        barTimer = Timer.scheduledTimer(withTimeInterval: 0.4, repeats: true) { [weak self] _ in
+            guard let self, self.autoHidesBar, !self.isFullScreen else { return }
+            let point = NSEvent.mouseLocation
+            let frame = self.window.frame
+            let overBar = point.x >= frame.minX && point.x <= frame.maxX
+                && point.y <= frame.maxY + 2 && point.y >= frame.maxY - self.barHeight - 12
+            let busy = self.shownPopover?.isShown == true || NSApp.currentEvent?.type == .leftMouseDragged
+            guard !overBar, !busy else { return }
+            self.barTimer?.invalidate()
+            self.barTimer = nil
+            self.barShown = false
+            self.titlebar?.isHidden = true
+        }
+    }
 
     // MARK: - Screenshots and recordings
 
@@ -1248,6 +1341,9 @@ extension AppWindowController: NSMenuDelegate {
 extension AppWindowController: NSMenuItemValidation {
     func validateMenuItem(_ item: NSMenuItem) -> Bool {
         switch item.action {
+        case #selector(toggleAutoHideToolbar(_:)):
+            item.state = autoHidesBar ? .on : .off
+            return !isFullScreen
         case #selector(toggleControls):
             item.state = displayView.controls.set.isOn ? .on : .off
             return !displayView.controls.set.controls.isEmpty

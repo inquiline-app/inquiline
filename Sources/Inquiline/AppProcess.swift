@@ -149,6 +149,8 @@ final class AppProcess: NSObject, NSApplicationDelegate {
         viewMenu.addItem(withTitle: "Show Toolbar", action: #selector(NSWindow.toggleToolbarShown(_:)), keyEquivalent: "t")
             .keyEquivalentModifierMask = [.command, .option]
         viewMenu.addItem(withTitle: "Customize Toolbar…", action: #selector(NSWindow.runToolbarCustomizationPalette(_:)), keyEquivalent: "")
+        viewMenu.addItem(withTitle: "Hide Toolbar Automatically", action: #selector(AppWindowController.toggleAutoHideToolbar(_:)), keyEquivalent: "")
+            .target = controller
         viewMenu.addItem(.separator())
         AppWindowController.addControlsItems(to: viewMenu, target: controller)
         viewMenu.addItem(.separator())
