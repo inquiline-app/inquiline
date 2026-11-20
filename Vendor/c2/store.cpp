@@ -450,53 +450,21 @@ private:
     int mSocket = -1;
 };
 
-/// A gralloc buffer as the VM's GPU knows it: its GEM handle here and the virtio-gpu resource the
-/// Mac's GPU knows it by. DRM's and virtio-gpu's ioctls, as minigbm makes them.
-class GpuBuffer {
-public:
-    explicit GpuBuffer(const C2Handle* handle) {
-        if (Gpu() < 0 || !handle || handle->numFds < 1) return;
-        struct { uint32_t handle, flags; int32_t fd; } prime = {0, 0, handle->data[0]};
-        if (ioctl(Gpu(), _IOWR('d', 0x2e, decltype(prime)), &prime) != 0) return;
-        mGem = prime.handle;
-        struct { uint32_t bo, resource, size, blobMem; } info = {mGem, 0, 0, 0};
-        if (ioctl(Gpu(), _IOWR('d', 0x40 + 0x05, decltype(info)), &info) == 0) mResource = info.resource;
-    }
+/// gralloc's BufferUsage::VIDEO_DECODER, which Codec2's usage names lack.
+constexpr uint64_t kVideoDecoderUsage = 1ull << 22;
 
-    ~GpuBuffer() {
-        if (!mGem) return;
-        struct { uint32_t handle, pad; } gemClose = {mGem, 0};
-        ioctl(Gpu(), _IOW('d', 0x09, decltype(gemClose)), &gemClose);
-    }
-
-    uint32_t resource() const { return mResource; }
-
-    /// Waits until the VM's GPU has done what it was asked for this buffer, its making included:
-    /// the Mac is told of it by another way, which may come first.
-    bool settle() {
-        struct { uint32_t handle, flags; } wait = {mGem, 0};
-        return mGem && ioctl(Gpu(), _IOWR('d', 0x40 + 0x08, decltype(wait)), &wait) == 0;
-    }
-
-    /// Brings what the Mac's GPU wrote into the buffer's memory in the VM, for an app that reads
-    /// the picture there, as gralloc does when a buffer the GPU renders to is locked for reading.
-    bool readBack(uint32_t width, uint32_t height) {
-        struct { uint32_t x, y, z, w, h, d; } box = {0, 0, 0, width, height, 1};
-        struct { uint32_t bo; decltype(box) box; uint32_t level, offset, stride, layerStride; } transfer =
-            {mGem, box, 0, 0, 0, 0};
-        if (ioctl(Gpu(), _IOWR('d', 0x40 + 0x06, decltype(transfer)), &transfer) != 0) return false;
-        struct { uint32_t handle, flags; } wait = {mGem, 0};
-        return ioctl(Gpu(), _IOWR('d', 0x40 + 0x08, decltype(wait)), &wait) == 0;
-    }
-
-private:
-    static int Gpu() {
-        static int gpu = open("/dev/dri/renderD128", O_RDWR | O_CLOEXEC);
-        return gpu;
-    }
-
-    uint32_t mGem = 0, mResource = 0;
-};
+/// The virtio-gpu resource behind a gralloc buffer: the one the Mac's GPU knows it by.
+uint32_t ResourceOf(const C2Handle* handle) {
+    static int gpu = open("/dev/dri/renderD128", O_RDWR | O_CLOEXEC);
+    if (gpu < 0 || !handle || handle->numFds < 1) return 0;
+    struct { uint32_t handle, flags; int32_t fd; } prime = {0, 0, handle->data[0]};
+    if (ioctl(gpu, _IOWR('d', 0x2e, decltype(prime)), &prime) != 0) return 0;
+    struct { uint32_t bo, resource, size, blobMem; } info = {prime.handle, 0, 0, 0};
+    int failed = ioctl(gpu, _IOWR('d', 0x40 + 0x05, decltype(info)), &info);
+    struct { uint32_t handle, pad; } gemClose = {prime.handle, 0};
+    ioctl(gpu, _IOW('d', 0x09, decltype(gemClose)), &gemClose);
+    return failed ? 0 : info.resource;
+}
 
 class Decoder : public SimpleC2Component {
 public:
@@ -603,23 +571,15 @@ private:
                 sizeChange = C2Param::Copy(size);
             }
             std::shared_ptr<C2GraphicBlock> block;
-            C2MemoryUsage usage = {C2MemoryUsage::CPU_READ, C2MemoryUsage::CPU_WRITE};
+            // Written by the video decoder (gralloc's VIDEO_DECODER), as a phone's hardware
+            // decoder's buffers are: an app that reads a picture into memory, not to a Surface,
+            // then gets it from the GPU.
+            C2MemoryUsage usage = {C2MemoryUsage::CPU_READ, C2MemoryUsage::CPU_WRITE | kVideoDecoderUsage};
             if (pool->fetchGraphicBlock(mWidth, mHeight, HAL_PIXEL_FORMAT_YV12, usage, &block) != C2_OK) {
-                LOG(ERROR) << "Inquiline's decoder couldn't get a buffer";
                 return false;
             }
-            GpuBuffer gpu(block->handle());
-            uint32_t resource = gpu.resource();
-            // Without a Surface the app reads the picture from memory: its buffers are made as it
-            // asks, so the Mac waits for them, and the picture is brought into memory.
-            const bool inMemory = pool->getAllocatorId() == C2PlatformAllocatorStore::GRALLOC;
-            bool written = resource && (!inMemory || gpu.settle()) &&
-                           mMac->write(picture.index, resource, block->width(), block->height());
-            if (written && inMemory && !gpu.readBack(block->width(), block->height())) {
-                PLOG(ERROR) << "Inquiline's decoder couldn't bring a picture into memory";
-                written = false;
-            }
-            if (!written) {
+            uint32_t resource = ResourceOf(block->handle());
+            if (!resource || !mMac->write(picture.index, resource, block->width(), block->height())) {
                 LOG(ERROR) << "Inquiline's decoder couldn't write a picture (resource " << resource << ", "
                            << block->width() << "x" << block->height() << ")";
                 return false;
