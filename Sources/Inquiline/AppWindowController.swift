@@ -648,6 +648,7 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate, 
             let button = NSButton(image: NSImage(systemSymbolName: "gearshape", accessibilityDescription: "App Settings")!,
                                   target: self, action: #selector(showSettings(_:)))
             button.bezelStyle = .toolbar
+            settingsButton = button
             item.view = button
             return item
         }
@@ -732,16 +733,15 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate, 
     private var androidMemory: (used: Double, total: Double)?
     private var askingMemory = false
 
+    /// The frame rate's click: the settings, with their Monitor section open.
     @objc private func showMonitor(_ sender: Any?) {
-        if let open = monitorPopover, open.isShown { return open.close() }
-        let popover = NSPopover()
-        popover.behavior = .applicationDefined
-        monitorPopover = popover
-        let monitor = PerformanceMonitor()
-        popover.contentViewController = monitor
-        self.monitor = monitor
-        present(popover, relativeTo: fpsLabel.bounds, of: fpsLabel, preferredEdge: .minY, seeThrough: true)
-        updateMonitor(fps: nil, cores: 0)
+        UserDefaults.standard.set(true, forKey: AppSettingsView.monitorKey)
+        if let settings = settingsView, settings.window?.isVisible == true {
+            settings.openMonitor()
+            settings.window?.makeKeyAndOrderFront(nil)
+        } else if let button = settingsButton {
+            showSettings(button)
+        }
     }
 
     /// Each second; the monitor shows it while it's open. Android's memory is asked of it then
@@ -751,7 +751,7 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate, 
             fpsHistory.append(fps)
             if fpsHistory.count > 30 { fpsHistory.removeFirst(fpsHistory.count - 30) }
         }
-        guard let monitor else { return }
+        guard let monitor, monitor.isShown else { return }
         if !askingMemory, fps == nil || fpsHistory.count % 2 == 0 {
             askingMemory = true
             DispatchQueue.global(qos: .utility).async { [weak self] in
@@ -978,7 +978,6 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate, 
     /// The settings and the performance monitor stay open while the app is used, until their
     /// button is clicked again, and let the app show through, as a game's overlay does.
     private var settingsPopover: NSPopover?
-    private var monitorPopover: NSPopover?
 
     /// One popover at a time in the toolbar: opening one closes the one open.
     fileprivate var shownPopover: NSPopover?
@@ -1014,7 +1013,11 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate, 
 
     /// The app's settings, sized to what is open in them as sections open and close.
     private func settingsController(resize: @escaping (NSSize) -> Void) -> NSViewController {
-        let settings = AppSettingsView(package: package, label: window.title, snapshot: settingsSnapshot)
+        let monitor = PerformanceMonitor()
+        let settings = AppSettingsView(package: package, label: window.title, snapshot: settingsSnapshot, monitor: monitor)
+        self.monitor = monitor
+        settingsView = settings
+        settings.monitorOpened = { [weak self] in self?.updateMonitor(fps: nil, cores: 0) }
         settings.loaded = { [weak self] in self?.settingsSnapshot = $0 }
         settings.clearCache = { [weak self] in self?.settingsPanel?.close(); self?.clearCache() }
         settings.clearData = { [weak self] in self?.settingsPanel?.close(); self?.clearData() }
@@ -1023,6 +1026,9 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate, 
         controller.view = settings
         return controller
     }
+
+    private weak var settingsView: AppSettingsView?
+    private weak var settingsButton: NSButton?
 
     /// Dragged away from its button, as a Mac's own popovers can be, the settings stay as a small
     /// window of their own, in front of the app.
@@ -1378,9 +1384,19 @@ private final class AppSettingsView: NSView {
     /// A fresh snapshot, for the next time the settings open.
     var loaded: ((Snapshot) -> Void)?
 
-    init(package: String, label: String, snapshot: Snapshot?) {
+    /// Whether the Monitor section is open, as last left.
+    static let monitorKey = "AppSettingsMonitorOpen"
+    private let monitor: PerformanceMonitor
+    private let monitorRows = NSStackView()
+    private let monitorTriangle: NSButton
+    /// Called as the Monitor section opens, for it to show at once.
+    var monitorOpened: (() -> Void)?
+
+    init(package: String, label: String, snapshot: Snapshot?, monitor: PerformanceMonitor) {
         self.package = package
         self.label = label
+        self.monitor = monitor
+        monitorTriangle = NSButton(title: "", target: nil, action: nil)
         super.init(frame: .zero)
         // Until Android answers, nothing to switch.
         notifications.target = self
@@ -1388,7 +1404,7 @@ private final class AppSettingsView: NSView {
         notifications.isEnabled = false
 
         // Permissions, notifications first: the one most often changed.
-        for rows in [permissionRows, adRows, dataRows, widgetRows] {
+        for rows in [monitorRows, permissionRows, adRows, dataRows, widgetRows] {
             rows.orientation = .vertical
             rows.alignment = .leading
             rows.spacing = 10
@@ -1428,6 +1444,16 @@ private final class AppSettingsView: NSView {
         resetCounts.isHidden = true
         adRows.addArrangedSubview(countRows)
         adRows.addArrangedSubview(resetCounts)
+        // How the app runs, first, as the frame rate's click opens it.
+        monitorRows.addArrangedSubview(monitor.view)
+        let monitorHeader = Self.header("Monitor", rows: monitorRows, trailing: nil, triangle: monitorTriangle) { [weak self] open in
+            UserDefaults.standard.set(open, forKey: Self.monitorKey)
+            if open { self?.monitorOpened?() }
+        }
+        if UserDefaults.standard.bool(forKey: Self.monitorKey) {
+            monitorTriangle.state = .on
+            monitorRows.isHidden = false
+        }
         let permissionsHeader = Self.header("Permissions", rows: permissionRows, trailing: nil)
         let adsHeader = Self.header("Ad Blocking", rows: adRows, trailing: nil)
 
@@ -1457,7 +1483,7 @@ private final class AppSettingsView: NSView {
         let widgetsHeader = Self.header("Widgets", rows: widgetRows, trailing: nil)
         widgetsHeader.isHidden = true
         self.widgetsHeader = widgetsHeader
-        let stack = NSStackView(views: [permissionsHeader, permissionRows, adsHeader, adRows, widgetsHeader, widgetRows,
+        let stack = NSStackView(views: [monitorHeader, monitorRows, permissionsHeader, permissionRows, adsHeader, adRows, widgetsHeader, widgetRows,
                                         dataHeader, dataRows])
         stack.orientation = .vertical
         stack.alignment = .leading
@@ -1472,12 +1498,14 @@ private final class AppSettingsView: NSView {
             stack.bottomAnchor.constraint(equalTo: bottomAnchor),
             widthAnchor.constraint(equalToConstant: 270),
         ]
-        for view in [permissionsHeader, permissionRows, adsHeader, adRows, widgetsHeader, widgetRows, dataHeader, dataRows] {
+        for view in [monitorHeader, monitorRows, permissionsHeader, permissionRows, adsHeader, adRows, widgetsHeader, widgetRows,
+                     dataHeader, dataRows] {
             constraints.append(view.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -32))
         }
         for view in [level, names, levelText, countRows] as [NSView] {
             constraints.append(view.widthAnchor.constraint(equalTo: adRows.widthAnchor, constant: -18))
         }
+        constraints.append(monitor.view.widthAnchor.constraint(equalTo: monitorRows.widthAnchor, constant: -18))
         constraints.append(folder.widthAnchor.constraint(equalTo: clearing.widthAnchor))
         constraints.append(clearing.widthAnchor.constraint(equalTo: dataRows.widthAnchor, constant: -18))
         NSLayoutConstraint.activate(constraints)
@@ -1522,14 +1550,24 @@ private final class AppSettingsView: NSView {
         return row
     }
 
+    /// Opens the Monitor section, for the frame rate's click.
+    func openMonitor() {
+        guard monitorTriangle.state == .off else { return }
+        (objc_getAssociatedObject(monitorTriangle, "toggle") as? SectionToggle)?.labelClicked()
+    }
+
     /// A section's title with the triangle that shows or hides its rows, as in a Mac's own lists.
-    private static func header(_ title: String, rows: NSStackView, trailing: NSView?) -> NSStackView {
-        let triangle = NSButton(title: "", target: nil, action: nil)
+    private static func header(_ title: String, rows: NSStackView, trailing: NSView?,
+                               triangle: NSButton = NSButton(title: "", target: nil, action: nil),
+                               changed: ((Bool) -> Void)? = nil) -> NSStackView {
         triangle.bezelStyle = .disclosure
         triangle.setButtonType(.pushOnPushOff)
         triangle.state = .off
         let toggle = SectionToggle(rows: rows, triangle: triangle)
-        toggle.changed = { [weak rows] in (rows?.superview?.superview as? AppSettingsView)?.fitToContent() }
+        toggle.changed = { [weak rows, weak triangle] in
+            (rows?.superview?.superview as? AppSettingsView)?.fitToContent()
+            changed?(triangle?.state == .on)
+        }
         triangle.target = toggle
         triangle.action = #selector(SectionToggle.toggle)
         let label = NSTextField(labelWithString: title)

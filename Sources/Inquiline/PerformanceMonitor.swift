@@ -1,9 +1,10 @@
 import AppKit
 import IOKit
 
-/// The app's performance at a glance, opened from its frame rate in the toolbar: frames a
-/// second over the last half minute, and how much of the Mac's CPU and GPU, and of Android's
-/// memory, are in use now. Nothing it needs asks for a permission.
+/// The app's performance at a glance, in its settings' Monitor section, which a click on the
+/// frame rate in the toolbar opens: frames a second over the last half minute, and how much of
+/// the Mac's CPU and GPU, and of Android's memory, are in use now. Nothing it needs asks for a
+/// permission.
 final class PerformanceMonitor: NSViewController {
     private let fps = NSTextField(labelWithString: "–")
     private let graph = FrameGraph()
@@ -24,12 +25,15 @@ final class PerformanceMonitor: NSViewController {
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 10
-        stack.edgeInsets = NSEdgeInsets(top: 14, left: 16, bottom: 16, right: 16)
-        stack.widthAnchor.constraint(equalToConstant: 260).isActive = true
         for view in [graph, cpu.row, gpu.row, memory.row] {
-            view.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -32).isActive = true
+            view.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
         }
         view = stack
+    }
+
+    /// Whether it shows now: its section open, in settings open.
+    var isShown: Bool {
+        isViewLoaded && view.window?.isVisible == true && !view.isHiddenOrHasHiddenAncestor
     }
 
     /// `cores`: how many of the Mac's cores Android used; `memory`: Android's, in bytes.
