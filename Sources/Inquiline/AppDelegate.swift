@@ -299,6 +299,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, SPUSta
         }
         menu.addItem(.separator())
         menu.addItem(withTitle: "Show Files in Finder", action: #selector(showFiles(_:)), keyEquivalent: "").target = self
+        let dock = menu.addItem(withTitle: "Show Android Apps in Dock", action: #selector(toggleAndroidDock(_:)), keyEquivalent: "")
+        dock.target = self
+        dock.state = AndroidDock.isShown ? .on : .off
         // For those who know to look, as the Mac's own menus keep their extra items: shown when
         // Option is held as the menu opens. What most people would change there follows the Mac.
         if NSEvent.modifierFlags.contains(.option) {
@@ -361,6 +364,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, SPUSta
         if panel.runModal() == .OK {
             panel.urls.forEach { install(apk: $0) }
         }
+    }
+
+    /// All the Android apps as one stack in the Dock, or not.
+    @objc private func toggleAndroidDock(_ sender: Any?) {
+        let shown = AndroidDock.isShown
+        updateShortcuts { locations in AndroidDock.show(!shown, apps: Array(locations.values)) }
     }
 
     @objc private func showFiles(_ sender: Any?) {

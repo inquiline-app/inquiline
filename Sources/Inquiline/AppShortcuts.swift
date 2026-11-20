@@ -118,6 +118,7 @@ enum AppShortcuts {
                 try? files.removeItem(at: ownFolder)
             }
             watchPlaces(locations.values)
+            AndroidDock.update(apps: Array(locations.values))
             if let done { DispatchQueue.main.async { done(locations) } }
         }
     }
