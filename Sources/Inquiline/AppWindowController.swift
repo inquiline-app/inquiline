@@ -731,12 +731,15 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate, 
     private var askingMemory = false
 
     @objc private func showMonitor(_ sender: Any?) {
+        if let open = monitorPopover, open.isShown { return open.close() }
         let popover = NSPopover()
-        popover.behavior = .transient
+        popover.behavior = .applicationDefined
+        monitorPopover = popover
         let monitor = PerformanceMonitor()
         popover.contentViewController = monitor
         self.monitor = monitor
         popover.show(relativeTo: fpsLabel.bounds, of: fpsLabel, preferredEdge: .minY)
+        Self.seeThrough(popover)
         updateMonitor(fps: nil, cores: 0)
     }
 
@@ -954,8 +957,10 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate, 
     /// The app's own settings, as Android's Settings > Apps shows them for one app, in a small
     /// popover so the toolbar stays short. More go here as they come.
     @objc private func showSettings(_ sender: NSButton) {
+        if let open = settingsPopover, open.isShown { return open.close() }
         let popover = NSPopover()
-        popover.behavior = .transient
+        popover.behavior = .applicationDefined
+        settingsPopover = popover
         popover.delegate = self
         // A new size at once: animated, the content slides inside the growing popover.
         popover.contentViewController = settingsController { [weak popover] size in
@@ -967,6 +972,16 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate, 
         }
         // Below the button: in a flipped view, as a button is, its bottom is maxY.
         popover.show(relativeTo: sender.bounds, of: sender, preferredEdge: sender.isFlipped ? .maxY : .minY)
+        Self.seeThrough(popover)
+    }
+
+    /// The settings and the performance monitor stay open while the app is used, until their
+    /// button is clicked again, and let the app show through, as a game's overlay does.
+    private var settingsPopover: NSPopover?
+    private var monitorPopover: NSPopover?
+
+    private static func seeThrough(_ popover: NSPopover) {
+        popover.contentViewController?.view.window?.alphaValue = 0.85
     }
 
     /// What the app's settings show, read from Android when the window opens and again as the
