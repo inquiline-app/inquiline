@@ -184,8 +184,16 @@ enum AppShortcuts {
             watches.forEach { $0.cancel() }
             watches = []
             let files = FileManager.default
-            let bundles = Array(locate().values)
+            // Those it knows, and any it made whose bookmark was lost, as after a reset, in an
+            // Applications folder wherever the user put them: Spotlight knows them by identifier.
+            let bundles = Array(Set(locate().values.map(\.standardizedFileURL) + spotlightApps()))
             for bundle in bundles { try? files.removeItem(at: bundle) }
+            // A folder of the user's that only held them goes with them.
+            let roots = Set(["/Applications", files.homeDirectoryForCurrentUser.appendingPathComponent("Applications").path])
+            for parent in Set(bundles.map { $0.deletingLastPathComponent() }) where !roots.contains(parent.path) {
+                let left = (try? files.contentsOfDirectory(atPath: parent.path)) ?? []
+                if left.allSatisfy({ $0.hasPrefix(".") || $0 == "Icon\r" }) { try? files.removeItem(at: parent) }
+            }
             // The apps' folders go once only Finder's own files are left: anything the user put
             // there stays, with its folder.
             let folders = Array(Set([folder, ownFolder]))
@@ -198,6 +206,23 @@ enum AppShortcuts {
             AndroidDock.forget(bundles + folders + (AndroidRuntime.testHome == nil ? [Bundle.main.bundleURL] : []))
             places = [:]
         }
+    }
+
+    /// The apps Inquiline made, by their identifier, in the Applications folders.
+    private static func spotlightApps() -> [URL] {
+        let find = Process()
+        find.executableURL = URL(fileURLWithPath: "/usr/bin/mdfind")
+        find.arguments = ["kMDItemCFBundleIdentifier == \"io.github.inquiline-app.app.*\""]
+        let output = Pipe()
+        find.standardOutput = output
+        find.standardError = FileHandle.nullDevice
+        guard (try? find.run()) != nil else { return [] }
+        let data = output.fileHandleForReading.readDataToEndOfFile()
+        find.waitUntilExit()
+        let home = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Applications").path + "/"
+        return String(decoding: data, as: UTF8.self).split(separator: "\n").map { URL(fileURLWithPath: String($0)) }
+            .filter { ($0.path.hasPrefix("/Applications/") || $0.path.hasPrefix(home)) && package(of: $0) != nil }
+            .map(\.standardizedFileURL)
     }
 
     /// The package of an app Inquiline made, or nil for any other.
