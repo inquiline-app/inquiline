@@ -633,7 +633,8 @@ final class AndroidRuntime {
     /// 21: a tunnel device for Android's VPNs, which ad blocking uses, Android's own (system, vpn).
     /// 22: Android's disk in Finder takes a password only Inquiline knows (Samba).
     /// 23: a GPS (Vendor/gnss) that reports where the Mac is.
-    private static let diskRevision = 23
+    /// 24: a broadcast too large for its app is dropped alone, not retried by killing the app.
+    private static let diskRevision = 24
     /// The VM's memory map fits the 36-bit (64 GB) address space Apple's M1 and M2 give a VM:
     /// above the RAM, the window for 64-bit device memory, such as the GPU's 2 GB, is 16 GB,
     /// not QEMU's 512 GB, which only M3 and later have room for (see the QEMU patch 0102).

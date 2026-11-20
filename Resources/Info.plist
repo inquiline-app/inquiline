@@ -114,7 +114,7 @@
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>0.5.1</string>
+	<string>0.6.0</string>
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>
@@ -127,19 +127,19 @@
 		</dict>
 	</array>
 	<key>CFBundleVersion</key>
-	<string>17</string>
+	<string>18</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>14.0</string>
 	<key>LSUIElement</key>
 	<true/>
+	<key>NSAudioCaptureUsageDescription</key>
+	<string>When you record an Android app's screen, Inquiline records its sound too.</string>
 	<key>NSHighResolutionCapable</key>
 	<true/>
 	<key>NSLocationUsageDescription</key>
 	<string>Android apps that ask where you are get your Mac's location, as from a phone's GPS.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>Android apps that ask where you are get your Mac's location, as from a phone's GPS.</string>
-	<key>NSAudioCaptureUsageDescription</key>
-	<string>When you record an Android app's screen, Inquiline records its sound too.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Android apps that listen, such as voice assistants and calls, hear your Mac's microphone, as a phone's.</string>
 	<key>SUEnableAutomaticChecks</key>
