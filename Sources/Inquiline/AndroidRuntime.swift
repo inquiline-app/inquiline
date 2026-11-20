@@ -341,7 +341,6 @@ final class AndroidRuntime {
     /// starts, from the file the last start left: when the kinds changed (the first start, or
     /// another Mac), its media service lists them again.
     private func shareVideoDecoders() {
-        VideoDecoders.shared.start()
         guard VideoDecoders.shared.port != 0 else { return }
         let file = "/data/vendor/inquiline/decoder"
         _ = try? shell("su 0 sh -c 'old=$(cut -d\" \" -f3 \(file) 2>/dev/null); mkdir -p /data/vendor/inquiline"
@@ -792,6 +791,7 @@ final class AndroidRuntime {
         env["DYLD_FALLBACK_LIBRARY_PATH"] = contents.appendingPathComponent("Frameworks").path
         env["DYLD_INSERT_LIBRARIES"] = contents.appendingPathComponent("Frameworks/libmemory-release.dylib").path
         env["INQUILINE_FRAMES_SOCKET"] = framesSocket.path
+        env.merge(VideoDecoders.shared.environment) { $1 }
         // MoltenVK's errors only; its warnings would fill the log.
         env["MVK_CONFIG_LOG_LEVEL"] = "1"
         process.environment = env
