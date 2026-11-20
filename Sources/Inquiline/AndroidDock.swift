@@ -1,6 +1,6 @@
 import AppKit
 
-/// All the Android apps in the Dock, as one stack named Inquiline, which opens as a grid, as the
+/// All the Android apps in the Dock, as one stack named Inquiline Apps, which opens as a grid, as the
 /// Dock's own stacks do: the folder the apps are in (AppShortcuts.folder). Only when the user
 /// turns it on, from Inquiline's menu.
 enum AndroidDock {
@@ -48,6 +48,11 @@ enum AndroidDock {
                 var file = data["file-data"] as? [String: Any] ?? [:]
                 file["_CFURLString"] = new.absoluteString
                 file["_CFURLStringType"] = 15
+                // The Dock would find the old place again by its bookmark, and go back to it.
+                for key in ["book", "_CFURLAliasData"] {
+                    file[key] = nil
+                    data[key] = nil
+                }
                 data["file-data"] = file
                 tile["tile-data"] = data
                 return tile

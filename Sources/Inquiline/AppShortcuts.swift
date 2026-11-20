@@ -47,12 +47,12 @@ enum AppShortcuts {
     }
     static let orientationKey = "InquilineOrientation"
     static let homeKey = "InquilineHome"
-    /// Where apps go: a folder named Inquiline in the Applications folder, as the Mac keeps its
+    /// Where apps go: a folder named Inquiline Apps in the Applications folder, as the Mac keeps its
     /// Utilities, so Spotlight and Launchpad list them with the rest and the Dock can show them
     /// as one stack (AndroidDock). An account that can't write there gets a folder in its own
     /// Applications folder.
     static let folder: URL = AndroidRuntime.testHome?.appendingPathComponent("Apps")
-        ?? (FileManager.default.isWritableFile(atPath: "/Applications") ? URL(fileURLWithPath: "/Applications/Inquiline") : ownFolder)
+        ?? (FileManager.default.isWritableFile(atPath: "/Applications") ? URL(fileURLWithPath: "/Applications/Inquiline Apps") : ownFolder)
     /// Where apps were before they had a folder of their own.
     private static let oldFolder = URL(fileURLWithPath: "/Applications")
     private static let ownFolder = AndroidRuntime.testHome?.appendingPathComponent("Apps")
