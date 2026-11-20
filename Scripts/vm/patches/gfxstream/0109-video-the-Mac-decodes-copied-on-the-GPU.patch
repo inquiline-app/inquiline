@@ -179,7 +179,7 @@
  elif host_machine.system() == 'qnx'
 --- /dev/null
 +++ b/host/inquiline_video_decoder.mm
-@@ -0,0 +1,683 @@
+@@ -0,0 +1,756 @@
 +// Inquiline: Android's video decoders, as a phone maker's are its own chip's. Inquiline's
 +// decoders in Android (Vendor/c2) hand each video to this engine, which decodes it with the
 +// Mac's media engine (VideoToolbox) and copies each picture on the GPU, with Metal, straight
@@ -188,7 +188,7 @@
 +// Android reaches it at 10.0.2.2, the Mac as the VM's network sees it, on the loopback port in
 +// INQUILINE_DECODER_PORT, with the token in INQUILINE_DECODER_TOKEN (hex), which Inquiline
 +// leaves where only Android's decoders read it. Little-endian.
-+//   hello  "IQC1", 32-byte token, u8 codec (1 H.264, 2 VP9, 3 AV1); answered with a status byte
++//   hello  "IQC1", 32-byte token, u8 codec (1 H.264, 2 VP9, 3 AV1, 4 HEVC); answered with a status byte
 +//   'D' u64 index, u64 timestamp, u32 flags (1 codec config, 2 end of stream), u32 size, bytes
 +//   'E' drain: every picture still held
 +//   'F' flush: drop them
@@ -462,6 +462,58 @@
 +    return units;
 +}
 +
++/// How many pictures an HEVC stream may show before one decoded earlier: its SPS's
++/// sps_max_num_reorder_pics for the highest sub-layer (H.265, 7.3.2.2), or the most a level allows.
++int HEVCReorderDepth(const Bytes& sps) {
++    // The SPS's bits, after its 2-byte header and without emulation prevention bytes.
++    Bytes rbsp;
++    for (size_t i = 2; i < sps.size(); i++) {
++        if (i + 2 < sps.size() && sps[i] == 0 && sps[i + 1] == 0 && sps[i + 2] == 3) {
++            rbsp.push_back(0);
++            rbsp.push_back(0);
++            i += 2;
++        } else {
++            rbsp.push_back(sps[i]);
++        }
++    }
++    Bits bits{rbsp.data(), rbsp.size()};
++    auto ue = [&bits]() -> uint64_t {
++        int zeros = 0;
++        while (bits.position < bits.size * 8 && bits.f(1) == 0 && zeros < 32) zeros++;
++        return (1ull << zeros) - 1 + bits.f(zeros);
++    };
++    bits.f(4);  // sps_video_parameter_set_id
++    int maxSubLayers = bits.f(3);
++    bits.f(1);
++    bits.f(96);  // general profile, tier and level
++    std::vector<bool> profilePresent(maxSubLayers), levelPresent(maxSubLayers);
++    for (int i = 0; i < maxSubLayers; i++) {
++        profilePresent[i] = bits.f(1);
++        levelPresent[i] = bits.f(1);
++    }
++    if (maxSubLayers > 0) for (int i = maxSubLayers; i < 8; i++) bits.f(2);
++    for (int i = 0; i < maxSubLayers; i++) {
++        if (profilePresent[i]) bits.f(88);
++        if (levelPresent[i]) bits.f(8);
++    }
++    ue();  // sps_seq_parameter_set_id
++    if (ue() == 3) bits.f(1);  // chroma_format_idc, separate_colour_plane_flag
++    ue();
++    ue();  // pic_width, pic_height_in_luma_samples
++    if (bits.f(1)) for (int i = 0; i < 4; i++) ue();  // conformance window
++    ue();
++    ue();  // bit depths
++    ue();  // log2_max_pic_order_cnt_lsb_minus4
++    bool allLayers = bits.f(1);
++    int reorder = 6;
++    for (int i = allLayers ? 0 : maxSubLayers; i <= maxSubLayers; i++) {
++        ue();  // sps_max_dec_pic_buffering_minus1
++        reorder = (int)ue();
++        ue();  // sps_max_latency_increase_plus1
++    }
++    return bits.position <= bits.size * 8 && reorder <= 16 ? reorder : 6;
++}
++
 +// MARK: - Copying pictures on the GPU
 +
 +/// The picture, planar 4:2:0 in an IOSurface, copied by Metal into the YV12 ColorBuffer the
@@ -560,11 +612,11 @@
 +    void run() {
 +        uint8_t hello[37];
 +        if (!receive(hello, sizeof(hello)) || memcmp(hello, "IQC1", 4) != 0 || !same(hello + 4) ||
-+            hello[36] < 1 || hello[36] > 3) {
++            hello[36] < 1 || hello[36] > 4) {
 +            return;
 +        }
 +        mCodec = hello[36];
-+        mReorderDepth = mCodec == 1 ? 4 : 0;
++        mReorderDepth = mCodec == 1 ? 4 : mCodec == 4 ? 6 : 0;
 +        if (!sendByte(0)) return;
 +        uint8_t request;
 +        while (receive(&request, 1)) {
@@ -628,7 +680,7 @@
 +    };
 +
 +    void decode(const Bytes& data, uint64_t index, int64_t time, bool configOnly) {
-+        if (mCodec == 1) return decodeAVC(data, index, time, configOnly);
++        if (mCodec == 1 || mCodec == 4) return decodeUnits(data, index, time, configOnly);
 +        auto header = mCodec == 2 ? VP9Header(data) : AV1Header(data);
 +        if (header && header->description) {
 +            if (header->key != mStreamFormat) {
@@ -648,30 +700,51 @@
 +        mWaiting.push_back({index, time, image});
 +    }
 +
-+    /// One access unit as Android gives it, NAL units with start codes.
-+    void decodeAVC(const Bytes& data, uint64_t index, int64_t time, bool configOnly) {
-+        std::vector<Bytes> units, sets;
++    /// The kind of an H.264 or HEVC NAL unit, from its header.
++    int unitType(const Bytes& unit) const {
++        if (unit.empty()) return -1;
++        return mCodec == 4 ? (unit[0] >> 1) & 0x3f : unit[0] & 0x1f;
++    }
++
++    /// One access unit as Android gives it, H.264 or HEVC NAL units with start codes. Their
++    /// parameter sets (H.264's SPS and PPS, HEVC's VPS, SPS and PPS) make the session.
++    void decodeUnits(const Bytes& data, uint64_t index, int64_t time, bool configOnly) {
++        const bool hevc = mCodec == 4;
++        const std::vector<int> setTypes = hevc ? std::vector<int>{32, 33, 34} : std::vector<int>{7, 8};
++        const int delimiter = hevc ? 35 : 9;
++        std::vector<Bytes> units;
++        std::map<int, Bytes> sets;
 +        for (auto& unit : Units(data)) {
-+            int type = unit.empty() ? 0 : unit[0] & 0x1f;
-+            if (type == 7 || type == 8) sets.push_back(unit);
-+            else if (type != 9 && type != 0) units.push_back(unit);
++            int type = unitType(unit);
++            if (std::find(setTypes.begin(), setTypes.end(), type) != setTypes.end()) sets[type] = unit;
++            else if (type != delimiter && type >= 0 && !(hevc && unit.size() < 2)) units.push_back(unit);
 +        }
 +        if (!sets.empty()) {
-+            Bytes sps, pps;
-+            for (auto& set : mParameterSets) ((set[0] & 0x1f) == 7 ? sps : pps) = set;
-+            for (auto& set : sets) ((set[0] & 0x1f) == 7 ? sps : pps) = set;
 +            std::vector<Bytes> fresh;
-+            if (!sps.empty()) fresh.push_back(sps);
-+            if (!pps.empty()) fresh.push_back(pps);
++            for (int type : setTypes) {
++                if (sets.count(type)) fresh.push_back(sets[type]);
++                else for (auto& set : mParameterSets) if (unitType(set) == type) fresh.push_back(set);
++            }
 +            if (fresh != mParameterSets) {
 +                mParameterSets = fresh;
 +                CMVideoFormatDescriptionRef description = nullptr;
-+                if (mParameterSets.size() == 2) {
-+                    // Baseline streams show each picture as it comes; others may hold some back.
-+                    mReorderDepth = sps.size() > 1 && sps[1] == 66 ? 0 : 4;
-+                    const uint8_t* pointers[2] = {sps.data(), pps.data()};
-+                    size_t sizes[2] = {sps.size(), pps.size()};
-+                    CMVideoFormatDescriptionCreateFromH264ParameterSets(nullptr, 2, pointers, sizes, 4, &description);
++                if (mParameterSets.size() == setTypes.size()) {
++                    std::vector<const uint8_t*> pointers;
++                    std::vector<size_t> sizes;
++                    for (auto& set : mParameterSets) {
++                        pointers.push_back(set.data());
++                        sizes.push_back(set.size());
++                    }
++                    if (hevc) {
++                        mReorderDepth = HEVCReorderDepth(mParameterSets[1]);
++                        CMVideoFormatDescriptionCreateFromHEVCParameterSets(nullptr, 3, pointers.data(), sizes.data(), 4,
++                                                                           nullptr, &description);
++                    } else {
++                        // Baseline streams show each picture as it comes; others may hold some back.
++                        mReorderDepth = mParameterSets[0].size() > 1 && mParameterSets[0][1] == 66 ? 0 : 4;
++                        CMVideoFormatDescriptionCreateFromH264ParameterSets(nullptr, 2, pointers.data(), sizes.data(), 4,
++                                                                           &description);
++                    }
 +                }
 +                makeSession(description);
 +                if (description) CFRelease(description);

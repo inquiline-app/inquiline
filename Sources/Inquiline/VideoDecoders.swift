@@ -50,15 +50,15 @@ final class VideoDecoders {
     /// decodes in its hardware, which Android lists as its own.
     var key: String { "\(port) \(hexToken) " + Self.supported.map(\.name).joined(separator: ",") }
 
-    /// H.264 on every Mac; VP9 on Apple silicon; AV1 from M3 on.
+    /// H.264 and HEVC on every Mac Inquiline runs on; VP9 on Apple silicon; AV1 from M3 on.
     static let supported: [Codec] = Codec.allCases.filter { codec in
-        if codec != .avc { VTRegisterSupplementalVideoDecoderIfAvailable(codec.type) }
+        if codec == .vp9 || codec == .av1 { VTRegisterSupplementalVideoDecoderIfAvailable(codec.type) }
         return VTIsHardwareDecodeSupported(codec.type)
     }
 }
 
 enum Codec: UInt8, CaseIterable {
-    case avc = 1, vp9 = 2, av1 = 3
+    case avc = 1, vp9 = 2, av1 = 3, hevc = 4
 
     var name: String { "\(self)" }
 
@@ -67,6 +67,7 @@ enum Codec: UInt8, CaseIterable {
         case .avc: kCMVideoCodecType_H264
         case .vp9: kCMVideoCodecType_VP9
         case .av1: kCMVideoCodecType_AV1
+        case .hevc: kCMVideoCodecType_HEVC
         }
     }
 }

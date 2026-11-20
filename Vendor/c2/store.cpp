@@ -67,6 +67,14 @@ const std::vector<Kind>& Kinds() {
           C2Config::LEVEL_AV1_4, C2Config::LEVEL_AV1_4_1, C2Config::LEVEL_AV1_4_2, C2Config::LEVEL_AV1_4_3,
           C2Config::LEVEL_AV1_5, C2Config::LEVEL_AV1_5_1, C2Config::LEVEL_AV1_5_2, C2Config::LEVEL_AV1_5_3,
           C2Config::LEVEL_AV1_6}},
+        {4, "hevc", "c2.inquiline.hevc.decoder", MEDIA_MIMETYPE_VIDEO_HEVC,
+         C2Config::PROFILE_HEVC_MAIN, C2Config::LEVEL_HEVC_MAIN_5_1,
+         {C2Config::PROFILE_HEVC_MAIN, C2Config::PROFILE_HEVC_MAIN_STILL, C2Config::PROFILE_HEVC_MAIN_10},
+         {C2Config::LEVEL_HEVC_MAIN_1, C2Config::LEVEL_HEVC_MAIN_2, C2Config::LEVEL_HEVC_MAIN_2_1,
+          C2Config::LEVEL_HEVC_MAIN_3, C2Config::LEVEL_HEVC_MAIN_3_1, C2Config::LEVEL_HEVC_MAIN_4,
+          C2Config::LEVEL_HEVC_MAIN_4_1, C2Config::LEVEL_HEVC_MAIN_5, C2Config::LEVEL_HEVC_MAIN_5_1,
+          C2Config::LEVEL_HEVC_MAIN_5_2, C2Config::LEVEL_HEVC_HIGH_4, C2Config::LEVEL_HEVC_HIGH_4_1,
+          C2Config::LEVEL_HEVC_HIGH_5, C2Config::LEVEL_HEVC_HIGH_5_1, C2Config::LEVEL_HEVC_HIGH_5_2}},
     };
     return kinds;
 }
@@ -337,7 +345,7 @@ private:
 
 /// Talks to Inquiline on the Mac, which decodes the video with VideoToolbox and writes each
 /// picture straight into the GPU buffer of the picture Android gave for it. Little-endian.
-///   hello  "IQC1", 32-byte token, u8 codec (1 H.264, 2 VP9, 3 AV1)
+///   hello  "IQC1", 32-byte token, u8 codec (1 H.264, 2 VP9, 3 AV1, 4 HEVC)
 ///   'D' u64 index, u64 timestamp, u32 flags (1 codec config, 2 end of stream), u32 size, bytes
 ///   'E' drain: every picture still held
 ///   'F' flush: drop them

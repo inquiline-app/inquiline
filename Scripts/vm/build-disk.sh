@@ -374,6 +374,24 @@ cat > "$ROOT/var/inquiline/media_codecs.xml" <<'EOF'
             <Limit name="measured-frame-rate-3840x2160" range="60-100" />
             <Feature name="adaptive-playback" />
         </MediaCodec>
+        <MediaCodec name="c2.inquiline.hevc.decoder" type="video/hevc">
+            <Limit name="size" min="2x2" max="4096x4096" />
+            <Limit name="alignment" value="2x2" />
+            <Limit name="block-size" value="16x16" />
+            <Limit name="block-count" range="1-65536" />
+            <Limit name="blocks-per-second" range="1-3932160" />
+            <Limit name="bitrate" range="1-120000000" />
+            <Limit name="performance-point-3840x2160" value="60" />
+            <Limit name="performance-point-2560x1440" value="120" />
+            <Limit name="performance-point-1920x1080" value="240" />
+            <Limit name="performance-point-1280x720" value="480" />
+            <Limit name="measured-frame-rate-320x240" range="480-960" />
+            <Limit name="measured-frame-rate-720x480" range="480-960" />
+            <Limit name="measured-frame-rate-1280x720" range="300-480" />
+            <Limit name="measured-frame-rate-1920x1080" range="200-400" />
+            <Limit name="measured-frame-rate-3840x2160" range="60-100" />
+            <Feature name="adaptive-playback" />
+        </MediaCodec>
     </Decoders>
 </MediaCodecs>
 EOF
