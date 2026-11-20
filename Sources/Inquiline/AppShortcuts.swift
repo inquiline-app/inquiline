@@ -116,6 +116,11 @@ enum AppShortcuts {
                     bundle = named
                 }
                 if write(app, to: bundle, program: program, server: server, frames: frames, fingerprint: fingerprint) {
+                    // Its name without ".app", as Finder and the Dock show an installed app's.
+                    var values = URLResourceValues()
+                    values.hasHiddenExtension = true
+                    var shown = bundle
+                    try? shown.setResourceValues(values)
                     locations[package] = bundle
                     kept[package] = try? bundle.bookmarkData()
                 }
