@@ -12,7 +12,7 @@ final class FrameRenderer {
     let layer = CAMetalLayer()
 
     private static let slots = 3
-    private let device: MTLDevice
+    let device: MTLDevice
     private let queue: MTLCommandQueue
     private let pipeline: MTLRenderPipelineState
     /// One permit per slot: a slot is reused once the GPU has drawn it.
@@ -50,6 +50,13 @@ final class FrameRenderer {
     private var background: (UInt8, UInt8, UInt8) = (0, 0, 0)
     /// Called on the main thread when the app has drawn for a new size of its screen.
     var onContent: (() -> Void)?
+
+    /// For screenshots and recordings (ScreenRecorder): the slot of the picture shown last,
+    /// which stays in memory until Android's third picture after it, and the recording that
+    /// takes each picture. Held while a slot's memory is written or read.
+    private let captureLock = NSLock()
+    private var lastSlot = -1
+    private var recorder: ScreenRecorder?
 
     init?() {
         guard let device = MTLCreateSystemDefaultDevice(), let queue = device.makeCommandQueue(),
@@ -94,6 +101,9 @@ final class FrameRenderer {
         // Memory the GPU may still be reading can't be replaced.
         for _ in 0..<Self.slots { freeSlots.wait() }
         defer { for _ in 0..<Self.slots { freeSlots.signal() } }
+        captureLock.lock()
+        defer { captureLock.unlock() }
+        lastSlot = -1
         self.width = width
         self.height = height
         if keepsPixelSize {
@@ -125,9 +135,10 @@ final class FrameRenderer {
         freeSlots.wait()
         let slot = nextSlot
         nextSlot = (nextSlot + 1) % Self.slots
-        guard copy(resource: resource, offset: UInt64(slot * slotSize)),
-              let commands = queue.makeCommandBuffer()
-        else {
+        captureLock.lock()
+        let copied = copy(resource: resource, offset: UInt64(slot * slotSize))
+        captureLock.unlock()
+        guard copied, let commands = queue.makeCommandBuffer() else {
             freeSlots.signal()
             return
         }
@@ -135,6 +146,10 @@ final class FrameRenderer {
             freeSlots.signal()
             return
         }
+        captureLock.lock()
+        lastSlot = slot
+        recorder?.record(textures[slot], in: commands)
+        captureLock.unlock()
         var frame = textures[slot]
         if let scaler = upscaler() {
             scaler.colorTexture = frame
@@ -272,6 +287,41 @@ final class FrameRenderer {
         return made
     }
 
+    // MARK: - Screenshots and recordings
+
+    /// The picture shown now, as Android drew it: its own pixels, not the window's.
+    func picture() -> CGImage? {
+        captureLock.lock()
+        defer { captureLock.unlock() }
+        guard lastSlot >= 0, let memory, width > 0, height > 0,
+              let provider = CGDataProvider(data: Data(bytes: memory.advanced(by: lastSlot * slotSize),
+                                                       count: width * height * 4) as CFData),
+              let space = CGColorSpace(name: CGColorSpace.sRGB)
+        else { return nil }
+        return CGImage(width: width, height: height, bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: width * 4,
+                       space: space, bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.noneSkipLast.rawValue),
+                       provider: provider, decode: nil, shouldInterpolate: false, intent: .defaultIntent)
+    }
+
+    /// The size of Android's picture now.
+    var pictureSize: CGSize {
+        captureLock.lock()
+        defer { captureLock.unlock() }
+        return CGSize(width: width, height: height)
+    }
+
+    /// Each picture from now goes to `recorder` too, starting with the one shown, as the screen
+    /// may stay still a while; nil stops.
+    func record(to recorder: ScreenRecorder?) {
+        captureLock.lock()
+        defer { captureLock.unlock() }
+        self.recorder = recorder
+        if let recorder, lastSlot >= 0, lastSlot < textures.count, let commands = queue.makeCommandBuffer() {
+            recorder.record(textures[lastSlot], in: commands)
+            commands.commit()
+        }
+    }
+
     // MARK: - The VM's frame server
 
     /// Shared memory both processes map; the VM copies frames into it. The VM makes it, as
@@ -351,7 +401,7 @@ final class FrameRenderer {
     }
 
     /// A triangle covering the drawable, sampling the frame; Android's top row comes first.
-    private static let shaders = """
+    static let shaders = """
     #include <metal_stdlib>
     using namespace metal;
     struct Varyings { float4 position [[position]]; float2 uv; };

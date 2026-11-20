@@ -126,6 +126,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, SPUSta
         // Android's widgets on the desktop, as they were (DesktopWidgets).
         DesktopWidgets.shared.start()
         PhoneRemoteDoor.shared.start()
+        if #available(macOS 14.2, *) { EngineAudio.shared.start() }
         startAndroidInBackground()
     }
 

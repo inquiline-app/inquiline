@@ -523,6 +523,7 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate, 
     private static let settingsItem = NSToolbarItem.Identifier("settings")
     private static let assistantItem = NSToolbarItem.Identifier("assistant")
     private static let phoneItem = NSToolbarItem.Identifier("phone")
+    private static let captureItem = NSToolbarItem.Identifier("capture")
 
     /// The frame rate, sound and orientation, in the Mac's own toolbar.
     private func addToolbar() {
@@ -569,7 +570,7 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate, 
                 self.showLoading(true)
             }
         }
-        let toolbar = NSToolbar(identifier: "AppWindowToolbar6")
+        let toolbar = NSToolbar(identifier: "AppWindowToolbar7")
         toolbar.delegate = self
         toolbar.displayMode = .iconOnly
         toolbar.allowsUserCustomization = true
@@ -582,7 +583,7 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate, 
         // The space keeps the buttons clear of the window's rounded corner. Android's Settings
         // is no app to set up or clear.
         package == AppShortcuts.settingsPackage ? [.flexibleSpace, Self.rotateItem, .space]
-            : [.flexibleSpace, Self.fpsItem, Self.assistantItem, Self.phoneItem, Self.controlsItem, Self.muteItem, Self.rotateItem,
+            : [.flexibleSpace, Self.fpsItem, Self.assistantItem, Self.captureItem, Self.phoneItem, Self.controlsItem, Self.muteItem, Self.rotateItem,
                Self.settingsItem, .space]
     }
 
@@ -590,7 +591,7 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate, 
         // Clearing is in App Settings and the app's menu; these are there for those who want
         // them at hand.
         package == AppShortcuts.settingsPackage ? [.flexibleSpace, .space, Self.rotateItem]
-            : [.flexibleSpace, .space, Self.fpsItem, Self.assistantItem, Self.phoneItem, Self.controlsItem, Self.muteItem, Self.rotateItem,
+            : [.flexibleSpace, .space, Self.fpsItem, Self.assistantItem, Self.captureItem, Self.phoneItem, Self.controlsItem, Self.muteItem, Self.rotateItem,
                Self.settingsItem, Self.clearCacheItem, Self.clearDataItem]
     }
 
@@ -605,6 +606,21 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate, 
             let menu = NSMenu()
             Self.addControlsItems(to: menu, target: self)
             item.menu = menu
+            return item
+        }
+        if identifier == Self.captureItem {
+            // A click takes a screenshot; its menu also records.
+            let item = NSMenuToolbarItem(itemIdentifier: identifier)
+            item.label = "Screenshot"
+            item.showsIndicator = true
+            let menu = NSMenu()
+            menu.addItem(withTitle: "Take Screenshot", action: #selector(takeScreenshot(_:)), keyEquivalent: "").target = self
+            let record = menu.addItem(withTitle: "Record Screen", action: #selector(toggleRecording(_:)), keyEquivalent: "")
+            record.target = self
+            recordMenuItem = record
+            item.menu = menu
+            captureToolbarItem = item
+            updateCaptureItem()
             return item
         }
         if identifier == Self.phoneItem {
@@ -701,6 +717,89 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate, 
             ? "Choose Install Google Play… from Inquiline in the menu bar, then install the Google and Gemini apps from Google Play."
             : "Install the Google and Gemini apps from Google Play, then click the Assistant button again."
         alert.beginSheetModal(for: window)
+    }
+
+    // MARK: - Screenshots and recordings
+
+    private var recorder: ScreenRecorder?
+    private var recordingTimer: Timer?
+    private weak var captureToolbarItem: NSMenuToolbarItem?
+    private weak var recordMenuItem: NSMenuItem?
+
+    /// The app's screen alone, as Android drew it, where the Mac saves its screenshots, with
+    /// the Mac's sound and a flash.
+    @objc private func takeScreenshot(_ sender: Any?) {
+        guard let picture = displayView.renderer?.picture() else { return NSSound.beep() }
+        let url = ScreenCapture.file(app: window.title, kind: "png")
+        ScreenCapture.playShutter()
+        flash()
+        DispatchQueue.global(qos: .userInitiated).async {
+            if !ScreenCapture.save(picture, to: url) { AppLog.write("A screenshot couldn't be saved") }
+        }
+    }
+
+    private func flash() {
+        guard let content = window.contentView else { return }
+        let veil = NSView(frame: displayView.frame)
+        veil.wantsLayer = true
+        veil.layer?.backgroundColor = .white
+        veil.alphaValue = 0.8
+        content.addSubview(veil, positioned: .above, relativeTo: displayView)
+        NSAnimationContext.runAnimationGroup({ context in
+            context.duration = 0.35
+            veil.animator().alphaValue = 0
+        }, completionHandler: { veil.removeFromSuperview() })
+    }
+
+    /// Starts recording the app's screen and Android's sound, or stops and saves it.
+    @objc private func toggleRecording(_ sender: Any?) {
+        if recorder != nil { return stopRecording() }
+        guard let renderer = displayView.renderer, renderer.pictureSize.width > 0,
+              let made = ScreenRecorder(url: ScreenCapture.file(app: window.title, kind: "mov"),
+                                        size: renderer.pictureSize, device: renderer.device)
+        else { return NSSound.beep() }
+        recorder = made
+        renderer.record(to: made)
+        let started = Date()
+        recordingTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+            let seconds = Int(Date().timeIntervalSince(started))
+            self?.captureToolbarItem?.toolTip = String(format: "Recording %d:%02d. Click to stop.", seconds / 60, seconds % 60)
+        }
+        updateCaptureItem()
+        AppLog.write("Recording the app's screen")
+    }
+
+    private func stopRecording(now: Bool = false) {
+        guard let recorder else { return }
+        self.recorder = nil
+        displayView.renderer?.record(to: nil)
+        recordingTimer?.invalidate()
+        recordingTimer = nil
+        updateCaptureItem()
+        if now {
+            recorder.finishNow()
+        } else {
+            recorder.finish { saved in AppLog.write(saved ? "A screen recording was saved" : "A screen recording was empty") }
+        }
+    }
+
+    /// A camera; while recording, a red button that stops it.
+    private func updateCaptureItem() {
+        guard let item = captureToolbarItem else { return }
+        if recorder != nil {
+            let red = NSImage.SymbolConfiguration(paletteColors: [.white, .systemRed])
+            item.image = NSImage(systemSymbolName: "stop.circle.fill", accessibilityDescription: "Stop Recording")?
+                .withSymbolConfiguration(red)
+            item.toolTip = "Recording. Click to stop."
+            item.action = #selector(toggleRecording(_:))
+            recordMenuItem?.title = "Stop Recording"
+        } else {
+            item.image = NSImage(systemSymbolName: "camera", accessibilityDescription: "Screenshot")
+            item.toolTip = "Take a Screenshot of the App"
+            item.action = #selector(takeScreenshot(_:))
+            recordMenuItem?.title = "Record Screen"
+        }
+        item.target = self
     }
 
     // MARK: - Phone remote
@@ -962,6 +1061,7 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate, 
             _ = try? AdbClient.shell("am stack remove \(task)", timeout: 3)
         }
         displayView.controls.releaseAll()
+        stopRecording(now: true)
         phoneRemote?.stop()
         phoneInput.unplug()
         watch?.invalidate()
