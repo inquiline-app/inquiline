@@ -1,0 +1,296 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Inquiline — Android apps on your Mac, as Mac apps</title>
+<meta name="description" content="Inquiline runs Android apps and games on your Mac, each in its own window, with its Dock icon, notifications and widgets. Free and open source, for Apple Silicon Macs.">
+<meta property="og:title" content="Inquiline — Android apps on your Mac, as Mac apps">
+<meta property="og:description" content="Android apps and games on your Mac, each in its own window. Free and open source.">
+<meta property="og:image" content="https://inquiline-app.github.io/inquiline/images/windows.jpg">
+<link rel="icon" href="images/icon.svg" type="image/svg+xml">
+<style>
+  :root {
+    --bg: #ffffff; --bg-soft: #f5f5f7; --text: #1d1d1f; --dim: #6e6e73; --line: #d2d2d7;
+    --accent: #0071e3; --accent-text: #ffffff; --code: #f0f0f3;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #000000; --bg-soft: #161617; --text: #f5f5f7; --dim: #a1a1a6; --line: #333336;
+      --accent: #2997ff; --accent-text: #ffffff; --code: #1d1d1f;
+    }
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+    font: 17px/1.5 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", Helvetica, Arial, sans-serif;
+    -webkit-font-smoothing: antialiased; }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  img { max-width: 100%; height: auto; display: block; }
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 0 22px; }
+
+  nav { position: sticky; top: 0; z-index: 5; backdrop-filter: saturate(180%) blur(20px); -webkit-backdrop-filter: saturate(180%) blur(20px);
+    background: color-mix(in srgb, var(--bg) 78%, transparent); border-bottom: 1px solid var(--line); }
+  nav .wrap { display: flex; align-items: center; gap: 22px; height: 52px; }
+  nav .brand { display: flex; align-items: center; gap: 9px; color: var(--text); font-weight: 600; margin-right: auto; }
+  nav .brand img { width: 26px; height: 26px; }
+  nav a.link { color: var(--text); font-size: 14px; opacity: .85; }
+  nav a.cta { font-size: 14px; background: var(--accent); color: var(--accent-text); padding: 5px 14px; border-radius: 980px; }
+  nav a.cta:hover { text-decoration: none; filter: brightness(1.08); }
+
+  .hero { text-align: center; padding: 72px 0 36px; }
+  .hero img.icon { width: 132px; height: 132px; margin: 0 auto 18px; }
+  .hero h1 { font-size: clamp(40px, 7vw, 72px); line-height: 1.05; margin: 0; letter-spacing: -0.02em; }
+  .hero p.lead { font-size: clamp(20px, 2.6vw, 26px); color: var(--dim); margin: 14px auto 0; max-width: 720px; }
+  .buttons { display: flex; gap: 14px; justify-content: center; flex-wrap: wrap; margin-top: 30px; }
+  .button { display: inline-block; padding: 12px 26px; border-radius: 980px; font-size: 17px; font-weight: 500; }
+  .button.primary { background: var(--accent); color: var(--accent-text); }
+  .button.secondary { border: 1px solid var(--accent); color: var(--accent); }
+  .button:hover { text-decoration: none; filter: brightness(1.08); }
+  .meta { color: var(--dim); font-size: 14px; margin-top: 14px; }
+  .brew { display: inline-flex; align-items: center; gap: 10px; margin-top: 18px; background: var(--code); border: 1px solid var(--line);
+    border-radius: 12px; padding: 8px 8px 8px 16px; font: 14px ui-monospace, SFMono-Regular, Menlo, monospace; max-width: 100%; }
+  .brew code { white-space: nowrap; overflow-x: auto; }
+  .brew button { border: 0; background: var(--bg); color: var(--text); border-radius: 8px; padding: 6px 12px; font: 13px -apple-system, sans-serif; cursor: pointer; }
+  .shot { margin: 46px auto 0; border-radius: 14px; }
+
+  section.feature { padding: 70px 0; border-top: 1px solid var(--line); }
+  .feature .wrap { display: grid; grid-template-columns: 1fr 1.25fr; gap: 54px; align-items: center; }
+  .feature.flip .text { order: 2; }
+  .feature h2 { font-size: clamp(28px, 3.6vw, 40px); line-height: 1.1; margin: 0 0 14px; letter-spacing: -0.015em; }
+  .feature p, .feature li { color: var(--dim); }
+  .feature p strong, .feature li strong { color: var(--text); font-weight: 600; }
+  .feature ul { padding-left: 20px; margin: 10px 0 0; }
+  .feature .media { display: flex; justify-content: center; }
+  .feature .media img { border-radius: 12px; }
+  .feature .media.narrow img { max-width: 420px; }
+  @media (max-width: 760px) {
+    .feature .wrap { grid-template-columns: 1fr; gap: 26px; }
+    .feature.flip .text { order: 0; }
+    nav a.link { display: none; }
+  }
+
+  section.band { background: var(--bg-soft); padding: 80px 0; }
+  .band h2 { font-size: clamp(28px, 3.6vw, 40px); text-align: center; margin: 0 0 12px; letter-spacing: -0.015em; }
+  .band p.sub { text-align: center; color: var(--dim); max-width: 700px; margin: 0 auto 40px; }
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 18px; }
+  .card { background: var(--bg); border: 1px solid var(--line); border-radius: 18px; padding: 24px; }
+  .card h3 { margin: 0 0 8px; font-size: 19px; }
+  .card p { margin: 0; color: var(--dim); font-size: 15px; }
+  .diagram { margin: 48px auto 0; max-width: 760px; background: #fff; border-radius: 14px; padding: 12px; }
+
+  .install ol { color: var(--dim); max-width: 760px; margin: 0 auto; padding-left: 22px; }
+  .install li { margin-bottom: 10px; }
+  .install li strong { color: var(--text); }
+  .install .req { text-align: center; color: var(--dim); font-size: 15px; margin-top: 30px; }
+
+  .faq { max-width: 780px; margin: 0 auto; }
+  .faq details { border-bottom: 1px solid var(--line); padding: 16px 0; }
+  .faq summary { font-weight: 600; cursor: pointer; list-style: none; }
+  .faq summary::-webkit-details-marker { display: none; }
+  .faq summary::after { content: "+"; float: right; color: var(--dim); font-weight: 400; }
+  .faq details[open] summary::after { content: "−"; }
+  .faq p { color: var(--dim); margin: 10px 0 0; }
+
+  footer { border-top: 1px solid var(--line); padding: 34px 0 50px; color: var(--dim); font-size: 13px; }
+  footer .wrap { display: flex; flex-wrap: wrap; gap: 18px; justify-content: space-between; }
+  footer a { color: var(--dim); }
+</style>
+</head>
+<body>
+
+<nav>
+  <div class="wrap">
+    <a class="brand" href="#"><img src="images/icon.svg" alt="">Inquiline</a>
+    <a class="link" href="#features">Features</a>
+    <a class="link" href="#install">Install</a>
+    <a class="link" href="#faq">FAQ</a>
+    <a class="link" href="https://github.com/inquiline-app/inquiline">GitHub</a>
+    <a class="cta" href="https://github.com/inquiline-app/inquiline/releases/latest">Download</a>
+  </div>
+</nav>
+
+<header class="hero">
+  <div class="wrap">
+    <img class="icon" src="images/icon.svg" alt="Inquiline's icon">
+    <h1>Android apps on your Mac,<br>as Mac apps.</h1>
+    <p class="lead">Each app gets its own window, a Dock icon, notifications and widgets. Behind it runs real Android&nbsp;15, on your Mac's own chip.</p>
+    <div class="buttons">
+      <a class="button primary" href="https://github.com/inquiline-app/inquiline/releases/latest">Download for Mac</a>
+      <a class="button secondary" href="https://github.com/inquiline-app/inquiline">View on GitHub</a>
+    </div>
+    <p class="meta">Free and open source · No account · Apple Silicon · macOS 14 or later</p>
+    <div class="brew"><code>brew install --cask inquiline-app/tap/inquiline</code><button type="button" id="copy">Copy</button></div>
+    <img class="shot" src="images/windows.jpg" width="1600" height="904" alt="Wikipedia, the game Mindustry and a clock app, each in its own Mac window">
+  </div>
+</header>
+
+<main id="features">
+
+<section class="feature">
+  <div class="wrap">
+    <div class="text">
+      <h2>Double-click an APK.</h2>
+      <p>Open an <strong>.apk</strong>, or a bundle such as .xapk, .apkm or .apks, and a few seconds later the app is on your Mac, in Launchpad and Spotlight. Games download their data on first launch, as on a phone. With Google Play added, apps come from the Play Store.</p>
+    </div>
+    <div class="media"><img src="images/install.gif" width="720" alt="Double-clicking Wikipedia.apk in Finder installs it, and Wikipedia opens in its own window" loading="lazy"></div>
+  </div>
+</section>
+
+<section class="feature flip">
+  <div class="wrap">
+    <div class="text">
+      <h2>Your phone is the controller.</h2>
+      <p>Scan the QR code in an app's window and your phone becomes an <strong>Xbox-style controller</strong>, a multi-touch <strong>touchpad</strong> and a <strong>✨ Gemini</strong> button for whichever app is in front. Nothing to install: it's a page from your Mac, which you can keep on your Home Screen. Touches travel over WebRTC on your own Wi-Fi, so they stay smooth.</p>
+    </div>
+    <div class="media"><img src="images/phone-remote.png" width="1440" alt="A game's window shows a QR code; in front of it, a phone shows an Xbox-style controller" loading="lazy"></div>
+  </div>
+</section>
+
+<section class="feature">
+  <div class="wrap">
+    <div class="text">
+      <h2>Games, at up to 60 frames a second.</h2>
+      <p>Games run on your Mac's GPU with Vulkan 1.3 and OpenGL ES 3.2, and macOS gives them Game Mode. Play touch-only games with the <strong>keyboard and mouse</strong>, or with an Xbox, PlayStation or MFi controller.</p>
+      <p>Click the frame rate in the toolbar to see how a game runs: <strong>frames per second</strong> over the last half minute, and the Mac's <strong>CPU</strong>, <strong>GPU</strong> and Android's <strong>memory</strong>.</p>
+    </div>
+    <div class="media"><img src="images/performance.gif" width="640" alt="A game's settings open at Performance: 60 FPS with a green graph, and CPU, GPU and memory bars that move as the game runs" loading="lazy"></div>
+  </div>
+</section>
+
+<section class="feature flip">
+  <div class="wrap">
+    <div class="text">
+      <h2>Screenshots and recordings of the app alone.</h2>
+      <p>The camera button captures just the app's screen, without its window, at Android's full resolution, or records it with its sound. They're saved where your Mac saves its own screenshots.</p>
+    </div>
+    <div class="media"><img src="images/screen-capture.gif" width="640" alt="The camera button in a game's toolbar opens a menu; Take Screenshot flashes the game's screen as the picture is saved" loading="lazy"></div>
+  </div>
+</section>
+
+<section class="feature">
+  <div class="wrap">
+    <div class="text">
+      <h2>Windows that fit.</h2>
+      <p>Make a window wider and the app lays itself out again, with its tablet layout if it has one, rather than stretching a phone screen. Games keep their shape and scale up to full screen.</p>
+    </div>
+    <div class="media narrow"><img src="images/resize.gif" width="560" alt="Wikipedia's window is made narrow and Wikipedia switches to its phone layout, then widened back to its tablet layout" loading="lazy"></div>
+  </div>
+</section>
+
+<section class="feature flip">
+  <div class="wrap">
+    <div class="text">
+      <h2>Notifications in Notification Center.</h2>
+      <p>Apps notify you while you work in something else, even with no window open. Click one to open the app on what it's about, and answer chats right from the notification.</p>
+    </div>
+    <div class="media narrow"><img src="images/notifications.gif" width="400" alt="A timer runs out while another app is in front, and clicking its notification brings the clock app forward" loading="lazy"></div>
+  </div>
+</section>
+
+<section class="feature">
+  <div class="wrap">
+    <div class="text">
+      <h2>Gemini, over any app.</h2>
+      <p>The ✨ button opens Gemini over the app in front, as holding a phone's power button does. Ask about the page, the chat or the game you're looking at, or talk to it with <strong>Live</strong> through your Mac's microphone.</p>
+    </div>
+    <div class="media"><img src="images/assistant.gif" width="640" alt="In Wikipedia's window, the sparkle button opens Gemini, which reads the article on screen and summarizes it" loading="lazy"></div>
+  </div>
+</section>
+
+<section class="feature flip">
+  <div class="wrap">
+    <div class="text">
+      <h2>Widgets on your desktop.</h2>
+      <p>An app's widgets go on your desktop as Android draws them, kept up to date. Tap and scroll them, drag them anywhere, and right-click to open the app.</p>
+    </div>
+    <div class="media narrow"><img src="images/widgets.gif" width="480" alt="Choosing the clock app's analog clock widget puts it on the desktop beside the window" loading="lazy"></div>
+  </div>
+</section>
+
+<section class="feature">
+  <div class="wrap">
+    <div class="text">
+      <h2>All your Android apps, in one place.</h2>
+      <p>Your Android apps live together in <strong>Applications › Inquiline Apps</strong>, and Spotlight and Launchpad list them with the rest. Keep them all in the Dock as one stack if you like, which opens as a grid.</p>
+    </div>
+    <div class="media"><img src="images/dock-stack.gif" width="560" alt="Clicking the Inquiline Apps stack in the Dock opens a grid of every Android app" loading="lazy"></div>
+  </div>
+</section>
+
+<section class="feature flip">
+  <div class="wrap">
+    <div class="text">
+      <h2>Each app's own settings.</h2>
+      <ul>
+        <li><strong>Permissions</strong>, each with a switch.</li>
+        <li><strong>Ad Blocking</strong> in four levels, with uBlock Origin's and AdGuard's lists, updated daily.</li>
+        <li><strong>Sound</strong>: volume, mute just this app, an equalizer and loudness.</li>
+        <li><strong>Data</strong>: the app's size, its folder in Finder, Clear Cache or Clear Data.</li>
+      </ul>
+    </div>
+    <div class="media narrow"><img src="images/app-settings.png" width="360" alt="An app's settings: Permissions, Ad Blocking set to Balanced, and Data" loading="lazy"></div>
+  </div>
+</section>
+
+</main>
+
+<section class="band">
+  <div class="wrap">
+    <h2>Not an emulator.</h2>
+    <p class="sub">Android runs in a small virtual machine on the virtualization Apple builds into macOS. Its Arm apps run on Apple Silicon as they are, and draw with your Mac's GPU through Metal.</p>
+    <div class="cards">
+      <div class="card"><h3>Your data stays on your Mac</h3><p>Nothing you do in Android leaves your Mac through Inquiline. It only asks GitHub once a day whether there's a new version.</p></div>
+      <div class="card"><h3>Follows your Mac</h3><p>Android takes your Mac's language, dark mode, time zone, microphone and location, after macOS asks you once.</p></div>
+      <div class="card"><h3>Rests when idle</h3><p>Android sleeps when no app needs it, wakes for notifications and alarms, and gives back memory your Mac needs.</p></div>
+      <div class="card"><h3>Free and open source</h3><p>Apache 2.0, built on QEMU, Redroid, gfxstream and MoltenVK. No account, nothing to sign up for.</p></div>
+    </div>
+    <img class="diagram" src="images/how-it-works.svg" alt="Diagram: each Android app is a Mac app that talks to Android 15 in a small virtual machine, whose graphics run on the Mac's GPU" loading="lazy">
+  </div>
+</section>
+
+<section class="feature install" id="install">
+  <div class="wrap" style="display:block">
+    <h2 style="text-align:center">Install</h2>
+    <p style="text-align:center">With Homebrew: <code>brew install --cask inquiline-app/tap/inquiline</code>. Or by hand:</p>
+    <ol>
+      <li><strong>Download</strong> the disk image from <a href="https://github.com/inquiline-app/inquiline/releases/latest">the latest release</a> and open it.</li>
+      <li><strong>Drag Inquiline</strong> onto the Applications folder.</li>
+      <li><strong>Open it.</strong> Inquiline isn't notarized by Apple yet, so macOS stops it the first time. On macOS 15 and later, open System Settings › Privacy &amp; Security and choose <strong>Open Anyway</strong>. On macOS 14, Control-click Inquiline and choose Open. You only do this once.</li>
+    </ol>
+    <p class="req">Needs a Mac with Apple Silicon (M1 or later), macOS 14 or later and 8 GB of memory; 16 GB is better for big games.</p>
+  </div>
+</section>
+
+<section class="band" id="faq">
+  <div class="wrap">
+    <h2>Questions</h2>
+    <div class="faq">
+      <details><summary>Does Google Play work?</summary><p>Google's apps can't be included, but you can add them yourself from the menu bar with Install Google Play…, as the <a href="https://github.com/inquiline-app/inquiline/blob/main/docs/google-play.md">guide</a> explains.</p></details>
+      <details><summary>Why is a game's first launch slow?</summary><p>Its graphics programs are prepared for your Mac's GPU the first time, which can take a few minutes for large 3D games. Later launches are much faster.</p></details>
+      <details><summary>Will banking apps work?</summary><p>Most won't: Inquiline isn't certified by Google, and this preview's Android has root access, so don't use it for banking, payments or other sensitive accounts.</p></details>
+      <details><summary>How do I uninstall it?</summary><p>Move Inquiline to the Trash while it's running in the menu bar. It removes the apps you added, Android and everything in it, and its own settings, caches and logs.</p></details>
+      <details><summary>Something doesn't work.</summary><p>Choose Report a Problem… from Inquiline in the menu bar, or <a href="https://github.com/inquiline-app/inquiline/issues">open an issue</a>. Inquiline is an early preview, so reports help a lot.</p></details>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <span>Inquiline is free and open source under the <a href="https://github.com/inquiline-app/inquiline/blob/main/LICENSE">Apache License 2.0</a>.</span>
+    <span>Android is a trademark of Google LLC. Mac and macOS are trademarks of Apple Inc. Inquiline isn't affiliated with either.</span>
+  </div>
+</footer>
+
+<script>
+  document.getElementById("copy").addEventListener("click", function () {
+    var button = this;
+    navigator.clipboard.writeText("brew install --cask inquiline-app/tap/inquiline").then(function () {
+      button.textContent = "Copied";
+      setTimeout(function () { button.textContent = "Copy"; }, 1500);
+    });
+  });
+</script>
+</body>
+</html>
