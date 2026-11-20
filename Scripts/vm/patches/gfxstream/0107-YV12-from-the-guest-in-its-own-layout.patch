@@ -1,0 +1,60 @@
+--- a/host/vulkan/vk_common_operations.cpp
++++ b/host/vulkan/vk_common_operations.cpp
+@@ -4339,8 +4339,38 @@
+             const std::string internalFormatString = ToString(colorBufferInfo->internalFormat);
+             GFXSTREAM_ERROR("Unsupported conversion for format %s emulation with format %s",
+                             formatString.c_str(), internalFormatString.c_str());
++            return false;
++        }
++    } else if (colorBufferInfo->format == GfxstreamFormat::YV12 && bufferImageCopies.size() == 3) {
++        // Android's YV12, as its gralloc (minigbm) lays it out and the guest writes it: luma
++        // rows aligned to 32 bytes and chroma rows half as long. The image takes its planes
++        // tightly packed, so copied as they are, rows slid into diagonal stripes. The chroma
++        // planes keep their order: the image's sampler already reads them as YV12's V, U.
++        const uint32_t yStride = (w + 31) & ~31u;
++        const uint32_t cStride = yStride / 2;
++        const uint32_t cHeight = bufferImageCopies[1].imageExtent.height;
++        const size_t expectedInputSize = size_t(yStride) * h + 2 * size_t(cStride) * cHeight;
++        if (inputPixelsSize != 0 && inputPixelsSize < expectedInputSize) {
++            GFXSTREAM_ERROR("Unexpected YV12 size when trying to update ColorBuffer:%d, "
++                            "provided:%zu expected:%zu",
++                            colorBufferHandle, inputPixelsSize, expectedInputSize);
+             return false;
+         }
++        const uint8_t* srcY = reinterpret_cast<const uint8_t*>(pixels);
++        const uint8_t* srcFirstChroma = srcY + size_t(yStride) * h;
++        const uint8_t* srcSecondChroma = srcFirstChroma + size_t(cStride) * cHeight;
++        const uint8_t* sources[3] = {srcY, srcFirstChroma, srcSecondChroma};
++        const uint32_t strides[3] = {yStride, cStride, cStride};
++        uint8_t* staging = reinterpret_cast<uint8_t*>(stagingBufferPtr);
++        for (int plane = 0; plane < 3; ++plane) {
++            const VkBufferImageCopy& copy = bufferImageCopies[plane];
++            const uint32_t rowLength =
++                copy.bufferRowLength ? copy.bufferRowLength : copy.imageExtent.width;
++            for (uint32_t row = 0; row < copy.imageExtent.height; ++row) {
++                memcpy(staging + copy.bufferOffset + size_t(row) * rowLength,
++                       sources[plane] + size_t(row) * strides[plane], copy.imageExtent.width);
++            }
++        }
+     } else if (transferInfo.packFunction) {
+         // packFunction reads the natural-format pixels, which never exceed dstBufferSize. pixels is
+         // guest-controlled, so reject an input smaller than that to avoid an out-of-bounds read
+--- a/host/gl/yuv_converter.cpp
++++ b/host/gl/yuv_converter.cpp
+@@ -785,9 +785,14 @@
+ }
+ 
+ uint32_t YUVConverter::getDataSize() {
+-    uint32_t align = (mFormat == GfxstreamFormat::YV12) ? 16 : 1;
++    // As getYUVOffsets lays YV12 out: luma rows aligned to 32 bytes with minigbm.
++    uint32_t align = (mFormat == GfxstreamFormat::YV12)
++                         ? (get_gfxstream_guest_android_gralloc() == MINIGBM ? 32 : 16)
++                         : 1;
+     uint32_t yStrideBytes = (mWidth + (align - 1)) & ~(align - 1);
+-    uint32_t uvStride = (yStrideBytes / 2 + (align - 1)) & ~(align - 1);
++    // Chroma rows are 16-byte aligned, as getYUVOffsets has them.
++    uint32_t uvAlign = (mFormat == GfxstreamFormat::YV12) ? 16 : 1;
++    uint32_t uvStride = (yStrideBytes / 2 + (uvAlign - 1)) & ~(uvAlign - 1);
+     uint32_t uvHeight = mHeight / 2;
+     uint32_t dataSize = yStrideBytes * mHeight + 2 * (uvHeight * uvStride);
+     return dataSize;
