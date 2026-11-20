@@ -312,6 +312,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, SPUSta
         login.target = self
         login.state = SMAppService.mainApp.status == .enabled ? .on : .off
         menu.addItem(withTitle: "Report a Problem…", action: #selector(reportProblem(_:)), keyEquivalent: "").target = self
+        menu.addItem(withTitle: "Uninstall Inquiline…", action: #selector(confirmUninstall(_:)), keyEquivalent: "").target = self
         menu.addItem(.separator())
         menu.addItem(withTitle: Self.versionLine, action: nil, keyEquivalent: "").isEnabled = false
         if updater != nil {
@@ -754,6 +755,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, SPUSta
             .filter { !$0.path.contains("/.Trash/") && $0.standardizedFileURL != Bundle.main.bundleURL.standardizedFileURL }
         // A test copy only removes its own folder, so other copies don't matter to it.
         guard others.isEmpty || AndroidRuntime.testHome != nil else { return }
+        removeEverything()
+    }
+
+    /// The same as moving Inquiline to the Trash while it runs, for those who'd look in its menu.
+    @objc private func confirmUninstall(_ sender: Any?) {
+        NSApp.activate(ignoringOtherApps: true)
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "Uninstall Inquiline?"
+        alert.informativeText = "Inquiline goes to the Trash, and every Android app you added goes with it, along with "
+            + "their data, Android itself, and Inquiline's settings, caches and logs. This can't be undone."
+        alert.addButton(withTitle: "Uninstall").hasDestructiveAction = true
+        alert.addButton(withTitle: "Cancel")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        selfWatch?.cancel()
+        // A test copy keeps its app, as it only removes its own folder.
+        if AndroidRuntime.testHome == nil {
+            try? FileManager.default.trashItem(at: Bundle.main.bundleURL, resultingItemURL: nil)
+        }
         removeEverything()
     }
 

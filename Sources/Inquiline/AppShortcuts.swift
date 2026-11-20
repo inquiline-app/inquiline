@@ -183,9 +183,19 @@ enum AppShortcuts {
         queue.sync {
             watches.forEach { $0.cancel() }
             watches = []
-            for bundle in locate().values { try? FileManager.default.removeItem(at: bundle) }
-            try? FileManager.default.removeItem(at: ownFolder)
-            if folder != ownFolder { try? FileManager.default.removeItem(at: folder) }
+            let files = FileManager.default
+            let bundles = Array(locate().values)
+            for bundle in bundles { try? files.removeItem(at: bundle) }
+            // The apps' folders go once only Finder's own files are left: anything the user put
+            // there stays, with its folder.
+            let folders = Array(Set([folder, ownFolder]))
+            for directory in folders {
+                let left = (try? files.contentsOfDirectory(atPath: directory.path)) ?? []
+                if left.allSatisfy({ $0.hasPrefix(".") || $0 == "Icon\r" }) { try? files.removeItem(at: directory) }
+            }
+            // Nor do they stay in the Dock, as question marks.
+            // Inquiline's own icon too, kept there by the user.
+            AndroidDock.forget(bundles + folders + (AndroidRuntime.testHome == nil ? [Bundle.main.bundleURL] : []))
             places = [:]
         }
     }

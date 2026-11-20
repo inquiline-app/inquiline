@@ -62,6 +62,21 @@ enum AndroidDock {
         if changed { restart() }
     }
 
+    /// Inquiline is uninstalled: its apps and their stack leave the Dock.
+    static func forget(_ items: [URL]) {
+        let paths = Set(items.map { $0.standardizedFileURL.path })
+        var changed = false
+        for key in ["persistent-apps", "persistent-others"] {
+            let all = tiles(key)
+            let kept = all.filter { tile in path(of: tile).map { !paths.contains($0) } ?? true }
+            if kept.count != all.count {
+                save(key, kept)
+                changed = true
+            }
+        }
+        if changed { restart() }
+    }
+
     private static func tiles(_ key: String) -> [[String: Any]] {
         CFPreferencesCopyAppValue(key as CFString, dock) as? [[String: Any]] ?? []
     }
