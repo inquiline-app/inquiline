@@ -33,6 +33,8 @@ BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo unknown)
 if [ "$BRANCH" != main ] || [ -n "$(git status --porcelain --untracked-files=no 2>/dev/null)" ]; then
     /usr/libexec/PlistBuddy -c "Add :InquilineTestBuild string $BRANCH" "$APP/Contents/Info.plist"
 fi
+# A test update (Scripts/make-test-update.sh) has a build number of its own, after the release's.
+[ -z "${TEST_BUILD:-}" ] || /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $TEST_BUILD" "$APP/Contents/Info.plist"
 cp Vendor/scrcpy-server "$APP/Contents/Resources/scrcpy-server"
 cp Vendor/libinquiline-frames.so "$APP/Contents/Resources/libinquiline-frames.so"
 cp Vendor/inquiline-notifications.apk "$APP/Contents/Resources/inquiline-notifications.apk"

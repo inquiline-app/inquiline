@@ -144,6 +144,11 @@
 	<string>Android apps that listen, such as voice assistants and calls, hear your Mac's microphone, as a phone's.</string>
 	<key>SUEnableAutomaticChecks</key>
 	<true/>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+	</dict>
 	<key>SUFeedURL</key>
 	<string>https://raw.githubusercontent.com/inquiline-app/inquiline/main/appcast.xml</string>
 	<key>SUPublicEDKey</key>
