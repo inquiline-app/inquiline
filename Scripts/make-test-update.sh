@@ -32,6 +32,9 @@ rm -f "$FEED"/*
 DELTAS=""
 for FROM in "$RELEASE" $LAST; do
     [ -d "$DIR/apps/$FROM/Inquiline.app" ] || continue
+    # A new Android disk image differs throughout, compressed: its delta would be as large as the
+    # app, and takes long to make, so such an update is downloaded whole.
+    cmp -s "$DIR/apps/$FROM/Inquiline.app/Contents/Resources/android-disk.xz" "$NEW/Contents/Resources/android-disk.xz" || continue
     DELTA="$FEED/Inquiline$BUILD-$FROM.delta"
     "$SPARKLE/BinaryDelta" create "$DIR/apps/$FROM/Inquiline.app" "$NEW" "$DELTA"
     DELTAS="$DELTAS

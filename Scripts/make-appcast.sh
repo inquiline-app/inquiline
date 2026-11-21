@@ -33,12 +33,18 @@ if [ -n "$PREV_VERSION" ]; then
     hdiutil attach -quiet -nobrowse -readonly -mountpoint "$WORK/new" "$DMG"
     DELTA="build/Inquiline$BUILD-$PREV_BUILD.delta"
     rm -f "$DELTA"
-    .build/sparkle/bin/BinaryDelta create "$WORK/old/Inquiline.app" "$WORK/new/Inquiline.app" "$DELTA"
-    # Applied to the previous app, it must make exactly this one.
-    .build/sparkle/bin/BinaryDelta apply "$WORK/old/Inquiline.app" "$WORK/check.app" "$DELTA" >/dev/null
+    # A new Android disk image differs throughout, compressed: its delta would be as large as the
+    # app, so such a release is downloaded whole.
+    if cmp -s "$WORK/old/Inquiline.app/Contents/Resources/android-disk.xz" "$WORK/new/Inquiline.app/Contents/Resources/android-disk.xz"; then
+        .build/sparkle/bin/BinaryDelta create "$WORK/old/Inquiline.app" "$WORK/new/Inquiline.app" "$DELTA"
+        # Applied to the previous app, it must make exactly this one.
+        .build/sparkle/bin/BinaryDelta apply "$WORK/old/Inquiline.app" "$WORK/check.app" "$DELTA" >/dev/null
+    fi
     hdiutil detach -quiet "$WORK/old"
     hdiutil detach -quiet "$WORK/new"
     rm -rf "$WORK"
+fi
+if [ -f "${DELTA:-}" ]; then
     DELTA_SIGNATURE=$(.build/sparkle/bin/sign_update --account inquiline "$DELTA")
     DELTAS="
             <sparkle:deltas>
