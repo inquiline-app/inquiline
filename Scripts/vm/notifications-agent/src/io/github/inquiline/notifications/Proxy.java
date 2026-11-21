@@ -72,9 +72,11 @@ final class Proxy {
             + "fetch('" + COSMETIC + "',{method:'POST',body:names,credentials:'omit',cache:'no-store'}).then(r=>r.text()).then(css=>{"
             + "if(!css)return;if(!style){style=document.createElement('style');}"
             + "if(!style.isConnected)(document.head||document.documentElement).appendChild(style);style.textContent+=css;}).catch(()=>{});};"
-            + "const scan=n=>{if(n.nodeType!==1)return;add(n);for(const e of n.querySelectorAll('[id],[class]'))add(e);"
-            + "if(!timer)timer=setTimeout(send,30);};"
-            + "new MutationObserver(list=>{for(const m of list){if(m.type==='attributes')scan(m.target);else for(const n of m.addedNodes)scan(n);}})"
+            + "const later=()=>{if(!timer)timer=setTimeout(send,100);};"
+            + "const scan=n=>{if(n.nodeType!==1)return;add(n);if(n.firstElementChild)for(const e of n.querySelectorAll('[id],[class]'))add(e);later();};"
+            // A changed class or id is that element's alone: only new elements bring their insides.
+            + "new MutationObserver(list=>{for(const m of list){if(m.type==='attributes'){if(m.target.nodeType===1){add(m.target);later();}}"
+            + "else for(const n of m.addedNodes)scan(n);}})"
             + ".observe(document,{childList:true,subtree:true,attributes:true,attributeFilter:['id','class']});"
             + "if(document.documentElement)scan(document.documentElement);})();";
 
