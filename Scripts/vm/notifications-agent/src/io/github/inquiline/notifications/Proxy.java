@@ -158,6 +158,15 @@ final class Proxy {
                     c.getOutputStream().write("HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n".getBytes(StandardCharsets.ISO_8859_1));
                     return;
                 }
+                // The site is looked up before the tunnel is said to be open, as proxies do: a name
+                // that doesn't resolve then fails at once, as it would without this proxy, and the app
+                // moves on (YouTube tries servers that don't exist on every network before others).
+                try {
+                    java.net.InetAddress.getByName(host);
+                } catch (java.net.UnknownHostException e) {
+                    c.getOutputStream().write("HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\n\r\n".getBytes(StandardCharsets.ISO_8859_1));
+                    return;
+                }
                 c.getOutputStream().write("HTTP/1.1 200 Connection Established\r\n\r\n".getBytes(StandardCharsets.ISO_8859_1));
                 if (port != 443 || pinned.contains(host)) {
                     tunnel(c, host, port);
@@ -317,7 +326,15 @@ final class Proxy {
             toApp.write(blocked.body);
             return;
         }
-        try (Socket site = new Socket(host, port)) {
+        Socket opened;
+        try {
+            opened = new Socket(host, port);
+        } catch (IOException e) {
+            // As for a tunnel: the app hears at once that the site can't be reached.
+            toApp.write("HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\n\r\n".getBytes(StandardCharsets.ISO_8859_1));
+            return;
+        }
+        try (Socket site = opened) {
             String rewritten = line[0] + " " + path + " " + line[2] + head.substring(head.indexOf("\r\n"));
             byte[] first = rewritten.getBytes(StandardCharsets.ISO_8859_1);
             site.getOutputStream().write(first);
