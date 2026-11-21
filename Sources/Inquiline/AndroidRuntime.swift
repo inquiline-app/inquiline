@@ -1088,6 +1088,9 @@ final class AndroidRuntime {
         }
     }
 
+    /// Apps Inquiline ended to start again (wasEndedBySystem), one empty file each.
+    private static let restartMarks = "/data/local/tmp/inquiline-restart"
+
     /**
      * Makes Android trust the ad blocker's authority, which the helper made for this installation
      * alone: in the system store, which apps trust, and in the user's, which is the one Chrome
@@ -1102,10 +1105,15 @@ final class AndroidRuntime {
             N=$(cat \(files)/ca.name 2>/dev/null); [ -n "$N" ] || { echo none; exit 0; }; \
             if [ ! -f \(copy)/$N ]; then mkdir -p \(copy) && cp \(store)/* \(copy)/ && cp \(files)/ca.pem \(copy)/$N && chmod 644 \(copy)/*; fi; \
             [ -f \(store)/$N ] || mount --bind \(copy) \(store); \
-            for p in $(pidof zygote64 zygote); do nsenter --mount=/proc/$p/ns/mnt -- sh -c "[ -f \(store)/$N ] || mount --bind \(copy) \(store)"; done; \
+            Z=$(pidof zygote64 zygote); NEW=; \
+            for p in $Z; do nsenter --mount=/proc/$p/ns/mnt -- sh -c "[ -f \(store)/$N ]" || { NEW=1; nsenter --mount=/proc/$p/ns/mnt -- mount --bind \(copy) \(store); }; done; \
             U=/data/misc/user/0/cacerts-added; mkdir -p $U && cp \(files)/ca.pem $U/$N && chown system:system $U $U/$N && chmod 644 $U/$N; \
+            if [ -n "$NEW" ]; then for a in $(cut -d" " -f1 \(files)/adblock 2>/dev/null); do P=$(pidof $a) && mkdir -p \(Self.restartMarks) && touch \(Self.restartMarks)/$a && kill -9 $P; done; fi; \
             echo trusted
             """
+        // An app only sees an authority added after it started once it starts again, as on a
+        // phone: those running with their ads blocked then start again, their windows reopening
+        // them (restartMarks), so they don't refuse every site the proxy opens for them.
         return (try? shell("su 0 sh -c '\(script)'"))?.contains("trusted") == true
     }
 
@@ -1200,8 +1208,12 @@ final class AndroidRuntime {
     /// taken away, memory runs short or it's updated: on a phone it then starts again when
     /// it's next shown. Not when the user closed it, it closed itself, or it crashed.
     func wasEndedBySystem(package: String, since: Date) -> Bool {
-        guard package.range(of: "^[A-Za-z0-9_.]+$", options: .regularExpression) != nil,
-              let output = try? shell("dumpsys activity exit-info \(package) | grep -E 'timestamp=|process='")
+        guard package.range(of: "^[A-Za-z0-9_.]+$", options: .regularExpression) != nil else { return false }
+        // Ended by Inquiline so it starts again trusting the ad blocker (trustAdBlockAuthority).
+        if (try? shell("su 0 rm \(Self.restartMarks)/\(package) 2>/dev/null && echo restart"))?.contains("restart") == true {
+            return true
+        }
+        guard let output = try? shell("dumpsys activity exit-info \(package) | grep -E 'timestamp=|process='")
         else { return false }
         // Updated while open, whatever ended it: an app that updates itself, as Google Play does,
         // ends on its own first.
