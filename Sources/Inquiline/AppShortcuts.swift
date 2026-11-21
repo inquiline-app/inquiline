@@ -186,7 +186,11 @@ enum AppShortcuts {
             let files = FileManager.default
             // Those it knows, and any it made whose bookmark was lost, as after a reset, in an
             // Applications folder wherever the user put them: Spotlight knows them by identifier.
-            let bundles = Array(Set(locate().values.map(\.standardizedFileURL) + spotlightApps()))
+            // A test copy (INQUILINE_HOME) only ever removes its own: Spotlight would find the
+            // user's real apps too.
+            let bundles = AndroidRuntime.testHome == nil
+                ? Array(Set(locate().values.map(\.standardizedFileURL) + spotlightApps()))
+                : ((try? files.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)) ?? []).filter { package(of: $0) != nil }
             for bundle in bundles { try? files.removeItem(at: bundle) }
             // A folder of the user's that only held them goes with them.
             let roots = Set(["/Applications", files.homeDirectoryForCurrentUser.appendingPathComponent("Applications").path])
@@ -247,7 +251,8 @@ enum AppShortcuts {
             }
         }
         // Where apps were before too, so one whose bookmark is lost moves rather than being made twice.
-        for directory in Set([folder, ownFolder, oldFolder]) {
+        // A test copy's are only in its own folder.
+        for directory in AndroidRuntime.testHome == nil ? Set([folder, ownFolder, oldFolder]) : [folder] {
             for name in (try? FileManager.default.contentsOfDirectory(atPath: directory.path)) ?? [] where name.hasSuffix(".app") {
                 let bundle = directory.appendingPathComponent(name)
                 if let package = package(of: bundle), found[package] == nil { found[package] = bundle }

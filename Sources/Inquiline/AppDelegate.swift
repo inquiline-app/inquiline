@@ -622,8 +622,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, SPUSta
 
     // MARK: - Android's lifetime
 
+    /// A test copy's own only: the user's real apps run under the same identifiers.
     private var runningApps: [NSRunningApplication] {
-        NSWorkspace.shared.runningApplications.filter { $0.bundleIdentifier?.hasPrefix(Self.appPrefix) == true }
+        func real(_ path: String) -> String {
+            realpath(path, nil).map { resolved in defer { free(resolved) }; return String(cString: resolved) } ?? path
+        }
+        let test = AndroidRuntime.testHome.map { real($0.path) + "/" }
+        return NSWorkspace.shared.runningApplications.filter { app in
+            guard app.bundleIdentifier?.hasPrefix(Self.appPrefix) == true else { return false }
+            guard let test else { return true }
+            return app.bundleURL.map { real($0.path).hasPrefix(test) } ?? false
+        }
     }
 
     /// Waits for the closed app to end, as it still holds its memory until then.
