@@ -102,7 +102,7 @@ done
  meson install -C build --quiet)
 
 # Only what Inquiline uses. CoreAudio plays Android's sound card (virtio-sound) on the Mac.
-CONFIGURE="--target-list=aarch64-softmmu --without-default-features --enable-hvf --enable-rutabaga-gfx --enable-slirp
+CONFIGURE="--target-list=aarch64-softmmu --without-default-features --enable-hvf --enable-rutabaga-gfx --enable-slirp --enable-virtfs
  --enable-fdt=internal --enable-pixman --enable-coreaudio --audio-drv-list=coreaudio --disable-pvg --disable-docs
  --disable-werror --disable-debug-info"
 (cd "$SRC/qemu"
@@ -162,9 +162,10 @@ for sub in pcre2 proxy-libintl libffi zlib; do
 done
 # Nothing shipped may call a system function newer than the deployment target. macOS links those
 # weakly, and calling one on an older macOS crashes, as GLib's pipe2 did on macOS 26. Uses
-# guarded by an availability check go through __availability_version_check, which is fine.
+# guarded by an availability check go through __availability_version_check, which is fine, and
+# 9p checks for pthread_fchdir_np itself before calling it (hw/9pfs/9p-util-darwin.c).
 newer=$(for file in "$OUT/qemu" "$OUT"/Frameworks/*.dylib; do
-    nm -m "$file" | awk -v f="$(basename "$file")" '/\(undefined\)/ && / weak / && /\(from libSystem\)/ && !/_availability_version_check / {print f": "$(NF-2)}'
+    nm -m "$file" | awk -v f="$(basename "$file")" '/\(undefined\)/ && / weak / && /\(from libSystem\)/ && !/_availability_version_check / && !/_pthread_fchdir_np / {print f": "$(NF-2)}'
 done)
 [ -z "$newer" ] || { echo "Calls system functions newer than macOS $MACOSX_DEPLOYMENT_TARGET:" >&2; echo "$newer" >&2; exit 1; }
 du -sh "$OUT"

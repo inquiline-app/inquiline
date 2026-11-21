@@ -1874,14 +1874,8 @@ private final class AppSettingsView: NSView {
         DispatchQueue.global().async { AndroidRuntime.shared.setAdCategories(chosen.categories, package: package) }
     }
 
-    /// Inquiline opens it, as it mounts Android's disk: an app's own process would need the
-    /// user's leave to reach the local network.
     @objc private func showFolderClicked() {
-        var address = URLComponents()
-        address.scheme = "inquiline"
-        address.host = "files"
-        address.queryItems = [URLQueryItem(name: "label", value: label)]
-        if let url = address.url { NSWorkspace.shared.open(url) }
+        AndroidFiles.show(package: package)
     }
     @objc private func clearCacheClicked() { clearCache?() }
     @objc private func clearDataClicked() { clearData?() }

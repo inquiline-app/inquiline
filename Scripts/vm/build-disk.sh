@@ -16,7 +16,7 @@ KERNEL=$(uname -r)
 MODULES="virtio_balloon nft_compat virtio_net virtio_gpu overlay loop dm_verity fuse veth bridge tun nf_tables nft_ct nft_fib_inet
 nft_fib_ipv4 nft_fib_ipv6 nft_masq nft_chain_nat nf_nat nf_conntrack ip_tables ip6_tables iptable_nat
 iptable_filter iptable_mangle ip6table_nat ip6table_filter xt_MASQUERADE xt_nat xt_comment xt_addrtype
-xt_conntrack xt_mark xt_multiport xt_tcpudp erofs squashfs uhid virtio_snd"
+xt_conntrack xt_mark xt_multiport xt_tcpudp erofs squashfs uhid virtio_snd 9p 9pnet_virtio"
 
 mkfs.ext4 -q -F -L inquiline "$TARGET"
 mkdir -p "$ROOT"
@@ -30,7 +30,7 @@ echo "base: $MINIROOT"
 cp /etc/resolv.conf "$ROOT/etc/resolv.conf"
 mount -t proc proc "$ROOT/proc"
 mount --bind /dev "$ROOT/dev"
-chroot "$ROOT" /sbin/apk add --no-cache -q podman socat kmod iptables samba-server e2fsprogs-extra
+chroot "$ROOT" /sbin/apk add --no-cache -q podman socat kmod iptables e2fsprogs-extra
 umount "$ROOT/proc" "$ROOT/dev"
 rm -rf "$ROOT/var/cache/apk"/*
 
@@ -162,7 +162,6 @@ cat > "$ROOT/etc/inittab" <<'EOF'
 ::respawn:/usr/bin/socat TCP-LISTEN:5555,fork,reuseaddr TCP:10.88.0.2:5555
 ::respawn:/usr/bin/socat TCP-LISTEN:1716,fork,reuseaddr TCP:10.88.0.2:1716
 ::respawn:/usr/bin/socat TCP-LISTEN:5000,bind=0.0.0.0,reuseaddr SYSTEM:/usr/local/bin/inquiline-poweroff
-::respawn:/usr/sbin/smbd --foreground --no-process-group
 ::shutdown:/usr/local/bin/inquiline-stop
 EOF
 mkdir -p "$ROOT/usr/local/bin"
@@ -201,45 +200,38 @@ mount -o remount,discard /
 # The unpacked disk loses some of its holes, and QEMU turns this back into them.
 fstrim / &
 EOF
-# Android's files for Finder (see AndroidFiles.swift). Samba resolves this machine's name,
-# which takes seconds without an entry. Only Inquiline gets in: its password, made for this
-# installation, reaches Samba as a hash Inquiline writes into Android's /data at each mount
-# (root's alone there); without the file no one gets in. 22: no guest access.
-echo "127.0.0.1 inquiline" >> "$ROOT/etc/hosts"
-cat > "$ROOT/etc/samba/smb.conf" <<'EOF'
-[global]
-	server string = Inquiline
-	server role = standalone server
-	map to guest = never
-	passdb backend = smbpasswd:/var/inquiline/data/.inquiline-smbpasswd
-	disable netbios = yes
-	smb ports = 445
-	load printers = no
-	disable spoolss = yes
-	logging = file
-	max log size = 100
-	nt acl support = no
-	ea support = yes
-	vfs objects = catia fruit streams_xattr
-	fruit:metadata = stream
-	fruit:posix_rename = yes
-	fruit:delete_empty_adfiles = yes
-	veto files = /.DS_Store/
-	delete veto files = yes
-[Android]
-	path = /var/inquiline/files
-	guest ok = no
-	valid users = root
-	read only = no
-	force user = root
-	inherit owner = unix only
-	create mask = 0660
-	directory mask = 0771
+cat > "$ROOT/usr/local/bin/inquiline-storage" <<'EOF'
+#!/bin/sh
+# Android's shared storage (/data/media: photos, downloads, games' OBB data) is a folder on the
+# Mac, shared into the VM as "storage" (9p): Finder shows real files, and Android reads and
+# writes them at about its own disk's speed. Inquiline tells Android when the Mac changes one
+# (AndroidFiles.swift), as nothing else would: cache=loose keeps what was read. posixacl:
+# Android's storage service puts a default ACL on each user's folder.
+A=/var/inquiline
+M=$A/data/media
+modprobe 9pnet_virtio && modprobe 9p || exit 0
+grep -qx storage /sys/bus/virtio/drivers/9pnet_virtio/*/mount_tag 2>/dev/null || exit 0
+mountpoint -q $M && exit 0
+O=trans=virtio,version=9p2000.L,msize=524288,access=client,posixacl,cache=loose
+# Once, from a disk of before: its files move to the Mac, and leave the disk only when all
+# are there.
+if [ ! -e $A/data/.inquiline-storage-on-mac ]; then
+  if [ -n "$(ls -A $M 2>/dev/null)" ]; then
+    mkdir -p /run/inquiline-storage
+    mount -t 9p -o $O storage /run/inquiline-storage || exit 1
+    cp -a $M/. /run/inquiline-storage/ && sync && umount /run/inquiline-storage \
+      && rm -rf $M && mkdir -p $M || { umount /run/inquiline-storage 2>/dev/null; exit 1; }
+  fi
+  touch $A/data/.inquiline-storage-on-mac
+fi
+mkdir -p $M
+mount -t 9p -o $O storage $M
 EOF
 cat > "$ROOT/usr/local/bin/inquiline-android" <<'EOF'
 #!/bin/sh
 A=/var/inquiline
-mkdir -p $A/data $A/files
+mkdir -p $A/data
+/usr/local/bin/inquiline-storage
 podman rm -f redroid >/dev/null 2>&1
 # Google Play, if the user added it: Android's product and system_ext folders with Google's files merged in.
 G=$A/data/inquiline-gapps
@@ -254,7 +246,7 @@ EXTRA=""
 # podman's default of 2048 tasks counts threads, and a large game with Android's own
 # services passes it: the game then can't start a thread and crashes.
 exec podman run --rm $EXTRA --name redroid --ip 10.88.0.2 --privileged --pull=never --shm-size=65536000 --pids-limit=-1 \
-  --device /dev/mapper/control:/dev/device-mapper --device /dev/net/tun:/dev/tun -v $A/data:/data -v $A/files:/data/inquiline-files:rshared \
+  --device /dev/mapper/control:/dev/device-mapper --device /dev/net/tun:/dev/tun -v $A/data:/data \
   -v /run/inquiline-input:/dev/input -v $A/gpu_config.sh:/vendor/bin/gpu_config.sh:ro \
   -v $A/libdrm.so:/vendor/lib64/libdrm.so:ro -v $A/vulkan.gfxstream.so:/vendor/lib64/hw/vulkan.gfxstream.so:ro \
   -v $A/audio.primary.redroid.so:/vendor/lib64/hw/audio.primary.redroid.so:ro \

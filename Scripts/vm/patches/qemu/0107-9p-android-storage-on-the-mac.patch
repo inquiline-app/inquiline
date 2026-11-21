@@ -1,0 +1,155 @@
+Inquiline: Android's shared storage on the Mac. Files made on the Mac, which have
+no mapped credentials, belong to Android's storage (media_rw), so Android's apps
+can change them; and the share's "0" folder, Android's first user's storage, is
+INQUILINE_STORAGE, so the Mac shows it as a folder of its own.
+
+diff --git a/hw/9pfs/9p-local.c b/hw/9pfs/9p-local.c
+index ee592b62f8..32892436b4 100644
+--- a/hw/9pfs/9p-local.c
++++ b/hw/9pfs/9p-local.c
+@@ -56,13 +56,33 @@
+ 
+ typedef struct {
+     int mountfd;
++    /*
++     * Inquiline: the share's "0" folder, Android's storage for its first user,
++     * is this folder instead (INQUILINE_STORAGE), so the Mac shows it by
++     * itself, as the user's Android folder. -1 without it.
++     */
++    int storagefd;
+ } LocalData;
+ 
++static int inquiline_open_storage(LocalData *data, int fd, const char *head,
++                                  int flags, mode_t mode, bool last, bool *root)
++{
++    /* Paths start at the share's root as "./"; "0" there is the storage. */
++    bool at_root = *root;
++    *root = at_root && !strcmp(head, ".");
++    if (!at_root || data->storagefd == -1 || strcmp(head, "0")) {
++        return last ? openat_file(fd, head, flags, mode) : openat_dir(fd, head);
++    }
++    return last ? openat_file(data->storagefd, ".", flags & ~O_CREAT, mode)
++                : openat_dir(data->storagefd, ".");
++}
++
+ int local_open_nofollow(FsContext *fs_ctx, const char *path, int flags,
+                         mode_t mode)
+ {
+     LocalData *data = fs_ctx->private;
+     int fd = data->mountfd;
++    bool root = true;
+ 
+     while (*path && fd != -1) {
+         const char *c;
+@@ -78,10 +98,10 @@ int local_open_nofollow(FsContext *fs_ctx, const char *path, int flags,
+             /* Intermediate path element */
+             head[c - path] = 0;
+             path = c + 1;
+-            next_fd = openat_dir(fd, head);
++            next_fd = inquiline_open_storage(data, fd, head, flags, mode, false, &root);
+         } else {
+             /* Rightmost path element */
+-            next_fd = openat_file(fd, head, flags, mode);
++            next_fd = inquiline_open_storage(data, fd, head, flags, mode, true, &root);
+             path = c;
+         }
+         g_free(head);
+@@ -183,6 +203,27 @@ static void local_mapped_file_attr(int dirfd, const char *name,
+     fclose(fp);
+ }
+ 
++/*
++ * Inquiline: a file made on the Mac has no mapped credentials. It belongs to
++ * Android's shared storage (media_rw, 1023), as a file copied onto a phone's
++ * storage does, so Android's apps can change and delete it.
++ */
++#define INQUILINE_STORAGE_ID 1023
++
++static void inquiline_unmapped(struct stat *stbuf, bool uid, bool gid, bool mode)
++{
++    if (!uid) {
++        stbuf->st_uid = INQUILINE_STORAGE_ID;
++    }
++    if (!gid) {
++        stbuf->st_gid = INQUILINE_STORAGE_ID;
++    }
++    if (!mode && (S_ISDIR(stbuf->st_mode) || S_ISREG(stbuf->st_mode))) {
++        stbuf->st_mode = (stbuf->st_mode & S_IFMT) |
++                         (S_ISDIR(stbuf->st_mode) ? 02770 : 0660);
++    }
++}
++
+ static int local_lstat(FsContext *fs_ctx, V9fsPath *fs_path, struct stat *stbuf)
+ {
+     int err = -1;
+@@ -206,18 +247,24 @@ static int local_lstat(FsContext *fs_ctx, V9fsPath *fs_path, struct stat *stbuf)
+         mode_t tmp_mode;
+         dev_t tmp_dev;
+ 
++        bool uid = false, gid = false, mode = false;
++
+         if (fgetxattrat_nofollow(dirfd, name, "user.virtfs.uid", &tmp_uid,
+                                  sizeof(uid_t)) > 0) {
+             stbuf->st_uid = le32_to_cpu(tmp_uid);
++            uid = true;
+         }
+         if (fgetxattrat_nofollow(dirfd, name, "user.virtfs.gid", &tmp_gid,
+                                  sizeof(gid_t)) > 0) {
+             stbuf->st_gid = le32_to_cpu(tmp_gid);
++            gid = true;
+         }
+         if (fgetxattrat_nofollow(dirfd, name, "user.virtfs.mode", &tmp_mode,
+                                  sizeof(mode_t)) > 0) {
+             stbuf->st_mode = le32_to_cpu(tmp_mode);
++            mode = true;
+         }
++        inquiline_unmapped(stbuf, uid, gid, mode);
+         if (fgetxattrat_nofollow(dirfd, name, "user.virtfs.rdev", &tmp_dev,
+                                  sizeof(dev_t)) > 0) {
+             stbuf->st_rdev = le64_to_cpu(tmp_dev);
+@@ -799,18 +846,24 @@ static int local_fstat(FsContext *fs_ctx, int fid_type,
+         mode_t tmp_mode;
+         dev_t tmp_dev;
+ 
++        bool uid = false, gid = false, mode = false;
++
+         if (qemu_fgetxattr(fd, "user.virtfs.uid",
+                            &tmp_uid, sizeof(uid_t)) > 0) {
+             stbuf->st_uid = le32_to_cpu(tmp_uid);
++            uid = true;
+         }
+         if (qemu_fgetxattr(fd, "user.virtfs.gid",
+                            &tmp_gid, sizeof(gid_t)) > 0) {
+             stbuf->st_gid = le32_to_cpu(tmp_gid);
++            gid = true;
+         }
+         if (qemu_fgetxattr(fd, "user.virtfs.mode",
+                            &tmp_mode, sizeof(mode_t)) > 0) {
+             stbuf->st_mode = le32_to_cpu(tmp_mode);
++            mode = true;
+         }
++        inquiline_unmapped(stbuf, uid, gid, mode);
+         if (qemu_fgetxattr(fd, "user.virtfs.rdev",
+                            &tmp_dev, sizeof(dev_t)) > 0) {
+             stbuf->st_rdev = le64_to_cpu(tmp_dev);
+@@ -1471,6 +1524,10 @@ static int local_init(FsContext *ctx, Error **errp)
+ {
+     LocalData *data = g_malloc(sizeof(*data));
+ 
++    data->storagefd = -1;
++    if (getenv("INQUILINE_STORAGE")) {
++        data->storagefd = open(getenv("INQUILINE_STORAGE"), O_DIRECTORY | O_RDONLY);
++    }
+     data->mountfd = open(ctx->fs_root, O_DIRECTORY | O_RDONLY);
+     if (data->mountfd == -1) {
+         error_setg_file_open(errp, errno, ctx->fs_root);
+@@ -1513,6 +1570,9 @@ static void local_cleanup(FsContext *ctx)
+         return;
+     }
+ 
++    if (data->storagefd != -1) {
++        close(data->storagefd);
++    }
+     close(data->mountfd);
+     g_free(data);
+ }

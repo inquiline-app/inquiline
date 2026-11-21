@@ -28,8 +28,6 @@ final class AndroidRuntime {
     var kdeConnectCertificate: URL { vmHome.appendingPathComponent("kdeconnect.cer") }
     /// Connecting to it makes the VM shut down cleanly.
     private var powerOffSocket: URL { vmHome.appendingPathComponent("power.sock") }
-    /// Samba in the VM, for AndroidFiles.
-    static let filesPort = 15445
     private static let googlePlayFolder = "/data/inquiline-gapps"
     static let playStorePackage = "com.android.vending"
 
@@ -90,6 +88,7 @@ final class AndroidRuntime {
             AppLog.write(firstLaunch ? "Setting up Android for the first time" : "Starting Android")
             status(firstLaunch ? "Setting up Android, the first launch takes longer…" : "Starting Android…")
             try VMInstaller.installIfNeeded(at: disk)
+            try AndroidFiles.prepare()
             try updateDiskIfNeeded(firstLaunch: firstLaunch, status: status)
             growDiskToMac()
             try launchVM()
@@ -119,6 +118,7 @@ final class AndroidRuntime {
         watchPackages()
         watchSleep()
         NotificationBridge.shared.start()
+        AndroidFiles.watch()
         followMac()
         // As Android starts again without it, for apps whose ads are blocked; the helper may still
         // be making it, the first time after an update.
@@ -448,7 +448,6 @@ final class AndroidRuntime {
     func shutdown() {
         // ensureReady holds the lock for the whole boot; quitting must not wait for that.
         guard lock.try() else {
-            AndroidFiles.eject()
             vm?.terminate()
             return
         }
@@ -457,7 +456,6 @@ final class AndroidRuntime {
         Self.wake()
         guard vm != nil || isDeviceAttached() else { return }
         AppLog.write("Stopping Android")
-        AndroidFiles.eject()
         // As a phone does before turning off: data still in memory is written to disk first,
         // so that cutting the VM after the deadline below can't leave files half written.
         _ = try? shell("sync")
@@ -500,8 +498,6 @@ final class AndroidRuntime {
     func freeze() -> TimeInterval? {
         guard isRunning, !Self.isFrozen() else { return nil }
         let wakeup = nextWakeupAlarm()
-        // Finder would wait on a disk whose server can't answer.
-        AndroidFiles.eject()
         EngineControl.pause()
         AppLog.write("Android is resting")
         return wakeup
@@ -697,7 +693,8 @@ final class AndroidRuntime {
     /// 29: Android's video decoders as in revision 25's first release to testers.
     /// 30: they work as a phone's hardware decoders do: inputs never wait for pictures.
     /// 31: Android's KDE Connect is reached through the VM (its TCP port 1716), for notifications.
-    private static let diskRevision = 31
+    /// 32: Android's shared storage is on the Mac, through 9p (inquiline-storage); Samba goes.
+    private static let diskRevision = 32
 
     private var builtInScreen: ScrcpySession.Screen { ScrcpySession.Resolution.forThisMac.screen(landscape: false) }
     /// The VM's memory map fits the 36-bit (64 GB) address space Apple's M1 and M2 give a VM:
@@ -788,7 +785,11 @@ final class AndroidRuntime {
             // which gives it back to the Mac through memory-release.c.
             "-device", "virtio-balloon-pci,free-page-reporting=on",
             "-device", "virtio-net-pci,netdev=n,romfile=",
-            "-netdev", "user,id=n,hostfwd=unix:\(adbSocket.path)-:5555,hostfwd=unix:\(kdeConnectSocket.path)-:1716,hostfwd=unix:\(powerOffSocket.path)-:5000,hostfwd=tcp:127.0.0.1:\(Self.filesPort)-:445",
+            "-netdev", "user,id=n,hostfwd=unix:\(adbSocket.path)-:5555,hostfwd=unix:\(kdeConnectSocket.path)-:1716,hostfwd=unix:\(powerOffSocket.path)-:5000",
+            // Android's shared storage, its /data/media, is on the Mac (AndroidFiles), as Android
+            // keeps it: owners and modes in the files' extended attributes, which Finder leaves alone.
+            "-fsdev", "local,id=storage,path=\(AndroidFiles.storageRoot.path.replacingOccurrences(of: ",", with: ",,")),security_model=mapped-xattr",
+            "-device", "virtio-9p-pci,fsdev=storage,mount_tag=storage",
             "-display", "none", "-serial", "none", "-monitor", "none",
             "-qmp", "unix:\(EngineControl.socket.path),server=on,wait=off",
             // A second one, which Inquiline keeps open for the engine's events.
@@ -803,15 +804,14 @@ final class AndroidRuntime {
         env["DYLD_INSERT_LIBRARIES"] = contents.appendingPathComponent("Frameworks/libmemory-release.dylib").path
         env["INQUILINE_FRAMES_SOCKET"] = framesSocket.path
         env.merge(VideoDecoders.shared.environment) { $1 }
+        // The storage's "0", Android's first user's, is the Mac's Android folder (QEMU patch 0107).
+        env["INQUILINE_STORAGE"] = AndroidFiles.folder.path
         // MoltenVK's errors only; its warnings would fill the log.
         env["MVK_CONFIG_LOG_LEVEL"] = "1"
         process.environment = env
         process.standardOutput = FileHandle.nullDevice
         process.standardError = Self.engineLog() ?? FileHandle.nullDevice
-        // If the engine ends on its own, as when it crashes, Android's disk goes with it at once,
-        // not when Finder finds its server gone.
         process.terminationHandler = { engine in
-            AndroidFiles.eject(gone: true)
             let how = engine.terminationReason == .uncaughtSignal ? "signal" : "status"
             AppLog.write("The engine ended with \(how) \(engine.terminationStatus)")
         }
@@ -1339,7 +1339,6 @@ final class AndroidRuntime {
     private func restart(status: @escaping (String) -> Void) throws {
         status("Restarting Android…")
         AppLog.write("Restarting Android")
-        AndroidFiles.eject()
         // The container's /dev is its own, so the mark goes with the old Android.
         _ = try? shell("su 0 sh -c 'touch /dev/.inquiline-old; sync; (sleep 1; reboot) >/dev/null 2>&1 &'")
         let deadline = Date().addingTimeInterval(60)

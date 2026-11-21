@@ -65,8 +65,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, SPUSta
         signal(SIGTERM, SIG_IGN)
         terminationSource.setEventHandler { NSApp.terminate(nil) }
         terminationSource.resume()
-        // A disk left by a run that crashed points at an Android that isn't there.
-        DispatchQueue.global().async { AndroidFiles.eject(gone: true) }
 
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         statusItem.menu = NSMenu()
@@ -193,13 +191,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, SPUSta
                let package = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first(where: { $0.name == "package" })?.value {
                 reopenUpdated(package: package)
             } else if url.scheme == "inquiline", url.host == "files" {
-                // An app's own folder on Android's disk, asked for from its window: Inquiline
-                // mounts the disk, as an app's own process would need the user's leave to.
-                let label = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first(where: { $0.name == "label" })?.value
-                run("Starting Android…", {
-                    try self.prepareAndroid()
-                    try AndroidFiles.show(label: label)
-                }, failure: "Couldn't Show the Files")
+                // An app's own files, asked for from its window.
+                let package = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first(where: { $0.name == "package" })?.value
+                AndroidFiles.show(package: package)
             } else if url.scheme == "inquiline", url.host == "widget" {
                 // An app's settings add or remove one of its widgets on the desktop.
                 let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
@@ -373,10 +367,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, SPUSta
     }
 
     @objc private func showFiles(_ sender: Any?) {
-        run("Starting Android…", {
-            try self.prepareAndroid()
-            try AndroidFiles.show()
-        }, failure: "Couldn't Show the Files")
+        AndroidFiles.show()
     }
 
     /// Android's Settings in a window of its own, with Android's icon once Android can give it.
@@ -553,30 +544,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, SPUSta
             icons.forEach { library.setIcon($0.1, package: $0.0) }
             library.setVersions(versions)
         }
-        updateFiles()
+        compactAfterBoot()
     }
 
-    private var filesBoot = 0
-    private var filesApps: [AndroidFiles.App] = []
+    private var settledBoot = 0
 
-    /// Keeps the files disk in line with the library. The disk appears once each time
-    /// Android starts, as a USB drive does when plugged in. Runs on launchQueue.
-    private func updateFiles() {
-        let apps = DispatchQueue.main.sync {
-            library.apps.filter { $0.label != $0.package }.map { AndroidFiles.App(package: $0.package, label: $0.label) }
-        }
+    /// What starting Android leaves behind: gathered once each time it starts, before a game
+    /// starts loading on top of it, and again once Android has settled. Runs on launchQueue.
+    private func compactAfterBoot() {
         let boot = AndroidRuntime.shared.bootCount
-        guard boot != filesBoot || apps != filesApps, (try? AndroidFiles.update(apps)) != nil else { return }
-        if boot != filesBoot {
-            AndroidFiles.mount()
-            // What starting Android leaves behind: gathered at once, before a game starts
-            // loading on top of it, and again once Android has settled.
-            for delay in [0.0, 20.0] {
-                DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + delay) { AndroidRuntime.shared.compactMemory() }
-            }
+        guard boot != settledBoot else { return }
+        settledBoot = boot
+        for delay in [0.0, 20.0] {
+            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + delay) { AndroidRuntime.shared.compactMemory() }
         }
-        filesBoot = boot
-        filesApps = apps
     }
 
     private var librarySync: DispatchWorkItem?
@@ -782,7 +763,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, SPUSta
         AppLog.write("Inquiline was moved to the Trash: removing everything it made")
         runningApps.forEach { $0.forceTerminate() }
         AndroidRuntime.shared.shutdown()
-        AndroidFiles.eject(gone: true)
         AppShortcuts.removeAll()
         let files = FileManager.default
         if let test = AndroidRuntime.testHome {
