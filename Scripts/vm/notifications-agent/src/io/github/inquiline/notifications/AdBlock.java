@@ -193,25 +193,13 @@ public final class AdBlock extends VpnService {
     }
 
 
-    /** The rules of every list as they are now. */
+    /** Brave's engine, made anew for the lists as they are now. */
+    private Engine engine;
+
+    /** The rules of every list as they are now, applied by Brave's engine (Engine). */
     private Proxy.Filter filter() throws Exception {
-        Filters rules = new Filters();
-        Cosmetics hiding = new Cosmetics();
-        Scriptlets scripts;
-        try (java.io.InputStream in = getAssets().open("scriptlets.json")) {
-            scripts = new Scriptlets(new String(in.readAllBytes(), StandardCharsets.UTF_8));
-        }
-        for (Lists.List list : Lists.active(this)) {
-            for (int pass = 0; pass < 3; pass++) {
-                try (BufferedReader in = Lists.open(this, list)) {
-                    if (in == null) break;
-                    if (pass == 0) rules.load(in, list.category);
-                    else if (pass == 1) hiding.load(in, list.category);
-                    else scripts.load(in, list.trusted, list.category);
-                }
-            }
-        }
-        android.util.Log.i("InquilineAdBlock", "Ad blocking rules: " + rules.count);
+        if (engine != null) engine.reset();
+        Engine rules = engine != null ? engine : (engine = new Engine(this));
         return new Proxy.Filter() {
             @Override
             public Proxy.Owner ownerOf(java.net.Socket app) {
@@ -222,26 +210,79 @@ public final class AdBlock extends VpnService {
             public Proxy.Answer decide(String url, String host, String headers, Proxy.Owner owner) {
                 // uBlock's lists alone: the address list, for apps' own name lookups, would also cut
                 // services uBlock leaves alone on purpose, as sites' cookie consent.
-                Filters.Request request = request(url, host, headers);
-                request.mask = owner.mask;
-                Filters.Decision decision = rules.decide(request);
-                if (decision == null) return null;
-                // How many, never which: what an app asks for is the user's own business.
-                Counts.add(AdBlock.this, owner.pkg, decision.category & owner.mask);
-                String redirect = decision.redirect;
-                return redirect.isEmpty() || redirect.equals("empty") ? Proxy.Answer.EMPTY : standIn(redirect);
+                Request request = request(url, host, headers);
+                String page = Proxy.header(headers, "referer");
+                if (page.isEmpty()) page = Proxy.header(headers, "origin");
+                String method = headers.substring(0, Math.max(0, headers.indexOf(' ')));
+                String answer = rules.check(owner.mask, url, page, request.type, method);
+                if (answer == null) return null;
+                // How many, never which: what an app asks for is the user's own business. Counted
+                // under the first of the app's categories whose lists alone block it.
+                int category = 0;
+                for (int bit = 1; bit <= owner.mask && category == 0; bit <<= 1) {
+                    if ((owner.mask & bit) != 0 && (owner.mask == bit || rules.check(bit, url, page, request.type, method) != null)) category = bit;
+                }
+                Counts.add(AdBlock.this, owner.pkg, category);
+                return answer.isEmpty() ? Proxy.Answer.EMPTY : dataAnswer(answer);
             }
 
             @Override
             public String css(String host, int mask) {
-                return hiding.css(host, mask);
+                StringBuilder css = new StringBuilder();
+                org.json.JSONArray hide = rules.cosmetic(mask, "https://" + host + "/").optJSONArray("hide");
+                // One rule each: a selector a browser doesn't know then costs only itself.
+                for (int i = 0; hide != null && i < hide.length(); i++) {
+                    css.append(hide.optString(i)).append("{display:none!important}\n");
+                }
+                return css.toString();
             }
 
             @Override
             public String script(String host, int mask) {
-                return scripts.script(host, mask);
+                org.json.JSONObject page = rules.cosmetic(mask, "https://" + host + "/");
+                String scriptlets = page.optString("script");
+                // Generic rules for what's on the page, asked as its elements appear (Proxy.COSMETIC).
+                return page.optBoolean("generichide") ? scriptlets : scriptlets + "\n" + Proxy.ELEMENTS_SCRIPT;
+            }
+
+            @Override
+            public String hidden(String host, String names, int mask) {
+                org.json.JSONArray exceptions = rules.cosmetic(mask, "https://" + host + "/").optJSONArray("exceptions");
+                StringBuilder classes = new StringBuilder(), ids = new StringBuilder(), except = new StringBuilder();
+                for (String name : names.split("\n")) {
+                    if (name.length() < 2) continue;
+                    (name.charAt(0) == '#' ? ids : classes).append(name.substring(1)).append('\n');
+                }
+                for (int i = 0; exceptions != null && i < exceptions.length(); i++) except.append(exceptions.optString(i)).append('\n');
+                StringBuilder css = new StringBuilder();
+                for (String selector : rules.hidden(mask, classes.toString(), ids.toString(), except.toString()).split("\n")) {
+                    if (!selector.isEmpty()) css.append(selector).append("{display:none!important}\n");
+                }
+                return css.toString();
             }
         };
+    }
+
+    /** What the engine is told of a request besides its address. */
+    private static final class Request {
+        final String type;
+
+        Request(String type) {
+            this.type = type;
+        }
+    }
+
+    /** A blocked request's stand-in, which the engine gives as a data: address. */
+    private static Proxy.Answer dataAnswer(String data) {
+        int comma = data.indexOf(',');
+        if (!data.startsWith("data:") || comma < 0) return Proxy.Answer.EMPTY;
+        String meta = data.substring(5, comma);
+        boolean base64 = meta.endsWith(";base64");
+        String type = base64 ? meta.substring(0, meta.length() - 7) : meta;
+        String payload = data.substring(comma + 1);
+        byte[] body = base64 ? android.util.Base64.decode(payload, android.util.Base64.DEFAULT)
+                : java.net.URLDecoder.decode(payload, StandardCharsets.UTF_8).getBytes(StandardCharsets.UTF_8);
+        return new Proxy.Answer(body, type.isEmpty() ? "text/plain" : type);
     }
 
     /**
@@ -265,36 +306,9 @@ public final class AdBlock extends VpnService {
         return new Proxy.Owner("", Lists.DEFAULT);
     }
 
-    private static org.json.JSONObject standIns;
-
-    /** uBlock's stand-in resource of that name (assets/redirects), or an empty answer without one. */
-    private Proxy.Answer standIn(String name) {
-        try {
-            synchronized (AdBlock.class) {
-                if (standIns == null) {
-                    try (java.io.InputStream in = getAssets().open("redirects.json")) {
-                        standIns = new org.json.JSONObject(new String(in.readAllBytes(), StandardCharsets.UTF_8));
-                    }
-                }
-            }
-            String file = standIns.optString(name, standIns.optString(name + ".js", ""));
-            if (file.isEmpty()) return Proxy.Answer.EMPTY;
-            byte[] body;
-            try (java.io.InputStream in = getAssets().open("redirects/" + file)) {
-                body = in.readAllBytes();
-            }
-            String type = file.endsWith(".js") ? "application/javascript" : file.endsWith(".css") ? "text/css"
-                    : file.endsWith(".json") ? "application/json" : file.endsWith(".gif") ? "image/gif"
-                    : file.endsWith(".png") ? "image/png" : file.endsWith(".mp4") ? "video/mp4"
-                    : file.endsWith(".mp3") ? "audio/mpeg" : file.endsWith(".xml") ? "text/xml" : "text/plain";
-            return new Proxy.Answer(body, type);
-        } catch (Exception e) {
-            return Proxy.Answer.EMPTY;
-        }
-    }
 
     /** A request as the rules see it, from what a browser says in its headers about it. */
-    private static Filters.Request request(String url, String host, String headers) {
+    private static Request request(String url, String host, String headers) {
         String dest = Proxy.header(headers, "sec-fetch-dest").toLowerCase();
         String type;
         switch (dest) {
@@ -310,35 +324,7 @@ public final class AdBlock extends VpnService {
             // ads come from is blocked there, as for an app that won't let its connections be opened.
             default: type = "other";
         }
-        String page = Proxy.header(headers, "origin");
-        if (page.isEmpty() || page.equals("null")) page = Proxy.header(headers, "referer");
-        String pageHost = hostOf(page);
-        String site = Proxy.header(headers, "sec-fetch-site").toLowerCase();
-        boolean thirdParty = site.isEmpty()
-                ? !pageHost.isEmpty() && !baseDomain(pageHost).equals(baseDomain(host))
-                : site.equals("cross-site");
-        return new Filters.Request(url, host, type, pageHost, thirdParty);
-    }
-
-    private static String hostOf(String url) {
-        int start = url.indexOf("://");
-        if (start < 0) return "";
-        String rest = url.substring(start + 3);
-        int end = 0;
-        while (end < rest.length() && rest.charAt(end) != '/' && rest.charAt(end) != ':' && rest.charAt(end) != '?') end++;
-        return rest.substring(0, end).toLowerCase();
-    }
-
-    /** The site a host belongs to: its last two labels, or three under a country's own (com.tr, co.uk). */
-    private static String baseDomain(String host) {
-        String[] labels = host.split("\\.");
-        int n = labels.length;
-        if (n <= 2) return host;
-        boolean countrySecond = labels[n - 1].length() == 2
-                && java.util.Set.of("com", "co", "net", "org", "gov", "edu", "ac", "gen", "web", "biz", "info", "ne", "or", "go")
-                        .contains(labels[n - 2]);
-        int keep = countrySecond ? 3 : 2;
-        return String.join(".", java.util.Arrays.copyOfRange(labels, n - keep, n));
+        return new Request(type);
     }
 
     private void close() {

@@ -23,7 +23,13 @@ mkdir -p "$OUT/classes"
 "$TOOLS/d8" --release --min-api 35 --lib "$PLATFORM" --output "$OUT" $(find "$OUT/classes" -name '*.class')
 "$TOOLS/aapt2" link -o "$OUT/unsigned.apk" -I "$PLATFORM" --manifest "$SRC/AndroidManifest.xml" -A "$SRC/assets"
 (cd "$OUT" && zip -q unsigned.apk classes.dex)
-"$TOOLS/zipalign" -f 4 "$OUT/unsigned.apk" "$OUT/aligned.apk"
+# Brave's ad blocking engine (build-adblock-engine.sh), stored as is and page-aligned, so Android
+# maps it from the APK without unpacking it.
+ENGINE=.build/adblock-engine/libinquiline_adblock.so
+[ -f "$ENGINE" ] || { echo "Missing $ENGINE: run Scripts/vm/build-adblock-engine.sh first." >&2; exit 1; }
+mkdir -p "$OUT/lib/arm64-v8a" && cp "$ENGINE" "$OUT/lib/arm64-v8a/"
+(cd "$OUT" && zip -q -0 unsigned.apk lib/arm64-v8a/libinquiline_adblock.so)
+"$TOOLS/zipalign" -f -p 4 "$OUT/unsigned.apk" "$OUT/aligned.apk"
 "$TOOLS/apksigner" sign --v4-signing-enabled false --ks "$KEY" --ks-pass pass:inquiline \
     --out Vendor/inquiline-notifications.apk "$OUT/aligned.apk"
 echo "Built Vendor/inquiline-notifications.apk"

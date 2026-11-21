@@ -192,3 +192,76 @@ The rules in Scripts/vm/notifications-agent/assets/easylist-cookies.txt, easylis
 ## uBlock Origin stand-in resources
 
 The files in Scripts/vm/notifications-agent/assets/redirects are uBlock Origin's web accessible resources (https://github.com/gorhill/uBlock, src/web_accessible_resources), under the GNU General Public License version 3, copied unchanged by Scripts/vm/build-scriptlets.mjs.
+
+## Brave's ad blocking engine (adblock-rust)
+
+The helper inside Android (Vendor/inquiline-notifications.apk) contains libinquiline_adblock.so, built from Scripts/vm/adblock-engine by Scripts/vm/build-adblock-engine.sh. It is Brave's adblock-rust (https://github.com/brave/adblock-rust), unchanged, under the Mozilla Public License 2.0 (https://www.mozilla.org/MPL/2.0/); its source is that repository and https://crates.io/crates/adblock/0.13.6. It is linked with these Rust libraries, unchanged, from https://crates.io under their own licenses:
+
+| Library | Version | License |
+|---|---|---|
+| adblock | 0.13.6 | MPL-2.0 |
+| addr | 0.15.6 | MIT/Apache-2.0 |
+| aho-corasick | 1.1.5 | Unlicense OR MIT |
+| arrayvec | 0.7.8 | MIT OR Apache-2.0 |
+| base64 | 0.23.1 | MIT OR Apache-2.0 |
+| bitflags | 2.13.2 | MIT OR Apache-2.0 |
+| bytes | 1.12.2 | MIT |
+| cesu8 | 1.1.0 | Apache-2.0/MIT |
+| cfg-if | 1.0.5 | MIT OR Apache-2.0 |
+| combine | 4.6.9 | MIT |
+| displaydoc | 0.2.7 | MIT OR Apache-2.0 |
+| either | 1.19.0 | MIT OR Apache-2.0 |
+| flatbuffers | 25.12.19 | Apache-2.0 |
+| icu_collections | 2.4.0 | Unicode-3.0 |
+| icu_locale_core | 2.4.0 | Unicode-3.0 |
+| icu_normalizer | 2.4.0 | Unicode-3.0 |
+| icu_normalizer_data | 2.4.0 | Unicode-3.0 |
+| icu_properties | 2.4.0 | Unicode-3.0 |
+| icu_properties_data | 2.4.0 | Unicode-3.0 |
+| icu_provider | 2.4.0 | Unicode-3.0 |
+| idna | 1.1.0 | MIT OR Apache-2.0 |
+| idna_adapter | 1.2.2 | Apache-2.0 OR MIT |
+| itertools | 0.14.0 | MIT OR Apache-2.0 |
+| itoa | 1.0.19 | MIT OR Apache-2.0 |
+| jni | 0.21.1 | MIT/Apache-2.0 |
+| jni-sys | 0.3.1 | MIT OR Apache-2.0 |
+| jni-sys | 0.4.1 | MIT OR Apache-2.0 |
+| jni-sys-macros | 0.4.1 | MIT OR Apache-2.0 |
+| litemap | 0.8.3 | Unicode-3.0 |
+| log | 0.4.35 | MIT OR Apache-2.0 |
+| memchr | 2.8.3 | Unlicense OR MIT |
+| percent-encoding | 2.3.2 | MIT OR Apache-2.0 |
+| potential_utf | 0.1.6 | Unicode-3.0 |
+| proc-macro2 | 1.0.107 | MIT OR Apache-2.0 |
+| psl | 2.1.260 | MIT/Apache-2.0 |
+| psl-types | 2.0.11 | MIT/Apache-2.0 |
+| quote | 1.0.47 | MIT OR Apache-2.0 |
+| regex | 1.13.2 | MIT OR Apache-2.0 |
+| regex-automata | 0.4.19 | MIT OR Apache-2.0 |
+| regex-syntax | 0.8.12 | MIT OR Apache-2.0 |
+| rustc-hash | 2.1.3 | Apache-2.0 OR MIT |
+| seahash | 4.1.0 | MIT |
+| serde | 1.0.229 | MIT OR Apache-2.0 |
+| serde_core | 1.0.229 | MIT OR Apache-2.0 |
+| serde_derive | 1.0.229 | MIT OR Apache-2.0 |
+| serde_json | 1.0.154 | MIT OR Apache-2.0 |
+| smallvec | 1.16.6 | MIT OR Apache-2.0 |
+| stable_deref_trait | 1.2.1 | MIT OR Apache-2.0 |
+| syn | 2.0.119 | MIT OR Apache-2.0 |
+| syn | 3.0.10 | MIT OR Apache-2.0 |
+| synstructure | 0.14.0 | MIT |
+| thiserror | 1.0.69 | MIT OR Apache-2.0 |
+| thiserror-impl | 1.0.69 | MIT OR Apache-2.0 |
+| tinystr | 0.8.5 | Unicode-3.0 |
+| unicode-ident | 1.0.27 | (MIT OR Apache-2.0) AND Unicode-3.0 |
+| utf8_iter | 1.1.0 | Apache-2.0 OR MIT |
+| utf_types | 1.0.0 | Apache-2.0 OR MIT |
+| writeable | 0.6.4 | Unicode-3.0 |
+| yoke | 0.8.4 | Unicode-3.0 |
+| yoke-derive | 0.8.4 | Unicode-3.0 |
+| zerofrom | 0.1.8 | Unicode-3.0 |
+| zerofrom-derive | 0.1.8 | Unicode-3.0 |
+| zerotrie | 0.2.5 | Unicode-3.0 |
+| zerovec | 0.11.9 | Unicode-3.0 |
+| zerovec-derive | 0.11.7 | Unicode-3.0 |
+| zmij | 1.0.23 | MIT |

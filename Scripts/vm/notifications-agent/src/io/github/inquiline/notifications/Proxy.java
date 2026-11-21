@@ -48,7 +48,35 @@ final class Proxy {
 
         /** The script uBlock runs first on a page from `host` (its +js rules), or empty for none. */
         String script(String host, int mask);
+
+        /**
+         * The style hiding what generic rules hide among a page's classes and ids (".name" or
+         * "#name", one per line), which ELEMENTS_SCRIPT sends as they appear.
+         */
+        String hidden(String host, String names, int mask);
     }
+
+    /** Where a page's ELEMENTS_SCRIPT asks, on its own site, so the page's own rules allow it. */
+    static final String COSMETIC = "/__inquiline-cosmetic";
+
+    /**
+     * Run on a page with its scriptlets: it sends the page's classes and ids, as they appear, to
+     * COSMETIC, and hides what the generic rules hide among them, as uBlock and Brave do. Generic
+     * rules then hide only what is on the page, not every selector of every list at once, which
+     * could hide a page's own parts.
+     */
+    static final String ELEMENTS_SCRIPT = "(()=>{const seen=new Set(),queue=[];let timer=0,style=null;"
+            + "const add=e=>{if(e.id&&!seen.has('#'+e.id)){seen.add('#'+e.id);queue.push('#'+e.id);}"
+            + "if(e.classList)for(const c of e.classList){if(!seen.has('.'+c)){seen.add('.'+c);queue.push('.'+c);}}};"
+            + "const send=()=>{timer=0;if(!queue.length)return;const names=queue.splice(0).join('\\n');"
+            + "fetch('" + COSMETIC + "',{method:'POST',body:names,credentials:'omit',cache:'no-store'}).then(r=>r.text()).then(css=>{"
+            + "if(!css)return;if(!style){style=document.createElement('style');}"
+            + "if(!style.isConnected)(document.head||document.documentElement).appendChild(style);style.textContent+=css;}).catch(()=>{});};"
+            + "const scan=n=>{if(n.nodeType!==1)return;add(n);for(const e of n.querySelectorAll('[id],[class]'))add(e);"
+            + "if(!timer)timer=setTimeout(send,30);};"
+            + "new MutationObserver(list=>{for(const m of list){if(m.type==='attributes')scan(m.target);else for(const n of m.addedNodes)scan(n);}})"
+            + ".observe(document,{childList:true,subtree:true,attributes:true,attributeFilter:['id','class']});"
+            + "if(document.documentElement)scan(document.documentElement);})();";
 
     /** The app a connection belongs to. */
     static final class Owner {
@@ -206,6 +234,15 @@ final class Proxy {
             String[] line = head.substring(0, head.indexOf("\r\n")).split(" ");
             String method = line[0];
             String host = origin.substring(origin.indexOf("//") + 2);
+            if (line[1].equals(COSMETIC) && method.equals("POST")) {
+                byte[] names = readBody(fromApp, head);
+                if (names == null) return;
+                byte[] css = filter.hidden(host, new String(names, StandardCharsets.UTF_8), mask).getBytes(StandardCharsets.UTF_8);
+                toApp.write(answerHead(new Answer(css, "text/css")).getBytes(StandardCharsets.ISO_8859_1));
+                toApp.write(css);
+                toApp.flush();
+                continue;
+            }
             Answer blocked = filter.decide(origin + line[1], host, head, owner);
             if (blocked != null) {
                 skipBody(fromApp, head, true, method);
