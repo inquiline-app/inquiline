@@ -746,7 +746,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, SPUSta
         alert.alertStyle = .warning
         alert.messageText = "Uninstall Inquiline?"
         alert.informativeText = "Inquiline goes to the Trash, and every Android app you added goes with it, along with "
-            + "their data, Android itself, and Inquiline's settings, caches and logs. This can't be undone."
+            + "their data, Android itself, and Inquiline's settings, caches and logs. This can't be undone. "
+            + "Your files in the \(AndroidFiles.folder.lastPathComponent) folder stay."
         alert.addButton(withTitle: "Uninstall").hasDestructiveAction = true
         alert.addButton(withTitle: "Cancel")
         guard alert.runModal() == .alertFirstButtonReturn else { return }
@@ -772,6 +773,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, SPUSta
             try? SMAppService.mainApp.unregister()
             let home = files.homeDirectoryForCurrentUser
             let library = home.appendingPathComponent("Library")
+            // Android's shared storage stays: what's in it is the user's, as a phone's photos
+            // outlive its apps (AndroidFiles).
             var gone = [AndroidRuntime.shared.home, library.appendingPathComponent("Logs/Inquiline")]
             let prefix = "io.github.inquiline-app."
             let cache = URL(fileURLWithPath: NSTemporaryDirectory()).deletingLastPathComponent().appendingPathComponent("C")

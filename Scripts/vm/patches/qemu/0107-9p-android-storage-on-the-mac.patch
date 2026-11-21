@@ -1,10 +1,11 @@
 Inquiline: Android's shared storage on the Mac. Files made on the Mac, which have
 no mapped credentials, belong to Android's storage (media_rw), so Android's apps
-can change them; and the share's "0" folder, Android's first user's storage, is
-INQUILINE_STORAGE, so the Mac shows it as a folder of its own.
+can change them; the share's "0" folder, Android's first user's storage, is
+INQUILINE_STORAGE, so the Mac shows it as a folder of its own; and folders keep
+their type in directory listings, which Android's installd needs.
 
 diff --git a/hw/9pfs/9p-local.c b/hw/9pfs/9p-local.c
-index ee592b62f8..32892436b4 100644
+index ee592b62f8..66b23fcff1 100644
 --- a/hw/9pfs/9p-local.c
 +++ b/hw/9pfs/9p-local.c
 @@ -56,13 +56,33 @@
@@ -107,7 +108,23 @@ index ee592b62f8..32892436b4 100644
          if (fgetxattrat_nofollow(dirfd, name, "user.virtfs.rdev", &tmp_dev,
                                   sizeof(dev_t)) > 0) {
              stbuf->st_rdev = le64_to_cpu(tmp_dev);
-@@ -799,18 +846,24 @@ static int local_fstat(FsContext *fs_ctx, int fid_type,
+@@ -576,7 +623,14 @@ again:
+ #endif
+ 
+     if (ctx->export_flags & V9FS_SM_MAPPED) {
+-        entry->d_type = DT_UNKNOWN;
++        /*
++         * Inquiline: a mapped file may stand for a symlink or a device, so its
++         * type is the guest's to find out; a folder is always a folder. Android's
++         * installd tells folders by their type alone, when clearing an app's data.
++         */
++        if (entry->d_type != DT_DIR) {
++            entry->d_type = DT_UNKNOWN;
++        }
+     } else if (ctx->export_flags & V9FS_SM_MAPPED_FILE) {
+         if (local_is_mapped_file_metadata(ctx, entry->d_name)) {
+             /* skip the meta data */
+@@ -799,18 +853,24 @@ static int local_fstat(FsContext *fs_ctx, int fid_type,
          mode_t tmp_mode;
          dev_t tmp_dev;
  
@@ -132,7 +149,7 @@ index ee592b62f8..32892436b4 100644
          if (qemu_fgetxattr(fd, "user.virtfs.rdev",
                             &tmp_dev, sizeof(dev_t)) > 0) {
              stbuf->st_rdev = le64_to_cpu(tmp_dev);
-@@ -1471,6 +1524,10 @@ static int local_init(FsContext *ctx, Error **errp)
+@@ -1471,6 +1531,10 @@ static int local_init(FsContext *ctx, Error **errp)
  {
      LocalData *data = g_malloc(sizeof(*data));
  
@@ -143,7 +160,7 @@ index ee592b62f8..32892436b4 100644
      data->mountfd = open(ctx->fs_root, O_DIRECTORY | O_RDONLY);
      if (data->mountfd == -1) {
          error_setg_file_open(errp, errno, ctx->fs_root);
-@@ -1513,6 +1570,9 @@ static void local_cleanup(FsContext *ctx)
+@@ -1513,6 +1577,9 @@ static void local_cleanup(FsContext *ctx)
          return;
      }
  
