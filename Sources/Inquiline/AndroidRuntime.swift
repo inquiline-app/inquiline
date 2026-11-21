@@ -694,7 +694,9 @@ final class AndroidRuntime {
     /// 30: they work as a phone's hardware decoders do: inputs never wait for pictures.
     /// 31: Android's KDE Connect is reached through the VM (its TCP port 1716), for notifications.
     /// 32: Android's shared storage is on the Mac, through 9p (inquiline-storage); Samba goes.
-    private static let diskRevision = 32
+    /// 33: Android's sound driver plays from a ring at the clock's pace (after the emulator's), at
+    /// the Mac's 48 kHz: about a third of the delay it had.
+    private static let diskRevision = 33
 
     private var builtInScreen: ScrcpySession.Screen { ScrcpySession.Resolution.forThisMac.screen(landscape: false) }
     /// The VM's memory map fits the 36-bit (64 GB) address space Apple's M1 and M2 give a VM:

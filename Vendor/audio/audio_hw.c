@@ -31,6 +31,7 @@
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
+#include <sys/system_properties.h>
 
 #include <android/log.h>
 #include <tinyalsa/asoundlib.h>
@@ -47,15 +48,52 @@
 #define STUB_INPUT_BUFFER_MILLISECONDS  20
 #define STUB_INPUT_DEFAULT_CHANNEL_MASK AUDIO_CHANNEL_IN_STEREO
 
-#define STUB_OUTPUT_BUFFER_MILLISECONDS  10
+/* Playback follows the Android emulator's audio HAL (device/generic/goldfish/hals/audio,
+ * device_port_sink.cpp, Apache-2.0): Android writes into a ring of a few buffers, at the pace of
+ * the clock, and a thread of its own hands the ring to the card. Android's mixer never waits on
+ * the card, so a VM held up for a moment, as while a game loads, doesn't stall it, and the card
+ * can hold little. Sizes can be tuned without building again (vendor.inquiline.audio.*). */
+#define OUTPUT_BUFFER_MS_DEFAULT  40 /* what Android writes at a time */
+#define RING_BUFFERS_DEFAULT       1 /* the ring holds this many of those */
+#define CARD_PERIODS_DEFAULT       4 /* the card holds one buffer, in this many periods */
 
-/* Android mixes 10 ms at a time, and the card holds ten: 100 ms. A phone's audio thread runs
- * in real time on its own chip, but here the VM's CPUs can be held up while a game loads,
- * and with only 40 ms the card ran dry several times a second. */
 #define CARD 0
 #define CARD_DEVICE 0
+/* Capture keeps the card's own pacing. */
 #define PERIOD_COUNT 10
 #define STUB_OUTPUT_DEFAULT_CHANNEL_MASK AUDIO_CHANNEL_OUT_STEREO
+
+static unsigned audio_property(const char *name, unsigned fallback)
+{
+    char value[PROP_VALUE_MAX] = "";
+    if (__system_property_get(name, value) <= 0) return fallback;
+    unsigned long n = strtoul(value, NULL, 10);
+    return n > 0 && n < 1000 ? (unsigned)n : fallback;
+}
+
+static int64_t now_ns(void)
+{
+    struct timespec t;
+    clock_gettime(CLOCK_MONOTONIC, &t);
+    return t.tv_sec * 1000000000LL + t.tv_nsec;
+}
+
+/* The ring and the thread that plays it (goldfish's TinyalsaSink). */
+struct sink {
+    pthread_mutex_t lock;
+    pthread_cond_t changed;
+    pthread_t thread;
+    bool running;
+    struct pcm *pcm;
+    struct pcm_config config;
+    uint8_t *ring;
+    size_t ring_frames, frame_size, period_frames;
+    uint32_t rate;
+    int64_t start_ns;
+    uint64_t received;  /* frames Android wrote */
+    uint64_t played;    /* frames handed to the card */
+    uint64_t missed;    /* frames the clock passed while nothing was there to play */
+};
 
 struct stub_audio_device {
     struct audio_hw_device device;
@@ -63,8 +101,9 @@ struct stub_audio_device {
 
 struct stub_stream_out {
     struct audio_stream_out stream;
-    struct pcm *pcm;
-    int64_t last_write_time_us;
+    struct sink *sink;
+    unsigned ring_buffers, card_periods;
+    uint64_t frames_before; /* frames played by earlier sinks, as Android counts from the start */
     uint32_t sample_rate;
     audio_channel_mask_t channel_mask;
     audio_format_t format;
@@ -100,6 +139,164 @@ static struct pcm *open_card(unsigned int flags, uint32_t rate, unsigned int cha
         return NULL;
     }
     return pcm;
+}
+
+static void *sink_play(void *arg)
+{
+    struct sink *sink = arg;
+    pthread_mutex_lock(&sink->lock);
+    while (sink->running) {
+        if (sink->played == sink->received) {
+            pthread_cond_wait(&sink->changed, &sink->lock);
+            continue;
+        }
+        size_t at = sink->played % sink->ring_frames;
+        size_t frames = sink->received - sink->played;
+        if (frames > sink->period_frames) frames = sink->period_frames;
+        if (frames > sink->ring_frames - at) frames = sink->ring_frames - at;
+        pthread_mutex_unlock(&sink->lock);
+        /* The card takes it at the Mac's own pace. A card that has just started can refuse a
+         * write once, and then refuses to be prepared again: it's opened anew, as before. */
+        if (pcm_writei(sink->pcm, sink->ring + at * sink->frame_size, frames) < 0) {
+            ALOGE("Sound card write: %s", pcm_get_error(sink->pcm));
+            pcm_close(sink->pcm);
+            sink->pcm = pcm_open(CARD, CARD_DEVICE, PCM_OUT, &sink->config);
+            if (!sink->pcm || !pcm_is_ready(sink->pcm)) {
+                ALOGE("Sound card: %s", sink->pcm ? pcm_get_error(sink->pcm) : "no memory");
+                if (sink->pcm) pcm_close(sink->pcm);
+                sink->pcm = NULL;
+                pthread_mutex_lock(&sink->lock);
+                sink->running = false;
+                break;
+            }
+            pcm_writei(sink->pcm, sink->ring + at * sink->frame_size, frames);
+        }
+        pthread_mutex_lock(&sink->lock);
+        sink->played += frames;
+        pthread_cond_broadcast(&sink->changed);
+    }
+    pthread_mutex_unlock(&sink->lock);
+    return NULL;
+}
+
+static struct sink *sink_open(struct stub_stream_out *out)
+{
+    struct sink *sink = calloc(1, sizeof(*sink));
+    if (!sink) return NULL;
+    unsigned channels = audio_channel_count_from_out_mask(out->channel_mask);
+    sink->rate = out->sample_rate;
+    sink->frame_size = audio_stream_out_frame_size(&out->stream);
+    sink->period_frames = out->frame_count / out->card_periods;
+    sink->ring_frames = out->frame_count * out->ring_buffers;
+    struct pcm_config config = {
+        .channels = channels,
+        .rate = out->sample_rate,
+        .period_size = sink->period_frames,
+        .period_count = out->card_periods,
+        .format = PCM_FORMAT_S16_LE,
+        /* goldfish starts the card with all but one period in it. */
+        .start_threshold = sink->period_frames * (out->card_periods - 1),
+        .stop_threshold = sink->period_frames * out->card_periods,
+    };
+    sink->config = config;
+    sink->pcm = pcm_open(CARD, CARD_DEVICE, PCM_OUT, &config);
+    sink->ring = malloc(sink->ring_frames * sink->frame_size);
+    if (!sink->pcm || !pcm_is_ready(sink->pcm) || !sink->ring) {
+        ALOGE("Sound card: %s", sink->pcm ? pcm_get_error(sink->pcm) : "no memory");
+        if (sink->pcm) pcm_close(sink->pcm);
+        free(sink->ring);
+        free(sink);
+        return NULL;
+    }
+    pthread_mutex_init(&sink->lock, NULL);
+    pthread_cond_init(&sink->changed, NULL);
+    sink->running = true;
+    sink->start_ns = now_ns();
+    if (pthread_create(&sink->thread, NULL, sink_play, sink) != 0) {
+        pcm_close(sink->pcm);
+        free(sink->ring);
+        free(sink);
+        return NULL;
+    }
+    return sink;
+}
+
+/* Frames the clock says have been played since the sink started; must hold the lock. */
+static uint64_t sink_clock_frames(const struct sink *sink, int64_t now)
+{
+    return (uint64_t)((now - sink->start_ns) / 1000) * sink->rate / 1000000;
+}
+
+static void sink_write(struct sink *sink, const uint8_t *data, size_t frames)
+{
+    pthread_mutex_lock(&sink->lock);
+    while (frames > 0 && sink->running) {
+        int64_t now = now_ns();
+        uint64_t clock = sink_clock_frames(sink, now);
+        /* Nothing was there to play: those frames are gone, as on goldfish. */
+        if (sink->received + sink->missed < clock) sink->missed = clock - sink->received;
+        uint64_t pending = sink->received + sink->missed - clock;
+        size_t room = pending < sink->ring_frames ? sink->ring_frames - pending : 0;
+        size_t space = sink->ring_frames - (size_t)(sink->received - sink->played);
+        if (room == 0 || space == 0) {
+            if (space == 0) {
+                /* The card is behind the clock: wait for it. */
+                pthread_cond_wait(&sink->changed, &sink->lock);
+            } else {
+                pthread_mutex_unlock(&sink->lock);
+                usleep((useconds_t)((uint64_t)1000000 * (frames < sink->period_frames ? frames : sink->period_frames) / sink->rate));
+                pthread_mutex_lock(&sink->lock);
+            }
+            continue;
+        }
+        size_t n = frames;
+        if (n > room) n = room;
+        if (n > space) n = space;
+        size_t at = sink->received % sink->ring_frames;
+        if (n > sink->ring_frames - at) n = sink->ring_frames - at;
+        memcpy(sink->ring + at * sink->frame_size, data, n * sink->frame_size);
+        sink->received += n;
+        data += n * sink->frame_size;
+        frames -= n;
+        pthread_cond_broadcast(&sink->changed);
+    }
+    pthread_mutex_unlock(&sink->lock);
+}
+
+/* What has been heard: the clock's frames, less what was missed, never more than was written. */
+static void sink_position(struct sink *sink, uint64_t *frames, struct timespec *when)
+{
+    pthread_mutex_lock(&sink->lock);
+    int64_t now = now_ns();
+    uint64_t clock = sink_clock_frames(sink, now);
+    uint64_t heard = clock > sink->missed ? clock - sink->missed : 0;
+    if (heard > sink->received) {
+        /* Played out: the last frame was heard a while ago. */
+        now -= (int64_t)(heard - sink->received) * 1000000000LL / sink->rate;
+        heard = sink->received;
+    }
+    pthread_mutex_unlock(&sink->lock);
+    *frames = heard;
+    when->tv_sec = now / 1000000000LL;
+    when->tv_nsec = now % 1000000000LL;
+}
+
+static uint64_t sink_close(struct sink *sink)
+{
+    uint64_t frames;
+    struct timespec when;
+    sink_position(sink, &frames, &when);
+    pthread_mutex_lock(&sink->lock);
+    sink->running = false;
+    pthread_cond_broadcast(&sink->changed);
+    pthread_mutex_unlock(&sink->lock);
+    pthread_join(sink->thread, NULL);
+    if (sink->pcm) pcm_close(sink->pcm);
+    pthread_mutex_destroy(&sink->lock);
+    pthread_cond_destroy(&sink->changed);
+    free(sink->ring);
+    free(sink);
+    return frames;
 }
 
 static uint32_t out_get_sample_rate(const struct audio_stream *stream)
@@ -157,11 +354,10 @@ static int out_set_format(struct audio_stream *stream, audio_format_t format)
 static int out_standby(struct audio_stream *stream)
 {
     ALOGV("out_standby");
-    // out->last_write_time_us = 0; unnecessary as a stale write time has same effect
     struct stub_stream_out *out = (struct stub_stream_out *)stream;
-    if (out->pcm) {
-        pcm_close(out->pcm);
-        out->pcm = NULL;
+    if (out->sink) {
+        out->frames_before += sink_close(out->sink);
+        out->sink = NULL;
     }
     return 0;
 }
@@ -186,8 +382,9 @@ static char * out_get_parameters(const struct audio_stream *stream, const char *
 
 static uint32_t out_get_latency(const struct audio_stream_out *stream)
 {
-    ALOGV("out_get_latency");
-    return STUB_OUTPUT_BUFFER_MILLISECONDS * PERIOD_COUNT;
+    const struct stub_stream_out *out = (const struct stub_stream_out *)stream;
+    /* The ring and the card, as goldfish reports it. */
+    return (uint32_t)(out->frame_count * (out->ring_buffers + 1) * 1000 / out->sample_rate);
 }
 
 static int out_set_volume(struct audio_stream_out *stream, float left,
@@ -200,49 +397,26 @@ static int out_set_volume(struct audio_stream_out *stream, float left,
 static ssize_t out_write(struct audio_stream_out *stream, const void* buffer,
                          size_t bytes)
 {
-    ALOGV("out_write: bytes: %zu", bytes);
-
     struct stub_stream_out *out = (struct stub_stream_out *)stream;
-    // A card that has just started can refuse the first write once; it's opened again.
-    for (int attempt = 0; attempt < 2; attempt++) {
-        if (!out->pcm) {
-            out->pcm = open_card(PCM_OUT, out->sample_rate,
-                                 audio_channel_count_from_out_mask(out->channel_mask), out->frame_count);
-        }
-        if (!out->pcm) break;
-        // The card takes the sound at its own pace, which is the timing Android needs.
-        unsigned int frames = bytes / audio_stream_out_frame_size(stream);
-        // It reports 0 for the write that starts the card, the frames written after.
-        if (pcm_writei(out->pcm, buffer, frames) >= 0) return bytes;
-        ALOGE("Sound card write: %s", pcm_get_error(out->pcm));
-        pcm_close(out->pcm);
-        out->pcm = NULL;
-    }
-
-    /* XXX: fake timing for audio output */
-    struct timespec t = { .tv_sec = 0, .tv_nsec = 0 };
-    clock_gettime(CLOCK_MONOTONIC, &t);
-    const int64_t now = (t.tv_sec * 1000000000LL + t.tv_nsec) / 1000;
-    const int64_t elapsed_time_since_last_write = now - out->last_write_time_us;
-    int64_t sleep_time = bytes * 1000000LL / audio_stream_out_frame_size(stream) /
-               out_get_sample_rate(&stream->common) - elapsed_time_since_last_write;
-    if (sleep_time > 0) {
-        usleep(sleep_time);
+    if (!out->sink) out->sink = sink_open(out);
+    size_t frames = bytes / audio_stream_out_frame_size(stream);
+    if (out->sink) {
+        sink_write(out->sink, buffer, frames);
     } else {
-        // we don't sleep when we exit standby (this is typical for a real alsa buffer).
-        sleep_time = 0;
+        /* No card: the sound is dropped at the pace it would have played. */
+        usleep((useconds_t)((uint64_t)1000000 * frames / out->sample_rate));
     }
-    out->last_write_time_us = now + sleep_time;
-    // last_write_time_us is an approximation of when the (simulated) alsa
-    // buffer is believed completely full. The usleep above waits for more space
-    // in the buffer, but by the end of the sleep the buffer is considered
-    // topped-off.
-    //
-    // On the subsequent out_write(), we measure the elapsed time spent in
-    // the mixer. This is subtracted from the sleep estimate based on frames,
-    // thereby accounting for drain in the alsa buffer during mixing.
-    // This is a crude approximation; we don't handle underruns precisely.
     return bytes;
+}
+
+static int out_get_presentation_position(const struct audio_stream_out *stream,
+                                         uint64_t *frames, struct timespec *timestamp)
+{
+    const struct stub_stream_out *out = (const struct stub_stream_out *)stream;
+    if (!out->sink) return -ENODATA;
+    sink_position(out->sink, frames, timestamp);
+    *frames += out->frames_before;
+    return 0;
 }
 
 static int out_get_render_position(const struct audio_stream_out *stream,
@@ -459,6 +633,7 @@ static int adev_open_output_stream(struct audio_hw_device *dev,
     out->stream.write = out_write;
     out->stream.get_render_position = out_get_render_position;
     out->stream.get_next_write_timestamp = out_get_next_write_timestamp;
+    out->stream.get_presentation_position = out_get_presentation_position;
     out->sample_rate = config->sample_rate;
     if (out->sample_rate == 0)
         out->sample_rate = STUB_DEFAULT_SAMPLE_RATE;
@@ -474,9 +649,13 @@ static int adev_open_output_stream(struct audio_hw_device *dev,
         free(out);
         return -EINVAL;
     }
-    out->frame_count = samples_per_milliseconds(
-                           STUB_OUTPUT_BUFFER_MILLISECONDS,
-                           out->sample_rate, 1);
+    unsigned buffer_ms = audio_property("vendor.inquiline.audio.buffer_ms", OUTPUT_BUFFER_MS_DEFAULT);
+    out->ring_buffers = audio_property("vendor.inquiline.audio.ring_buffers", RING_BUFFERS_DEFAULT);
+    out->card_periods = audio_property("vendor.inquiline.audio.card_periods", CARD_PERIODS_DEFAULT);
+    if (out->card_periods < 2) out->card_periods = 2;
+    /* Whole periods of 16 frames, as goldfish aligns them. */
+    out->frame_count = (samples_per_milliseconds(buffer_ms, out->sample_rate, 1)
+                        / (16 * out->card_periods)) * 16 * out->card_periods;
 
     ALOGV("adev_open_output_stream: sample_rate: %u, channels: %x, format: %d,"
           " frames: %zu", out->sample_rate, out->channel_mask, out->format,

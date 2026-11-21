@@ -51,6 +51,8 @@ chroot "$ROOT" /sbin/depmod "$KERNEL"
 
 mkdir -p "$ROOT/var/inquiline"
 cp "$LIBS"/*.so "$ROOT/var/inquiline/"
+# Android's sound at the Mac's own rate (Vendor/audio).
+cp Vendor/audio/primary_audio_policy_configuration.xml "$ROOT/var/inquiline/"
 chmod 644 "$ROOT"/var/inquiline/*.so
 # Changes to Android's own settings, as a phone maker's overlay (Scripts/vm/framework-overlay).
 cp "$LIBS/inquiline-framework-overlay.apk" "$ROOT/var/inquiline/"
@@ -250,6 +252,7 @@ exec podman run --rm $EXTRA --name redroid --ip 10.88.0.2 --privileged --pull=ne
   -v /run/inquiline-input:/dev/input -v $A/gpu_config.sh:/vendor/bin/gpu_config.sh:ro \
   -v $A/libdrm.so:/vendor/lib64/libdrm.so:ro -v $A/vulkan.gfxstream.so:/vendor/lib64/hw/vulkan.gfxstream.so:ro \
   -v $A/audio.primary.redroid.so:/vendor/lib64/hw/audio.primary.redroid.so:ro \
+  -v $A/primary_audio_policy_configuration.xml:/vendor/etc/primary_audio_policy_configuration.xml:ro \
   -v $A/services.jar:/system/framework/services.jar:ro -v $A/oat-arm64:/system/framework/oat/arm64:ro \
   -v $A/android.hardware.gnss-service.inquiline:/vendor/bin/hw/android.hardware.gnss-service.inquiline:ro \
   -v $A/gnss.xml:/vendor/etc/vintf/manifest/gnss-inquiline.xml:ro \
