@@ -50,14 +50,11 @@ The disk (`android-disk.xz` in the app, unpacked to `~/Library/Application Suppo
 | Package | Version | License |
 |---|---|---|
 | aardvark-dns | 1.17.1-r0 | Apache-2.0 |
-| acl | 2.3.2-r1 | LGPL-2.1-or-later AND GPL-2.0-or-later |
-| acl-libs | 2.3.2-r1 | LGPL-2.1-or-later AND GPL-2.0-or-later |
 | alpine-baselayout | 3.7.2-r1 | GPL-2.0-only |
 | alpine-baselayout-data | 3.7.2-r1 | GPL-2.0-only |
 | alpine-keys | 2.6-r0 | MIT |
 | alpine-release | 3.24.3-r0 | MIT |
 | apk-tools | 3.0.8-r0 | GPL-2.0-only |
-| avahi-libs | 0.9_rc4-r0 | LGPL-2.1-or-later |
 | brotli-libs | 1.2.1-r0 | MIT |
 | busybox | 1.37.0-r31 | GPL-2.0-only |
 | busybox-binsh | 1.37.0-r31 | GPL-2.0-only |
@@ -66,8 +63,9 @@ The disk (`android-disk.xz` in the app, unpacked to `~/Library/Application Suppo
 | conmon | 2.2.1-r0 | Apache-2.0 |
 | containers-common | 0.64.2-r0 | Apache-2.0 |
 | crun | 1.30.1-r0 | GPL-2.0-or-later AND LGPL-2.1-or-later |
-| cups-libs | 2.4.19-r1 | Apache-2.0 |
-| dbus-libs | 1.16.2-r2 | AFL-2.1 OR GPL-2.0-or-later |
+| e2fsprogs | 1.47.4-r0 | GPL-2.0-or-later AND LGPL-2.0-or-later AND BSD-3-Clause AND MIT |
+| e2fsprogs-extra | 1.47.4-r0 | GPL-2.0-or-later AND LGPL-2.0-or-later AND BSD-3-Clause AND MIT |
+| e2fsprogs-libs | 1.47.4-r0 | GPL-2.0-or-later AND LGPL-2.0-or-later AND BSD-3-Clause AND MIT |
 | gdbm | 1.26-r0 | GPL-3.0-or-later |
 | glib | 2.88.1-r1 | LGPL-2.1-or-later |
 | gmp | 6.3.0-r4 | LGPL-3.0-or-later OR GPL-2.0-or-later |
@@ -79,20 +77,16 @@ The disk (`android-disk.xz` in the app, unpacked to `~/Library/Application Suppo
 | gpg-agent | 2.4.9-r1 | GPL-3.0-or-later |
 | gpgme | 2.0.1-r1 | LGPL-2.1-or-later AND GPL-3.0-or-later |
 | gpgsm | 2.4.9-r1 | GPL-3.0-or-later |
-| icu-data-en | 78.1-r0 | ICU |
-| icu-libs | 78.1-r0 | ICU |
 | iptables | 1.8.13-r0 | GPL-2.0-or-later |
-| jansson | 2.15.0-r0 | MIT |
 | json-c | 0.18-r1 | MIT |
 | kmod | 34.2-r1 | GPL-2.0-or-later |
-| ldb | 4.23.8-r0 | GPL-3.0-or-later AND LGPL-3.0-or-later |
 | libapk | 3.0.8-r0 | GPL-2.0-only |
 | libassuan | 3.0.2-r0 | LGPL-2.1-or-later |
-| libauth-samba | 4.23.8-r0 | GPL-3.0-or-later AND LGPL-3.0-or-later |
 | libblkid | 2.42.3-r1 | LGPL-2.1-or-later |
 | libbsd | 0.12.2-r0 | BSD-3-Clause |
 | libbz2 | 1.0.8-r6 | bzip2-1.0.6 |
 | libcap2 | 2.78-r0 | BSD-3-Clause OR GPL-2.0-only |
+| libcom_err | 1.47.4-r0 | GPL-2.0-or-later AND LGPL-2.0-or-later AND BSD-3-Clause AND MIT |
 | libcrypto3 | 3.5.9-r0 | Apache-2.0 |
 | libeconf | 0.8.3-r0 | MIT |
 | libffi | 3.5.2-r1 | MIT |
@@ -111,14 +105,11 @@ The disk (`android-disk.xz` in the app, unpacked to `~/Library/Application Suppo
 | libsasl | 2.1.28-r9 | BSD-3-Clause-Attribution AND BSD-4-Clause |
 | libseccomp | 2.6.1-r0 | LGPL-2.1-or-later |
 | libssl3 | 3.5.9-r0 | Apache-2.0 |
-| libstdc++ | 15.2.0-r5 | GPL-2.0-or-later AND LGPL-2.1-or-later |
 | libtasn1 | 4.21.0-r0 | LGPL-2.1-or-later |
 | libunistring | 1.4.2-r0 | GPL-2.0-or-later OR LGPL-3.0-or-later |
-| liburing | 2.14-r0 | LGPL-2.1-or-later OR MIT |
-| libwbclient | 4.23.8-r0 | GPL-3.0-or-later AND LGPL-3.0-or-later |
+| libuuid | 2.42.3-r1 | BSD-3-Clause |
 | libxtables | 1.8.13-r0 | GPL-2.0-or-later |
 | linux-pam | 1.7.1-r2 | BSD-3-Clause |
-| lmdb | 0.9.35-r0 | OLDAP-2.8 |
 | musl | 1.2.6-r3 | MIT |
 | musl-utils | 1.2.6-r3 | MIT AND BSD-2-Clause AND GPL-2.0-or-later |
 | ncurses-terminfo-base | 6.6_p20260516-r0 | X11 |
@@ -130,14 +121,7 @@ The disk (`android-disk.xz` in the app, unpacked to `~/Library/Application Suppo
 | pcre2 | 10.49-r0 | BSD-3-Clause |
 | pinentry | 1.3.2-r0 | GPL-2.0-or-later |
 | podman | 5.8.9-r0 | Apache-2.0 |
-| popt | 1.19-r4 | MIT |
 | readline | 8.3.3-r1 | GPL-3.0-or-later |
-| samba-client-libs | 4.23.8-r0 | GPL-3.0-or-later AND LGPL-3.0-or-later |
-| samba-common | 4.23.8-r0 | GPL-3.0-or-later AND LGPL-3.0-or-later |
-| samba-common-server-libs | 4.23.8-r0 | GPL-3.0-or-later AND LGPL-3.0-or-later |
-| samba-libs | 4.23.8-r0 | GPL-3.0-or-later AND LGPL-3.0-or-later |
-| samba-server | 4.23.8-r0 | GPL-3.0-or-later AND LGPL-3.0-or-later |
-| samba-util-libs | 4.23.8-r0 | GPL-3.0-or-later AND LGPL-3.0-or-later |
 | scanelf | 1.3.9-r1 | GPL-2.0-only |
 | shadow-libs | 4.18.0-r1 | BSD-3-Clause |
 | shadow-subids | 4.18.0-r1 | BSD-3-Clause |
@@ -145,9 +129,6 @@ The disk (`android-disk.xz` in the app, unpacked to `~/Library/Application Suppo
 | socat | 1.8.1.3-r0 | GPL-2.0-only WITH OpenSSL-Exception |
 | sqlite-libs | 3.53.4-r0 | blessing |
 | ssl_client | 1.37.0-r31 | GPL-2.0-only |
-| talloc | 2.4.4-r1 | LGPL-3.0-or-later |
-| tdb-libs | 1.4.15-r1 | LGPL-3.0-or-later |
-| tevent | 0.17.1-r1 | LGPL-3.0-or-later |
 | utmps-libs | 0.1.3.3-r0 | ISC |
 | xz-libs | 5.8.4-r0 | GPL-2.0-or-later AND 0BSD AND Public-Domain AND LGPL-2.1-or-later |
 | zlib | 1.3.2-r1 | Zlib |
