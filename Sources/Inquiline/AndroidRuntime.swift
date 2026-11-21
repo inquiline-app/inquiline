@@ -1333,19 +1333,12 @@ final class AndroidRuntime {
         _ = try shell("su 0 rm -rf \(target).old")
     }
 
-    /// Only Android starts again, as Waydroid restarts its container: Linux and the engine keep
-    /// running. Android's reboot ends its container, and the VM's init starts a new one
-    /// (inquiline-android), which mounts the Google files when they exist.
+    /// The whole VM starts again: Android's shared storage (9p) and Google's files are
+    /// mounted before Android starts. Restarting Android's container alone left it unable to
+    /// start again with the storage on the Mac.
     private func restart(status: @escaping (String) -> Void) throws {
         status("Restarting Android…")
-        AppLog.write("Restarting Android")
-        // The container's /dev is its own, so the mark goes with the old Android.
-        _ = try? shell("su 0 sh -c 'touch /dev/.inquiline-old; sync; (sleep 1; reboot) >/dev/null 2>&1 &'")
-        let deadline = Date().addingTimeInterval(60)
-        while (try? AdbClient.shell("ls /dev/.inquiline-old", timeout: 3))?.contains("inquiline-old") != false {
-            if Date() > deadline { throw RuntimeError("Android did not restart.") }
-            Thread.sleep(forTimeInterval: 0.5)
-        }
+        shutdown()
         try ensureReady(status: status)
     }
 
