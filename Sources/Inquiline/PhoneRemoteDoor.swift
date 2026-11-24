@@ -22,6 +22,12 @@ final class PhoneRemoteDoor {
     private var lastState = ""
     private var lastFront: Int32?
     private var timer: DispatchSourceTimer?
+    /// Inquiline's apps, as the Dock shows them: package and name, kept up to date by the app.
+    private var apps: [(package: String, label: String)] = []
+    /// Small icons for the phone, made once each.
+    private var smallIcons: [String: Data] = [:]
+    /// Opens an app on the Mac, as a click in the Dock does; called on the main queue.
+    var onLaunch: ((String) -> Void)?
     private lazy var token: String = {
         let file = PhoneRemote.folder.appendingPathComponent("pairing")
         if let saved = try? String(contentsOf: file, encoding: .utf8), saved.count == 32 { return saved }
@@ -94,6 +100,41 @@ final class PhoneRemoteDoor {
         return listener
     }
 
+    // MARK: - The apps
+
+    /// The apps the page lists behind its title, as the Dock shows them.
+    func setApps(_ list: [(package: String, label: String)]) {
+        queue.async { [self] in
+            apps = list
+            smallIcons = smallIcons.filter { entry in list.contains { $0.package == entry.key } }
+        }
+    }
+
+    /// An app's icon at the size the phone shows it (Library keeps them at 1024 pixels).
+    private func smallIcon(_ package: String) -> Data? {
+        if let cached = smallIcons[package] { return cached }
+        guard apps.contains(where: { $0.package == package }),
+              let image = NSImage(contentsOf: AndroidRuntime.shared.home.appendingPathComponent("icons/\(package).png")),
+              let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 180, pixelsHigh: 180, bitsPerSample: 8,
+                                         samplesPerPixel: 4, hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB,
+                                         bytesPerRow: 0, bitsPerPixel: 0) else { return nil }
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
+        NSGraphicsContext.current?.imageInterpolation = .high
+        image.draw(in: NSRect(x: 0, y: 0, width: 180, height: 180))
+        NSGraphicsContext.restoreGraphicsState()
+        let png = rep.representation(using: .png, properties: [:])
+        smallIcons[package] = png
+        return png
+    }
+
+    private func sendApps(to connection: NWConnection) {
+        let list = apps.map { ["p": $0.package, "n": $0.label] }
+        guard let data = try? JSONSerialization.data(withJSONObject: ["t": "apps", "apps": list]),
+              let text = String(data: data, encoding: .utf8) else { return }
+        send(text, to: connection)
+    }
+
     // MARK: - The windows
 
     /// The open windows that take a phone, from their files; files of windows gone are removed.
@@ -160,6 +201,9 @@ final class PhoneRemoteDoor {
             case base + "/icon.png":
                 type = "image/png"
                 body = Self.icon
+            case let path where path.hasPrefix(base + "/app-icon/"):
+                type = "image/png"
+                body = self.smallIcon(String(path.dropFirst(base.count + "/app-icon/".count)))
             default:
                 body = nil
             }
@@ -221,6 +265,17 @@ final class PhoneRemoteDoor {
                 self.trusted.insert(ObjectIdentifier(connection))
                 self.lastState = ""
                 self.pushState()
+            } else if let data, let message = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                switch message["t"] as? String {
+                case "apps":
+                    self.sendApps(to: connection)
+                case "launch":
+                    if let package = message["p"] as? String, self.apps.contains(where: { $0.package == package }) {
+                        DispatchQueue.main.async { self.onLaunch?(package) }
+                    }
+                default:
+                    break
+                }
             }
             self.receive(on: connection)
         }

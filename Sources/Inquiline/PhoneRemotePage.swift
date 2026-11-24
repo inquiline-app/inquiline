@@ -57,6 +57,8 @@ enum PhoneRemotePage {
     gap: 8px; padding: 0 16px; border-radius: 20px; background: var(--key); border: 1px solid var(--edge); }
   #dot { width: 8px; height: 8px; border-radius: 50%; background: #ff453a; flex: none; }
   #dot.on { background: #30d158; }
+  #pill:active { background: var(--press); }
+  #pill svg { width: 14px; height: 14px; flex: none; color: var(--dim); stroke-width: 2.4; }
   #title { font-weight: 600; font-size: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   #assistant { color: #bf9dff; }
   main { flex: 1; position: relative; }
@@ -101,6 +103,21 @@ enum PhoneRemotePage {
     display: flex; align-items: center; justify-content: center; color: #48484a; font-size: 14px; overflow: hidden; }
   #surface .spot { position: absolute; width: 64px; height: 64px; margin: -32px 0 0 -32px; border-radius: 50%;
     background: radial-gradient(circle, rgba(255,255,255,.16), rgba(255,255,255,0) 70%); pointer-events: none; }
+  /* Inquiline's apps, as the Dock shows them, in a sheet from the bottom as iOS's. */
+  #apps { position: fixed; inset: 0; z-index: 8; background: rgba(0,0,0,0); display: flex; align-items: flex-end;
+    pointer-events: none; transition: background .25s; }
+  #apps.on { background: rgba(0,0,0,.55); pointer-events: auto; }
+  #sheet { width: 100%; max-height: 78%; overflow-y: auto; background: rgba(28,28,30,.96); border-radius: 28px 28px 0 0;
+    border-top: 1px solid var(--edge); padding: 8px 16px calc(20px + env(safe-area-inset-bottom));
+    transform: translateY(100%); transition: transform .3s cubic-bezier(.2,.9,.3,1); -webkit-backdrop-filter: blur(30px); backdrop-filter: blur(30px); }
+  #apps.on #sheet { transform: none; }
+  #sheet, #sheet * { touch-action: pan-y; }
+  #grab { width: 38px; height: 5px; border-radius: 3px; background: #48484a; margin: 4px auto 14px; }
+  #grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(78px, 1fr)); gap: 18px 8px; }
+  .app { display: flex; flex-direction: column; align-items: center; gap: 7px; min-width: 0; }
+  .app img { width: 62px; height: 62px; border-radius: 22%; background: var(--key); transition: transform .1s; }
+  .app:active img { transform: scale(.9); }
+  .app span { font-size: 12px; color: var(--text); max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   #gone { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.88); align-items: center; justify-content: center;
     text-align: center; padding: 24px; z-index: 9; }
   #gone.on { display: flex; }
@@ -110,7 +127,7 @@ enum PhoneRemotePage {
 <body>
 <header>
   <button class="round" id="mode" aria-label="Controller"><svg viewBox="0 0 24 24"><path d="M7 8h10a4 4 0 0 1 4 4.5l-.6 3.6a2.3 2.3 0 0 1-4 1L14.6 15H9.4l-1.8 2.1a2.3 2.3 0 0 1-4-1L3 12.5A4 4 0 0 1 7 8z"/><path d="M7.5 10.5v3M6 12h3"/><circle cx="16" cy="11.2" r=".6"/><circle cx="17.6" cy="12.8" r=".6"/></svg></button>
-  <div id="pill"><span id="dot"></span><span id="title">Connecting…</span></div>
+  <div id="pill"><span id="dot"></span><span id="title">Connecting…</span><svg viewBox="0 0 24 24"><path d="M9 5l7 7-7 7"/></svg></div>
   <button class="round" id="assistant" aria-label="Gemini"><svg viewBox="0 0 24 24"><path d="M12 3c.6 4.6 3.4 7.4 9 9-5.6 1.6-8.4 4.4-9 9-.6-4.6-3.4-7.4-9-9 5.6-1.6 8.4-4.4 9-9z"/></svg></button>
 </header>
 <main>
@@ -151,6 +168,7 @@ enum PhoneRemotePage {
   <button class="round" id="back" data-k="back" aria-label="Back"><svg viewBox="0 0 24 24" style="width:36%;height:36%"><path d="M15 4.5L7.5 12l7.5 7.5"/></svg></button>
   <button class="round" data-k="playpause" aria-label="Play or Pause"><svg viewBox="0 0 24 24"><path d="M4.5 6v12l7-6z"/><path d="M15 6.5v11M19.5 6.5v11"/></svg></button>
 </footer>
+<div id="apps"><div id="sheet"><div id="grab"></div><div id="grid"></div></div></div>
 <div id="gone"><div><div id="goneText">Not connected to your Mac.</div><button onclick="location.reload()">Try Again</button></div></div>
 <script>
 (() => {
@@ -162,7 +180,10 @@ enum PhoneRemotePage {
   function connect() {
     control = new WebSocket("ws://" + location.hostname + ":{{PORT}}/");
     control.onopen = () => control.send(JSON.stringify({ t: "hello", token }));
-    control.onmessage = e => follow(JSON.parse(e.data));
+    control.onmessage = e => {
+      const m = JSON.parse(e.data);
+      if (m.t === "apps") listApps(m.apps); else follow(m);
+    };
     control.onclose = () => { closeApp(); gone.classList.add("on"); };
   }
   function follow(s) {
@@ -251,6 +272,35 @@ enum PhoneRemotePage {
   };
   document.getElementById("assistant").onclick = () => { buzz(); message({ t: "assistant" }); };
   document.querySelectorAll("footer [data-k]").forEach(b => b.onclick = () => { buzz(); message({ t: "key", k: b.dataset.k }); });
+
+  // The title opens Inquiline's apps, as the Dock shows them; one tapped opens on the Mac, in
+  // front, and the page follows it there.
+  const appsSheet = document.getElementById("apps"), grid = document.getElementById("grid");
+  document.getElementById("pill").onclick = () => {
+    buzz();
+    if (control && control.readyState === 1) control.send(JSON.stringify({ t: "apps" }));
+    appsSheet.classList.add("on");
+  };
+  appsSheet.onclick = e => { if (e.target === appsSheet) appsSheet.classList.remove("on"); };
+  function listApps(apps) {
+    grid.textContent = "";
+    apps.forEach(a => {
+      const item = document.createElement("div");
+      item.className = "app";
+      const icon = document.createElement("img");
+      icon.src = "/" + token + "/app-icon/" + encodeURIComponent(a.p);
+      icon.alt = "";
+      const name = document.createElement("span");
+      name.textContent = a.n;
+      item.append(icon, name);
+      item.onclick = () => {
+        buzz();
+        control.send(JSON.stringify({ t: "launch", p: a.p }));
+        appsSheet.classList.remove("on");
+      };
+      grid.appendChild(item);
+    });
+  }
 
   // Controller: GamepadBridge's report bits and hat.
   const bits = { a: 0x0001, b: 0x0002, x: 0x0008, y: 0x0010, lb: 0x0040, rb: 0x0080, back: 0x0400, start: 0x0800 };

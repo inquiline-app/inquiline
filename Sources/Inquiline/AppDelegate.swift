@@ -42,7 +42,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, SPUSta
                 DesktopWidgets.shared.remove(package: package)
             }
         }
-        library.onChange = { [weak self] in self?.updateShortcuts() }
+        library.onChange = { [weak self] in
+            self?.updateShortcuts()
+            self?.shareAppsWithPhones()
+        }
+        shareAppsWithPhones()
+        // The phone remote's app list opens an app as the Dock does: its Mac app, in front.
+        PhoneRemoteDoor.shared.onLaunch = { package in
+            guard let app = AppShortcuts.bundle(of: package) else { return }
+            NSWorkspace.shared.openApplication(at: app, configuration: NSWorkspace.OpenConfiguration())
+        }
+    }
+
+    private func shareAppsWithPhones() {
+        PhoneRemoteDoor.shared.setApps(library.apps.map { ($0.package, $0.label) })
     }
 
     private var running: NSRunningApplication?
