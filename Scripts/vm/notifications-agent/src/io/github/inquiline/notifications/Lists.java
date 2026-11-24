@@ -71,6 +71,10 @@ final class Lists {
         new List("ublock-unbreak.txt", UASSETS + "unbreak.txt", true, ADS | PRIVACY | MALWARE | COOKIES | SOCIAL | ANNOYANCES),
         // The ad networks of apps and games (AppLovin, Mintegral, Unity, ironSource...).
         new List("adguard-mobile.txt", "https://filters.adtidy.org/extension/ublock/filters/11.txt", false, ADS),
+        // The ad, tracking and analytics hosts apps reach on their own, as AdGuard DNS, Blokada and
+        // RethinkDNS block them for every app: what games' ad libraries call (AppLovin MAX, Moloco,
+        // Facebook Audience Network, Adjust), which the lists above, made for web pages, leave out.
+        new List("adguard-dns.txt", "https://adguardteam.github.io/AdGuardSDNSFilter/Filters/filter.txt", false, ADS),
         new List("easyprivacy.txt", "https://easylist.to/easylist/easyprivacy.txt", false, PRIVACY),
         new List("ublock-privacy.txt", UASSETS + "privacy.txt", true, PRIVACY),
         new List("ublock-badware.txt", UASSETS + "badware.txt", true, MALWARE),

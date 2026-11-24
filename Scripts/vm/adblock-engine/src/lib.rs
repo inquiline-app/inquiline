@@ -110,6 +110,8 @@ pub extern "system" fn Java_io_github_inquiline_notifications_Engine_cosmetic<'l
         "exceptions": r.exceptions.into_iter().collect::<Vec<_>>(),
         "script": r.injected_script,
         "generichide": r.generichide,
+        // uBlock's procedural rules (:has, :style, :remove...), each as JSON, for Brave's page code.
+        "procedural": r.procedural_actions.into_iter().collect::<Vec<_>>(),
     });
     out(&mut env, Some(json.to_string()))
 }

@@ -196,6 +196,20 @@ public final class AdBlock extends VpnService {
     /** Brave's engine, made anew for the lists as they are now. */
     private Engine engine;
 
+    private String procedural;
+
+    /** Brave's procedural filters for pages (assets/procedural.js), read once. */
+    private synchronized String proceduralScript() {
+        if (procedural == null) {
+            try (java.io.InputStream in = getAssets().open("procedural.js")) {
+                procedural = new String(in.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+            } catch (java.io.IOException e) {
+                procedural = "";
+            }
+        }
+        return procedural;
+    }
+
     /** The rules of every list as they are now, applied by Brave's engine (Engine). */
     private Proxy.Filter filter() throws Exception {
         if (engine != null) engine.reset();
@@ -241,6 +255,20 @@ public final class AdBlock extends VpnService {
             public String script(String host, int mask) {
                 org.json.JSONObject page = rules.cosmetic(mask, "https://" + host + "/");
                 String scriptlets = page.optString("script");
+                // The page's procedural rules, run by Brave's code (assets/procedural.js), as uBlock
+                // and Brave do: what changes a page's style or removes a part, not only hides one.
+                org.json.JSONArray procedural = page.optJSONArray("procedural");
+                if (procedural != null && procedural.length() > 0) {
+                    org.json.JSONArray actions = new org.json.JSONArray();
+                    for (int i = 0; i < procedural.length(); i++) {
+                        try {
+                            actions.put(new org.json.JSONObject(procedural.optString(i)));
+                        } catch (org.json.JSONException e) {
+                            // A rule the engine wrote oddly is left out.
+                        }
+                    }
+                    scriptlets += "\n" + proceduralScript().replace("__INQUILINE_PROCEDURAL__", actions.toString());
+                }
                 // Generic rules for what's on the page, asked as its elements appear (Proxy.COSMETIC).
                 return page.optBoolean("generichide") ? scriptlets : scriptlets + "\n" + Proxy.ELEMENTS_SCRIPT;
             }
