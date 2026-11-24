@@ -20,8 +20,10 @@ final class PhoneRemote {
                  leftTrigger: Double, rightTrigger: Double, buttons: UInt16, hat: UInt8)
         /// A finger on the touchpad, at a point from 0 to 1 across the app's screen.
         case touch(ScrcpySession.TouchAction, x: Double, y: Double, finger: Int)
-        /// A remote's key, pressed and let go: Back, Play/Pause or Mute.
+        /// A remote's key, pressed and let go: Back or Play/Pause.
         case key(Int32)
+        /// The window's own mute, which works for any app, switched.
+        case mute
         case assistant
     }
 
@@ -200,6 +202,7 @@ final class PhoneRemote {
                 return connection.cancel()
             }
             trusted.insert(key)
+            if !shared.isEmpty { signal(shared, key: key) }
             let count = trusted.count
             DispatchQueue.main.async { self.onPhones?(count) }
             return
@@ -229,6 +232,17 @@ final class PhoneRemote {
     /// The latest controller state's number per phone, as states come over both ways, and an
     /// older one must not undo a newer one.
     private var padSequence: [ObjectIdentifier: Double] = [:]
+
+    /// What the phone shows of the window, as the window has it now: whether it's muted. Sent
+    /// to every phone when it changes, and to a phone when it connects.
+    private var shared: [String: Any] = [:]
+
+    func share(muted: Bool) {
+        queue.async { [self] in
+            shared = ["t": "state", "muted": muted]
+            for key in trusted { signal(shared, key: key) }
+        }
+    }
 
     /// To the phone, over its WebSocket: the Mac's answer and its addresses.
     fileprivate func signal(_ message: [String: Any], key: ObjectIdentifier) {
@@ -268,8 +282,9 @@ final class PhoneRemote {
             input = .touch(action, x: min(max(number("x"), 0), 1), y: min(max(number("y"), 0), 1),
                            finger: Int(number("id")) % 10)
         case "key":
-            // Android's keycodes for the remote's keys: Back, Play/Pause, Mute.
-            let keys: [String: Int32] = ["back": 4, "playpause": 85, "mute": 164]
+            if message["k"] as? String == "mute" { input = .mute; break }
+            // Android's keycodes for the remote's keys: Back, Play/Pause.
+            let keys: [String: Int32] = ["back": 4, "playpause": 85]
             guard let code = keys[message["k"] as? String ?? ""] else { return }
             input = .key(code)
         case "assistant":
@@ -294,6 +309,8 @@ final class PhoneInput {
     private var dragStart: TimeInterval = 0, lastMove: TimeInterval = 0, longestGap: TimeInterval = 0, moves = 0
     /// Called on the main queue.
     var onAssistant: (() -> Void)?
+    /// The phone's mute key, for the window's own mute; called on the main queue.
+    var onMute: (() -> Void)?
     /// A touchpad finger, for showing it on the Mac; called on the main queue.
     var onTouch: ((ScrcpySession.TouchAction, Double, Double, Int) -> Void)?
 
@@ -443,6 +460,8 @@ final class PhoneInput {
         case let .key(code):
             session.sendKey(.down, keycode: code)
             session.sendKey(.up, keycode: code)
+        case .mute:
+            DispatchQueue.main.async { self.onMute?() }
         case .assistant:
             DispatchQueue.main.async { self.onAssistant?() }
         }

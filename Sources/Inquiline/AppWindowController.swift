@@ -1038,6 +1038,10 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate, 
         let input = phoneInput
         input.update(session: session, size: displaySize, task: watchedTask)
         input.onAssistant = { [weak self] in self?.askAssistant() }
+        input.onMute = { [weak self] in
+            guard let self else { return }
+            self.setMuted(!UserDefaults.standard.bool(forKey: self.mutedKey))
+        }
         input.onTouch = { [weak self] action, x, y, finger in
             self?.displayView.showPhoneFinger(action, x: x, y: y, finger: finger)
         }
@@ -1048,6 +1052,7 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate, 
             AppLog.write(count > 0 ? "A phone is connected as a remote" : "No phone is connected as a remote")
             if count == 0 { self.phoneInput.unplug() }
         }
+        remote.share(muted: UserDefaults.standard.bool(forKey: mutedKey))
         phoneRemote = remote
         return remote
     }
@@ -1096,17 +1101,22 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate, 
         return controller
     }
 
+    /// The app's own mute, from the Sound popover or a phone: Android's, the Mac's memory of
+    /// it, and what the phone shows.
+    private func setMuted(_ muted: Bool) {
+        UserDefaults.standard.set(muted, forKey: mutedKey)
+        let package = package
+        DispatchQueue.global().async { AndroidRuntime.shared.setMuted(muted, package: package) }
+        phoneRemote?.share(muted: muted)
+    }
+
     /// The app's sound: Android's music volume, which all its apps share as on a phone, its
     /// effects, and this app's own mute, so a game can be quiet while music plays.
     @objc private func showSound(_ sender: Any?) {
         let popover = NSPopover()
         popover.behavior = .transient
-        let mutedKey = mutedKey, package = package
         let view = SoundView(muted: UserDefaults.standard.bool(forKey: mutedKey))
-        view.muteChanged = { muted in
-            UserDefaults.standard.set(muted, forKey: mutedKey)
-            DispatchQueue.global().async { AndroidRuntime.shared.setMuted(muted, package: package) }
-        }
+        view.muteChanged = { [weak self] muted in self?.setMuted(muted) }
         let controller = NSViewController()
         controller.view = view
         popover.contentViewController = controller

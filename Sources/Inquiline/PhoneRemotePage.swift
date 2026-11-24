@@ -49,7 +49,9 @@ enum PhoneRemotePage {
   .round { flex: none; width: 52px; height: 52px; border-radius: 50%; border: 1px solid var(--edge); background: var(--key);
     color: var(--text); display: flex; align-items: center; justify-content: center; padding: 0;
     transition: background .12s, transform .08s; }
-  .round:active, .round.on { background: var(--press); transform: scale(.95); }
+  .round:active { background: var(--press); transform: scale(.95); }
+  /* On, as iOS shows a switched control: white with a dark icon. */
+  .round.on { background: var(--text); color: #000; }
   header { display: flex; align-items: center; gap: 12px; padding: 10px 16px; }
   #pill { flex: 1; min-width: 0; height: 40px; margin: 0 auto; max-width: 60%; display: flex; align-items: center; justify-content: center;
     gap: 8px; padding: 0 16px; border-radius: 20px; background: var(--key); border: 1px solid var(--edge); }
@@ -145,7 +147,7 @@ enum PhoneRemotePage {
   <section id="touch"><div id="surface">Touch as on the app's screen</div></section>
 </main>
 <footer>
-  <button class="round" data-k="mute" aria-label="Mute"><svg viewBox="0 0 24 24"><path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"/><path d="M16 9.5l5 5M21 9.5l-5 5"/></svg></button>
+  <button class="round" data-k="mute" aria-label="Sound"><svg viewBox="0 0 24 24"><path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"/><path class="waves" d="M15.5 9a4 4 0 0 1 0 6M18 6.5a7.5 7.5 0 0 1 0 11"/><path class="cross" style="display:none" d="M16 9.5l5 5M21 9.5l-5 5"/></svg></button>
   <button class="round" id="back" data-k="back" aria-label="Back"><svg viewBox="0 0 24 24" style="width:36%;height:36%"><path d="M15 4.5L7.5 12l7.5 7.5"/></svg></button>
   <button class="round" data-k="playpause" aria-label="Play or Pause"><svg viewBox="0 0 24 24"><path d="M4.5 6v12l7-6z"/><path d="M15 6.5v11M19.5 6.5v11"/></svg></button>
 </footer>
@@ -172,6 +174,7 @@ enum PhoneRemotePage {
   function closeApp() {
     if (app) { app.onclose = null; app.close(); }
     if (peer) { peer.close(); peer = null; }
+    signaled = null;
     channel = null;
     app = null; appPid = 0; ready = false; dot.classList.remove("on");
   }
@@ -180,7 +183,14 @@ enum PhoneRemotePage {
   // and the controller's state go there, so one lost on Wi-Fi doesn't hold back the next. The
   // WebSocket carries the offer and answer, and whatever must arrive: landing, lifting, letting
   // go. Without WebRTC everything goes over the WebSocket.
-  let peer = null, channel = null;
+  let peer = null, channel = null, signaled = null;
+  // The app's own mute, as the Mac has it: the key shows a crossed speaker when it's muted.
+  function muted(on) {
+    const key = document.querySelector('[data-k="mute"]');
+    key.classList.toggle("on", !!on);
+    key.querySelector(".waves").style.display = on ? "none" : "";
+    key.querySelector(".cross").style.display = on ? "" : "none";
+  }
   function startRtc(socket) {
     if (!window.RTCPeerConnection) return;
     try {
@@ -193,8 +203,7 @@ enum PhoneRemotePage {
         if (e.candidate && socket.readyState === 1)
           socket.send(JSON.stringify({ t: "rtc-candidate", cand: e.candidate.candidate, mid: e.candidate.sdpMid }));
       };
-      socket.onmessage = e => {
-        const m = JSON.parse(e.data);
+      signaled = m => {
         if (m.t === "rtc-answer") pc.setRemoteDescription({ type: "answer", sdp: m.sdp }).catch(() => {});
         else if (m.t === "rtc-candidate") pc.addIceCandidate({ candidate: m.cand, sdpMid: m.mid }).catch(() => {});
       };
@@ -208,6 +217,10 @@ enum PhoneRemotePage {
     const socket = new WebSocket("ws://" + location.hostname + ":" + w.port + "/");
     app = socket;
     socket.onopen = () => { socket.send(JSON.stringify({ t: "hello", token: w.token })); ready = true; dot.classList.add("on"); send(true); startRtc(socket); };
+    socket.onmessage = e => {
+      const m = JSON.parse(e.data);
+      if (m.t === "state") muted(m.muted); else if (signaled) signaled(m);
+    };
     socket.onclose = () => { if (app === socket) { app = null; appPid = 0; ready = false; dot.classList.remove("on"); } };
   }
   function message(m, fast) {
