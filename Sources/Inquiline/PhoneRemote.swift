@@ -16,8 +16,9 @@ final class PhoneRemote {
     enum Input {
         /// The controller as it is now: sticks from -1 to 1 (down positive), triggers from 0
         /// to 1, buttons as GamepadBridge's report bits, and the d-pad as its hat (0 centered).
+        /// Each phone is a controller of its own, numbered as its player (0 the first).
         case pad(leftX: Double, leftY: Double, rightX: Double, rightY: Double,
-                 leftTrigger: Double, rightTrigger: Double, buttons: UInt16, hat: UInt8)
+                 leftTrigger: Double, rightTrigger: Double, buttons: UInt16, hat: UInt8, player: Int)
         /// A finger on the touchpad, at a point from 0 to 1 across the app's screen.
         case touch(ScrcpySession.TouchAction, x: Double, y: Double, finger: Int)
         /// A remote's key, pressed and let go: Back or Play/Pause.
@@ -30,6 +31,8 @@ final class PhoneRemote {
     /// Called on the remote's own queue, straight from the network, as a finger's moves must
     /// not wait for the window to draw; PhoneInput takes them from there.
     var onInput: ((Input) -> Void)?
+    /// A phone that was a player is gone: its controller is unplugged. On the remote's queue.
+    var onPlayerGone: ((Int) -> Void)?
     /// How many phones are connected now; called on the main queue.
     var onPhones: ((Int) -> Void)?
 
@@ -175,6 +178,7 @@ final class PhoneRemote {
         if let peer = peers.removeValue(forKey: key) { peer.close() }
         dropScreen(key)
         padSequence[key] = nil
+        if let player = players.removeValue(forKey: key) { onPlayerGone?(player) }
         guard phones.removeValue(forKey: key) != nil else { return }
         let wasTrusted = trusted.remove(key) != nil
         let count = trusted.count
@@ -204,6 +208,12 @@ final class PhoneRemote {
             }
             trusted.insert(key)
             if !shared.isEmpty { signal(shared, key: key) }
+            // Players in the order phones come, the first free number, as consoles number
+            // their controllers; the phone shows its own.
+            var player = 0
+            while players.values.contains(player) { player += 1 }
+            players[key] = player
+            signal(["t": "player", "n": player + 1], key: key)
             let count = trusted.count
             DispatchQueue.main.async { self.onPhones?(count) }
             return
@@ -248,6 +258,8 @@ final class PhoneRemote {
     /// The latest controller state's number per phone, as states come over both ways, and an
     /// older one must not undo a newer one.
     private var padSequence: [ObjectIdentifier: Double] = [:]
+    /// Each phone's player number, from 0.
+    private var players: [ObjectIdentifier: Int] = [:]
 
     // MARK: - The window's picture on the phone
     //
@@ -383,7 +395,8 @@ final class PhoneRemote {
             }
             input = .pad(leftX: number("lx"), leftY: number("ly"), rightX: number("rx"), rightY: number("ry"),
                          leftTrigger: number("lt"), rightTrigger: number("rt"),
-                         buttons: UInt16(clamping: Int(number("b"))), hat: UInt8(clamping: Int(number("hat"))))
+                         buttons: UInt16(clamping: Int(number("b"))), hat: UInt8(clamping: Int(number("hat"))),
+                         player: players[key] ?? 0)
         case "touch":
             let actions: [String: ScrcpySession.TouchAction] = ["down": .down, "move": .move, "up": .up]
             guard let action = actions[message["a"] as? String ?? ""] else { return }
@@ -411,7 +424,8 @@ final class PhoneInput {
     private var session: ScrcpySession?
     private var width = 0, height = 0
     private var task: Int?
-    private var plugged = false
+    /// The players whose controllers are plugged into Android.
+    private var plugged: Set<Int> = []
     private var lastActive = Date.distantPast
     /// How evenly a drag's moves arrive, for the log: the network, not the app, if uneven.
     private var dragStart: TimeInterval = 0, lastMove: TimeInterval = 0, longestGap: TimeInterval = 0, moves = 0
@@ -422,8 +436,9 @@ final class PhoneInput {
     /// A touchpad finger, for showing it on the Mac; called on the main queue.
     var onTouch: ((ScrcpySession.TouchAction, Double, Double, Int) -> Void)?
 
-    /// The phone's controller in Android, after the Mac's own (GamepadBridge, 3 to 10).
-    private static let padID: UInt16 = 11
+    /// The phones' controllers in Android, after the Mac's own (GamepadBridge, 3 to 10): one
+    /// for each player, from 11.
+    private static func padID(_ player: Int) -> UInt16 { UInt16(11 + min(max(player, 0), 7)) }
 
     // MARK: Smooth fingers
     //
@@ -506,31 +521,38 @@ final class PhoneInput {
         if let session, session !== self.session {
             self.session = session
             // A new session's Android screen has no phone controller until the phone uses it.
-            plugged = false
+            plugged = []
         }
         if let size { width = Int(size.width); height = Int(size.height) }
         if let task { self.task = task }
     }
 
-    /// No phone is connected, or the window closes: the controller is unplugged.
+    /// No phone is connected, or the window closes: the controllers are unplugged.
     func unplug() {
         lock.lock(); defer { lock.unlock() }
-        if plugged { session?.sendHIDClose(id: Self.padID) }
-        plugged = false
+        for player in plugged { session?.sendHIDClose(id: Self.padID(player)) }
+        plugged = []
+    }
+
+    /// A player's phone is gone: its controller is unplugged, as one taken out.
+    func unplug(player: Int) {
+        lock.lock(); defer { lock.unlock() }
+        guard plugged.remove(player) != nil else { return }
+        session?.sendHIDClose(id: Self.padID(player))
     }
 
     func handle(_ input: PhoneRemote.Input) {
         lock.lock(); defer { lock.unlock() }
         guard let session else { return }
         switch input {
-        case let .pad(lx, ly, rx, ry, lt, rt, buttons, hat):
+        case let .pad(lx, ly, rx, ry, lt, rt, buttons, hat, player):
             let active = buttons != 0 || hat != 0 || lt > 0 || rt > 0 || lx != 0 || ly != 0 || rx != 0 || ry != 0
             // Plugged in with the first use, so a phone used only as a touchpad isn't a controller.
-            if !plugged {
+            if !plugged.contains(player) {
                 guard active else { return }
-                session.sendHIDOpen(id: Self.padID, vendor: 0x045E, product: 0x028E, name: "Microsoft X-Box 360 Pad",
+                session.sendHIDOpen(id: Self.padID(player), vendor: 0x045E, product: 0x028E, name: "Microsoft X-Box 360 Pad",
                                     descriptor: GamepadBridge.descriptor)
-                plugged = true
+                plugged.insert(player)
             }
             // A controller's buttons go to the app in focus, which a click on the Mac doesn't change
             // and touches on another window do; so the phone's controller brings its app into focus
@@ -539,7 +561,7 @@ final class PhoneInput {
                 DispatchQueue.global().async { AndroidRuntime.shared.focus(task: task) }
             }
             if active { lastActive = Date() }
-            session.sendHIDInput(id: Self.padID, report: GamepadBridge.report(
+            session.sendHIDInput(id: Self.padID(player), report: GamepadBridge.report(
                 leftX: lx, leftY: ly, rightX: rx, rightY: ry, leftTrigger: lt, rightTrigger: rt, buttons: buttons, hat: hat))
         case let .touch(action, x, y, finger):
             guard width > 0, height > 0 else { return }

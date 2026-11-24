@@ -85,6 +85,7 @@ enum PhoneRemotePage {
   .face[data-b="x"] { color: #0a84ff; } .face[data-b="y"] { color: #ffd60a; }
   .bumper { width: calc(var(--w) * 1cqw); height: calc(var(--h) * 1cqh); border-radius: calc(4.5cqh); font-size: calc(4.5cqh); color: var(--dim); }
   .small { font-size: calc(4.5cqh); color: var(--dim); }
+  #player { width: auto; white-space: nowrap; font-size: calc(4cqh); color: var(--dim); letter-spacing: .04em; }
   .stick { border-radius: 50%; background: #0d0d0e; border: 1px solid var(--edge); }
   .knob { position: absolute; left: 50%; top: 50%; width: 46%; height: 46%; margin: -23% 0 0 -23%; border-radius: 50%;
     background: var(--key); border: 1px solid rgba(255,255,255,.12); box-shadow: 0 4px 14px rgba(0,0,0,.6); }
@@ -164,6 +165,7 @@ enum PhoneRemotePage {
       <div class="at key arrow" data-b="left" style="--x:37;--dx:-11;--y:74;--d:10.5">◀</div>
       <div class="at key arrow" data-b="right" style="--x:37;--dx:11;--y:74;--d:10.5">▶</div>
 
+      <div class="at" id="player" style="--x:50;--y:8;--d:8">Player 1</div>
       <div class="at key small" data-b="back" style="--x:43;--y:42;--d:11">⧉</div>
       <div class="at key small" data-b="start" style="--x:57;--y:42;--d:11">≡</div>
 
@@ -262,6 +264,7 @@ enum PhoneRemotePage {
     socket.onmessage = e => {
       const m = JSON.parse(e.data);
       if (m.t === "state") muted(m.muted);
+      else if (m.t === "player") document.getElementById("player").textContent = "Player " + m.n;
       else if (m.t.startsWith("screen-")) screenSignal(m, socket);
       else if (signaled) signaled(m);
     };

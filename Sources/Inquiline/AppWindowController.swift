@@ -1092,6 +1092,7 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate, 
             self?.displayView.showPhoneFinger(action, x: x, y: y, finger: finger)
         }
         remote.onInput = { input.handle($0) }
+        remote.onPlayerGone = { input.unplug(player: $0) }
         // The window's picture on a phone that asks for it.
         remote.screenDevice = displayView.renderer?.device
         remote.onScreen = { [weak self] screen in
