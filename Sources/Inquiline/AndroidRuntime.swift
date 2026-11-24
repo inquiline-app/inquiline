@@ -696,7 +696,9 @@ final class AndroidRuntime {
     /// 32: Android's shared storage is on the Mac, through 9p (inquiline-storage); Samba goes.
     /// 33: Android's sound driver plays from a ring at the clock's pace (after the emulator's), at
     /// the Mac's 48 kHz: about a third of the delay it had.
-    private static let diskRevision = 33
+    /// 34-37: HDR video, tried by testers and withdrawn.
+    /// 38: the video decoders and system services as in 33.
+    private static let diskRevision = 38
 
     private var builtInScreen: ScrcpySession.Screen { ScrcpySession.Resolution.forThisMac.screen(landscape: false) }
     /// The VM's memory map fits the 36-bit (64 GB) address space Apple's M1 and M2 give a VM:
