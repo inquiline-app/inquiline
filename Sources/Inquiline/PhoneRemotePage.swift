@@ -121,7 +121,11 @@ enum PhoneRemotePage {
   /* The window itself, full screen: touched as the app's screen. */
   #screen { position: fixed; inset: 0; z-index: 7; background: #000; display: none; }
   #screen.on { display: block; }
-  #screen video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
+  /* Below the notch, and beside it when turned, as iOS lays apps out (its safe area); the home
+     bar's strip at the bottom stays the picture's, as games draw under it. */
+  #screen video { position: absolute; top: env(safe-area-inset-top); left: env(safe-area-inset-left);
+    right: env(safe-area-inset-right); bottom: 0; width: calc(100% - env(safe-area-inset-left) - env(safe-area-inset-right));
+    height: calc(100% - env(safe-area-inset-top)); object-fit: contain; }
   #hint { position: absolute; left: 50%; bottom: calc(24px + env(safe-area-inset-bottom)); transform: translateX(-50%);
     padding: 8px 16px; border-radius: 18px; background: rgba(28,28,30,.85); color: var(--text); font-size: 14px;
     white-space: nowrap; pointer-events: none; opacity: 0; transition: opacity .4s; z-index: 1; }
@@ -399,7 +403,7 @@ enum PhoneRemotePage {
   // doesn't keeps the phone turned to the picture's shape, as a video does.
   function tellShape() {
     if (showing && windowFits && ready && app && app.readyState === 1)
-      app.send(JSON.stringify({ t: "screen-fit", w: window.innerWidth, h: window.innerHeight }));
+      app.send(JSON.stringify({ t: "screen-fit", w: video.clientWidth, h: video.clientHeight }));
   }
   let shapeTimer = 0;
   window.addEventListener("resize", () => { clearTimeout(shapeTimer); shapeTimer = setTimeout(tellShape, 150); });
