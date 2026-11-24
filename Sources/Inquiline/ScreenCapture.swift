@@ -210,17 +210,26 @@ final class ScreenRecorder {
                                                  mFormatFlags: kAudioFormatFlagIsFloat | kAudioFormatFlagIsPacked,
                                                  mBytesPerPacket: 8, mFramesPerPacket: 1, mBytesPerFrame: 8,
                                                  mChannelsPerFrame: 2, mBitsPerChannel: 32, mReserved: 0)
-        var format: CMAudioFormatDescription?
+        var made: CMAudioFormatDescription?
         guard rate > 0, CMAudioFormatDescriptionCreate(allocator: nil, asbd: &stream, layoutSize: 0, layout: nil,
                                                        magicCookieSize: 0, magicCookie: nil, extensions: nil,
-                                                       formatDescriptionOut: &format) == noErr, let format
+                                                       formatDescriptionOut: &made) == noErr, var format = made
         else { return }
         while let head = read(12) {
             let (hostTime, frames) = head.withUnsafeBytes {
                 (UInt64(littleEndian: $0.loadUnaligned(as: UInt64.self)),
                  Int(UInt32(littleEndian: $0.loadUnaligned(fromByteOffset: 8, as: UInt32.self))))
             }
-            guard frames > 0, frames < 1 << 16, let samples = read(frames * 8) else { return }
+            // The Mac's output changed: its rate, where a time would be (EngineAudio.outputChanged).
+            if frames == 0 {
+                stream.mSampleRate = Double(bitPattern: hostTime)
+                var changed: CMAudioFormatDescription?
+                if CMAudioFormatDescriptionCreate(allocator: nil, asbd: &stream, layoutSize: 0, layout: nil, magicCookieSize: 0,
+                                                  magicCookie: nil, extensions: nil, formatDescriptionOut: &changed) == noErr,
+                   let changed { format = changed }
+                continue
+            }
+            guard frames < 1 << 16, let samples = read(frames * 8) else { return }
             let time = CMClockMakeHostTimeFromSystemUnits(hostTime)
             var block: CMBlockBuffer?
             guard CMBlockBufferCreateWithMemoryBlock(allocator: nil, memoryBlock: nil, blockLength: samples.count,
@@ -312,6 +321,33 @@ final class EngineAudio {
             guard let self, let path = note.object as? String else { return }
             self.queue.async { self.add(listener: path) }
         }
+        // Other speakers (AirPods, a display) may run at another rate: the tap is made anew for
+        // them, as the Mac's own apps follow the output, and its listeners told the new rate.
+        var address = AudioObjectPropertyAddress(mSelector: kAudioHardwarePropertyDefaultSystemOutputDevice,
+                                                 mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
+        AudioObjectAddPropertyListenerBlock(AudioObjectID(kAudioObjectSystemObject), &address, queue) { [weak self] _, _ in
+            self?.outputChanged()
+        }
+    }
+
+    /// On `queue`: the tap on the new output, and its rate to each listener: a piece of no frames
+    /// whose time is the rate (PhoneSound, ScreenRecorder).
+    private func outputChanged() {
+        guard device != kAudioObjectUnknown else { return }
+        stopTap()
+        guard startTap() else { return }
+        var piece = Data(count: 12)
+        piece.withUnsafeMutableBytes { $0.storeBytes(of: format.mSampleRate.bitPattern.littleEndian, as: UInt64.self) }
+        lock.lock()
+        listeners.removeAll { fd in
+            let sent = piece.withUnsafeBytes { Darwin.send(fd, $0.baseAddress!, $0.count, MSG_DONTWAIT) }
+            guard sent != piece.count else { return false }
+            close(fd)
+            silencing.remove(fd)
+            return true
+        }
+        lock.unlock()
+        AppLog.write("Android's sound follows the Mac's new output, at \(Int(format.mSampleRate)) Hz")
     }
 
     private func add(listener path: String) {

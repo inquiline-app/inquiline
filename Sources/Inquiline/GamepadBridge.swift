@@ -6,6 +6,13 @@ import GameController
 /// they stay plugged in while the app runs and drive the app in front: when another app is,
 /// this one sees them at rest, with nothing pressed.
 ///
+/// One controller on the Mac is one controller in Android, as on a phone: every app's window
+/// sees it, but one window alone plugs it in (Android's input goes to the app in front anyway),
+/// the oldest window open, which reads it in the background too (shouldMonitorBackgroundEvents).
+/// Each window plugging its own made one controller two in Android, and a game took the idle
+/// one. It stays plugged as windows come to the front, as a game may only look for controllers
+/// as it starts; with no Inquiline window in front, it's at rest.
+///
 /// A game made only for touch gets its controller through the app's controls instead
 /// (KeyControls): once they have an on-screen stick, aiming or a controller button, the
 /// controller works them, and the game sees no controller.
@@ -24,8 +31,16 @@ final class GamepadBridge {
     init(session: ScrcpySession, controls: KeyControlPlayer) {
         self.session = session
         self.controls = controls
-        let center = NotificationCenter.default
+        GCController.shouldMonitorBackgroundEvents = true
+        let workspace = NSWorkspace.shared.notificationCenter
         observers = [
+            // Another window opening or closing may make this one the controllers' keeper.
+            workspace.addObserver(forName: NSWorkspace.didLaunchApplicationNotification, object: nil, queue: .main) { [weak self] _ in self?.update() },
+            workspace.addObserver(forName: NSWorkspace.didTerminateApplicationNotification, object: nil, queue: .main) { [weak self] _ in self?.update() },
+            workspace.addObserver(forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main) { [weak self] _ in self?.update() },
+        ]
+        let center = NotificationCenter.default
+        observers += [
             center.addObserver(forName: .GCControllerDidConnect, object: nil, queue: .main) { [weak self] _ in self?.update() },
             center.addObserver(forName: .GCControllerDidDisconnect, object: nil, queue: .main) { [weak self] _ in self?.update() },
             center.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in self?.update() },
@@ -36,6 +51,25 @@ final class GamepadBridge {
 
     deinit {
         observers.forEach(NotificationCenter.default.removeObserver)
+        observers.forEach(NSWorkspace.shared.notificationCenter.removeObserver)
+    }
+
+    /// Whether this window keeps the controllers: the oldest of Inquiline's app windows open, of
+    /// this installation (a test copy's windows are its own).
+    private var isKeeper: Bool {
+        let me = NSRunningApplication.current
+        let folder = me.bundleURL?.deletingLastPathComponent()
+        let windows = NSWorkspace.shared.runningApplications.filter {
+            $0.bundleURL?.deletingLastPathComponent() == folder && !$0.isTerminated
+                && $0.bundleIdentifier?.hasPrefix("io.github.inquiline-app.app.") == true
+        }
+        let oldest = windows.min { ($0.launchDate ?? .distantFuture, $0.processIdentifier) < ($1.launchDate ?? .distantFuture, $1.processIdentifier) }
+        return (oldest?.processIdentifier ?? me.processIdentifier) == me.processIdentifier
+    }
+
+    /// Whether one of Inquiline's app windows is in front, where the controller is used.
+    private static var inquilineInFront: Bool {
+        NSWorkspace.shared.frontmostApplication?.bundleIdentifier?.hasPrefix("io.github.inquiline-app.app.") == true
     }
 
     /// Plays a controller state a macro recorded on the plugged controllers, or with nil, puts
@@ -47,7 +81,7 @@ final class GamepadBridge {
             controller.extendedGamepad.map { (ObjectIdentifier(controller), $0) }
         })
         for (key, id) in plugged {
-            let own = pads[key].map { NSApp.isActive ? Self.report($0) : Self.atRest } ?? Self.atRest
+            let own = pads[key].map { Self.inquilineInFront ? Self.report($0) : Self.atRest } ?? Self.atRest
             session.sendHIDInput(id: id, report: report ?? own)
         }
         return true
@@ -65,26 +99,29 @@ final class GamepadBridge {
     func update() {
         let wanted = GCController.controllers().filter { $0.extendedGamepad != nil }
         let usesPad = controls?.set.usesPad == true
+        let keeper = isKeeper
         let wantedKeys = Set(wanted.map(ObjectIdentifier.init))
-        for (key, id) in plugged where !wantedKeys.contains(key) || usesPad {
+        for (key, id) in plugged where !wantedKeys.contains(key) || usesPad || !keeper {
             session.sendHIDClose(id: id)
             plugged[key] = nil
         }
         for controller in wanted {
             let key = ObjectIdentifier(controller)
             guard let pad = controller.extendedGamepad else { continue }
-            if !usesPad, plugged[key] == nil,
+            if keeper, !usesPad, plugged[key] == nil,
                let id = (3...10).map(UInt16.init).first(where: { !plugged.values.contains($0) }) {
                 plugged[key] = id
                 session.sendHIDOpen(id: id, vendor: 0x045E, product: 0x028E, name: "Microsoft X-Box 360 Pad",
                                     descriptor: Self.descriptor)
             }
             pad.valueChangedHandler = { [weak self] pad, _ in
-                guard let self, NSApp.isActive else { return }
-                self.changed(pad, key: key)
+                guard let self else { return }
+                // The keeper sends while any Inquiline window is in front; touch controls work
+                // the pad in their own window only.
+                if self.plugged[key] != nil ? Self.inquilineInFront : NSApp.isActive { self.changed(pad, key: key) }
             }
-            // Going to the back lets go of everything held; coming to the front picks up the pad as it is.
-            if let id = plugged[key] { session.sendHIDInput(id: id, report: NSApp.isActive ? Self.report(pad) : Self.atRest) }
+            // With no Inquiline window in front, the pad is at rest; coming to the front picks it up as it is.
+            if let id = plugged[key] { session.sendHIDInput(id: id, report: Self.inquilineInFront ? Self.report(pad) : Self.atRest) }
             if !NSApp.isActive { release(key) }
         }
     }

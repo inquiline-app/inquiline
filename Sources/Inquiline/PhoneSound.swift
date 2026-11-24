@@ -86,7 +86,16 @@ final class PhoneSound {
                 (UInt64(littleEndian: $0.loadUnaligned(as: UInt64.self)),
                  Int(UInt32(littleEndian: $0.loadUnaligned(fromByteOffset: 8, as: UInt32.self))))
             }
-            guard frames > 0, frames < 1 << 16, let samples = read(frames * 8) else { return }
+            // The Mac's output changed: its rate, where a time would be (EngineAudio.outputChanged).
+            if frames == 0 {
+                rate = Double(bitPattern: hostTime)
+                pending.removeAll()
+                if let converter { AudioConverterDispose(converter) }
+                converter = nil
+                guard rate > 0, makeConverter() else { return }
+                continue
+            }
+            guard frames < 1 << 16, let samples = read(frames * 8) else { return }
             let time = Double(hostTime) * Double(timebase.numer) / Double(timebase.denom) / 1e9
             // The waiting sound's time follows this piece's unless it drifted, as after a gap.
             let expected = pendingStart + Double(pending.count / 2) / rate
