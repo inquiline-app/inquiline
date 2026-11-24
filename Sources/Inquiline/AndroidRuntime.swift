@@ -96,6 +96,7 @@ final class AndroidRuntime {
 
         let start = Date(), deadline = start.addingTimeInterval(180)
         var booted: Date?
+        var fixedFolders = false
         while !isReady() {
             // The ad blocker's authority is trusted as Android starts, before any window opens
             // its app, so none has to start again for it.
@@ -104,6 +105,7 @@ final class AndroidRuntime {
                 // Never held up by it: after a while the apps open anyway, and are started again
                 // once it's trusted, as before.
                 applyBlockedHosts()
+                if !fixedFolders { fixAppFolders(); fixedFolders = true }
                 if !trustAdBlockAuthority(), let since = booted, Date().timeIntervalSince(since) > 15 {
                     _ = try? shell("su 0 setprop \(Self.authorityReady) 1")
                 }
@@ -467,7 +469,10 @@ final class AndroidRuntime {
         packageWatch = socket
         let thread = Thread { [self] in
             var buffer = [UInt8](repeating: 0, count: 4096)
-            while recv(socket, &buffer, buffer.count, 0) > 0 { onPackagesChanged?() }
+            while recv(socket, &buffer, buffer.count, 0) > 0 {
+                onPackagesChanged?()
+                fixAppFoldersSoon()
+            }
             lock.lock()
             if packageWatch == socket { packageWatch = -1 }
             lock.unlock()
@@ -1133,6 +1138,8 @@ final class AndroidRuntime {
     private static let authorityReady = "vendor.inquiline.authority_ready"
 
     private var hostsTimer: DispatchSourceTimer?
+    private var fixingAppFolders = false
+    private let fixingLock = NSLock()
 
     /// Apps Inquiline ended to start again (wasEndedBySystem), one empty file each.
     private static let restartMarks = "/data/local/tmp/inquiline-restart"
@@ -1167,6 +1174,33 @@ final class AndroidRuntime {
     /// rooted phone: the helper's blocked hosts (Lists.buildHosts) laid over Android's hosts file,
     /// which the container makes anew each start, while any app has its ads blocked. Without, the
     /// file is as the container made it.
+    /// Gives each app back its folders in shared storage (Android/data, Android/obb), as Android's
+    /// vold does (fixupAppDir): an app installed again gets a new user ID, and folders an earlier
+    /// install left keep the old one, so the app can't write there and says storage is full.
+    func fixAppFolders() {
+        let script = """
+            pm list packages -U | while read l; do p=${l#package:}; p=${p%% *}; u=${l##*uid:}; u=${u%%,*}; \
+            for d in /data/media/0/Android/data/$p /data/media/0/Android/obb/$p; do \
+            [ -d $d ] && find $d ! -user $u -exec chown $u {} + ; done; done
+            """
+        _ = try? shell("su 0 sh -c '\(script)'")
+    }
+
+    /// fixAppFolders once installing settles, as an app's install changes /data/app several times.
+    private func fixAppFoldersSoon() {
+        fixingLock.lock()
+        defer { fixingLock.unlock() }
+        guard !fixingAppFolders else { return }
+        fixingAppFolders = true
+        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 5) { [weak self] in
+            guard let self else { return }
+            self.fixingLock.lock()
+            self.fixingAppFolders = false
+            self.fixingLock.unlock()
+            self.fixAppFolders()
+        }
+    }
+
     func applyBlockedHosts() {
         let files = "/data/data/\(NotificationBridge.agent)/files"
         let script = """
