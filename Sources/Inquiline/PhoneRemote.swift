@@ -173,6 +173,7 @@ final class PhoneRemote {
 
     private func drop(_ key: ObjectIdentifier) {
         if let peer = peers.removeValue(forKey: key) { peer.close() }
+        dropScreen(key)
         padSequence[key] = nil
         guard phones.removeValue(forKey: key) != nil else { return }
         let wasTrusted = trusted.remove(key) != nil
@@ -215,6 +216,17 @@ final class PhoneRemote {
         case "rtc-candidate":
             guard let candidate = message["cand"] as? String else { return }
             peers[key]?.add(candidate: candidate, mid: message["mid"] as? String)
+        case "screen-start":
+            screenPeers[key]?.close()
+            screenPeers[key] = PhoneScreenPeer(key: key, remote: self)
+        case "screen-answer":
+            guard let sdp = message["sdp"] as? String else { return }
+            screenPeers[key]?.answer(sdp)
+        case "screen-candidate":
+            guard let candidate = message["cand"] as? String else { return }
+            screenPeers[key]?.add(candidate: candidate, mid: message["mid"] as? String)
+        case "screen-stop":
+            dropScreen(key)
         default:
             process(message, key: key)
         }
@@ -232,6 +244,57 @@ final class PhoneRemote {
     /// The latest controller state's number per phone, as states come over both ways, and an
     /// older one must not undo a newer one.
     private var padSequence: [ObjectIdentifier: Double] = [:]
+
+    // MARK: - The window's picture on the phone
+    //
+    // A phone asks for the window's picture; the Mac offers it as an H.264 video track on a
+    // WebRTC connection of its own (as libdatachannel's streamer), which the phone's browser
+    // plays: nothing to install. One encoder (PhoneScreen) for every phone that watches; none
+    // while no phone does.
+
+    /// For the encoder; set by the window.
+    var screenDevice: MTLDevice?
+    /// The window's frames go to the encoder, or stop (nil); called on the main queue.
+    var onScreen: ((PhoneScreen?) -> Void)?
+    private var screenPeers: [ObjectIdentifier: PhoneScreenPeer] = [:]
+    private var screen: PhoneScreen?
+
+    /// On `queue`.
+    fileprivate func screenOpened(_ key: ObjectIdentifier) {
+        if screen == nil, let device = screenDevice, let made = PhoneScreen(device: device) {
+            made.onFrame = { [weak self] data, seconds in
+                self?.queue.async { self?.screenPeers.values.forEach { $0.send(data, seconds: seconds) } }
+            }
+            screen = made
+            DispatchQueue.main.async { self.onScreen?(made) }
+            AppLog.write("A phone shows the window")
+        }
+        screen?.keyFrame()
+    }
+
+    fileprivate func screenTrackOpened(_ peer: PhoneScreenPeer) {
+        queue.async { [self] in
+            guard screenPeers[peer.key] === peer else { return }
+            peer.markOpen()
+            screenOpened(peer.key)
+        }
+    }
+
+    fileprivate func screenWantsKeyFrame() {
+        screen?.keyFrame()
+    }
+
+    /// On `queue`.
+    private func dropScreen(_ key: ObjectIdentifier) {
+        screenPeers.removeValue(forKey: key)?.close()
+        guard screenPeers.isEmpty, let ended = screen else { return }
+        screen = nil
+        DispatchQueue.main.async {
+            self.onScreen?(nil)
+            ended.stop()
+        }
+        AppLog.write("No phone shows the window")
+    }
 
     /// What the phone shows of the window, as the window has it now: whether it's muted. Sent
     /// to every phone when it changes, and to a phone when it connects.
@@ -521,5 +584,106 @@ private final class PhonePeer {
     func close() {
         guard pc >= 0 else { return }
         rtcDeletePeerConnection(pc)
+    }
+}
+
+/// A phone's view of the window: a WebRTC connection the Mac offers, with one H.264 video track
+/// the Mac only sends, packetized by libdatachannel, which also answers the phone's reports:
+/// a lost packet is sent again (NACK), a lost picture brings a key frame (PLI).
+private final class PhoneScreenPeer {
+    private let pc: Int32
+    private var track: Int32 = -1
+    let key: ObjectIdentifier
+    weak var remote: PhoneRemote?
+    private var open = false
+    private var startTimestamp: UInt32 = 0
+    private var pointer: UnsafeMutableRawPointer { Unmanaged.passUnretained(self).toOpaque() }
+
+    init(key: ObjectIdentifier, remote: PhoneRemote) {
+        self.key = key
+        self.remote = remote
+        var config = rtcConfiguration()
+        config.iceServersCount = 0
+        config.disableAutoNegotiation = true
+        pc = rtcCreatePeerConnection(&config)
+        guard pc >= 0 else { return }
+        rtcSetUserPointer(pc, pointer)
+        rtcSetLocalDescriptionCallback(pc) { _, sdp, type, user in
+            guard let user, let sdp, let type else { return }
+            let peer = Unmanaged<PhoneScreenPeer>.fromOpaque(user).takeUnretainedValue()
+            peer.remote?.signal(["t": "screen-offer", "sdp": String(cString: sdp), "type": String(cString: type)], key: peer.key)
+        }
+        rtcSetLocalCandidateCallback(pc) { _, candidate, mid, user in
+            guard let user, let candidate else { return }
+            let peer = Unmanaged<PhoneScreenPeer>.fromOpaque(user).takeUnretainedValue()
+            peer.remote?.signal(["t": "screen-candidate", "cand": String(cString: candidate),
+                                 "mid": mid.map { String(cString: $0) } ?? "video"], key: peer.key)
+        }
+        let ssrc = UInt32.random(in: 1...UInt32.max)
+        startTimestamp = UInt32.random(in: 0...UInt32.max)
+        // Constrained baseline, as the encoder makes it: every phone's browser plays it in hardware.
+        track = "video".withCString { mid in
+            "screen".withCString { name in
+                "profile-level-id=42e01f;packetization-mode=1;level-asymmetry-allowed=1".withCString { profile in
+                    var init_ = rtcTrackInit(direction: RTC_DIRECTION_SENDONLY, codec: RTC_CODEC_H264, payloadType: 96,
+                                             ssrc: ssrc, mid: mid, name: name, msid: name, trackId: name, profile: profile)
+                    return rtcAddTrackEx(pc, &init_)
+                }
+            }
+        }
+        guard track >= 0 else { return }
+        rtcSetUserPointer(track, pointer)
+        var packetizer = rtcPacketizerInit()
+        packetizer.ssrc = ssrc
+        packetizer.payloadType = 96
+        packetizer.clockRate = 90_000
+        packetizer.timestamp = startTimestamp
+        packetizer.nalSeparator = RTC_NAL_SEPARATOR_LENGTH
+        "screen".withCString { cname in
+            packetizer.cname = cname
+            rtcSetH264Packetizer(track, &packetizer)
+        }
+        rtcChainRtcpSrReporter(track)
+        rtcChainRtcpNackResponder(track, 512)
+        rtcChainPliHandler(track) { _, user in
+            guard let user else { return }
+            let peer = Unmanaged<PhoneScreenPeer>.fromOpaque(user).takeUnretainedValue()
+            peer.remote?.screenWantsKeyFrame()
+        }
+        rtcSetOpenCallback(track) { _, user in
+            guard let user else { return }
+            let peer = Unmanaged<PhoneScreenPeer>.fromOpaque(user).takeUnretainedValue()
+            peer.remote?.screenTrackOpened(peer)
+        }
+        rtcSetLocalDescription(pc, "offer")
+    }
+
+    /// On the remote's queue.
+    fileprivate func markOpen() { open = true }
+
+    func answer(_ sdp: String) {
+        guard pc >= 0 else { return }
+        rtcSetRemoteDescription(pc, sdp, "answer")
+    }
+
+    func add(candidate: String, mid: String?) {
+        guard pc >= 0 else { return }
+        rtcAddRemoteCandidate(pc, candidate, mid ?? "video")
+    }
+
+    /// An access unit, at its time from the stream's start. On the remote's queue.
+    func send(_ data: Data, seconds: Double) {
+        guard open, track >= 0 else { return }
+        var elapsed: UInt32 = 0
+        rtcTransformSecondsToTimestamp(track, seconds, &elapsed)
+        rtcSetTrackRtpTimestamp(track, startTimestamp &+ elapsed)
+        data.withUnsafeBytes { bytes in
+            _ = rtcSendMessage(track, bytes.baseAddress?.assumingMemoryBound(to: CChar.self), Int32(bytes.count))
+        }
+    }
+
+    func close() {
+        open = false
+        if pc >= 0 { rtcDeletePeerConnection(pc) }
     }
 }

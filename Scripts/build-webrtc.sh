@@ -1,8 +1,9 @@
 #!/bin/bash
-# Builds WebRTC data channels for the phone remote (PhoneRemote): libdatachannel (MPL 2.0) with
-# its libjuice and usrsctp, over mbedTLS (Apache 2.0), all static, into .build/webrtc, which
-# Package.swift links. No media, no WebSocket: only the data channel, which carries a phone's
-# input over UDP and drops a late packet rather than holding the ones after it.
+# Builds WebRTC for the phone remote (PhoneRemote): libdatachannel (MPL 2.0) with its libjuice,
+# usrsctp and libSRTP, over mbedTLS (Apache 2.0), all static, into .build/webrtc, which
+# Package.swift links. The data channel carries a phone's input over UDP and drops a late
+# packet rather than holding the ones after it; media (libSRTP) carries a window's picture to
+# the phone (PhoneScreen). No WebSocket.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 ROOT=$PWD
@@ -26,10 +27,10 @@ cmake --install "$SRC/mbedtls/build" >/dev/null
 
 cmake -S "$SRC/libdatachannel" -B "$SRC/libdatachannel/build" -G Ninja -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_OSX_ARCHITECTURES=arm64 -DUSE_MBEDTLS=ON -DMbedTLS_ROOT="$OUT" -DCMAKE_PREFIX_PATH="$OUT" \
-    -DNO_MEDIA=ON -DNO_WEBSOCKET=ON -DNO_EXAMPLES=ON -DNO_TESTS=ON -DBUILD_SHARED_LIBS=OFF \
+    -DNO_MEDIA=OFF -DNO_WEBSOCKET=ON -DNO_EXAMPLES=ON -DNO_TESTS=ON -DBUILD_SHARED_LIBS=OFF \
     -DCMAKE_INSTALL_PREFIX="$OUT" >/dev/null
 cmake --build "$SRC/libdatachannel/build" >/dev/null
 cmake --install "$SRC/libdatachannel/build" >/dev/null
 # The static library's own dependencies, which its install leaves in the build tree.
-find "$SRC/libdatachannel/build" -name "libjuice*.a" -o -name "libusrsctp*.a" | while read -r lib; do cp "$lib" "$OUT/lib/"; done
+find "$SRC/libdatachannel/build" -name "libjuice*.a" -o -name "libusrsctp*.a" -o -name "libsrtp2*.a" | while read -r lib; do cp "$lib" "$OUT/lib/"; done
 ls "$OUT/lib"

@@ -57,6 +57,8 @@ final class FrameRenderer {
     private let captureLock = NSLock()
     private var lastSlot = -1
     private var recorder: ScreenRecorder?
+    /// A phone showing the window (PhoneRemote's screen).
+    private var screen: PhoneScreen?
 
     init?() {
         guard let device = MTLCreateSystemDefaultDevice(), let queue = device.makeCommandQueue(),
@@ -149,6 +151,7 @@ final class FrameRenderer {
         captureLock.lock()
         lastSlot = slot
         recorder?.record(textures[slot], in: commands)
+        screen?.take(textures[slot], in: commands)
         captureLock.unlock()
         var frame = textures[slot]
         if let scaler = upscaler() {
@@ -318,6 +321,17 @@ final class FrameRenderer {
         self.recorder = recorder
         if let recorder, lastSlot >= 0, lastSlot < textures.count, let commands = queue.makeCommandBuffer() {
             recorder.record(textures[lastSlot], in: commands)
+            commands.commit()
+        }
+    }
+
+    /// Each picture from now goes to a phone too, starting with the one shown; nil stops.
+    func mirror(to screen: PhoneScreen?) {
+        captureLock.lock()
+        defer { captureLock.unlock() }
+        self.screen = screen
+        if let screen, lastSlot >= 0, lastSlot < textures.count, let commands = queue.makeCommandBuffer() {
+            screen.take(textures[lastSlot], in: commands)
             commands.commit()
         }
     }

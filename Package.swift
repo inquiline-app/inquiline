@@ -26,7 +26,7 @@ let package = Package(
             linkerSettings: [.unsafeFlags(["-Xlinker", "-rpath", "-Xlinker", "@executable_path/../Frameworks",
                                            "-Xlinker", "-weak_framework", "-Xlinker", "Sparkle",
                                            "-L\(Context.packageDirectory)/.build/webrtc/lib"]),
-                             .linkedLibrary("datachannel"), .linkedLibrary("juice"), .linkedLibrary("usrsctp"),
+                             .linkedLibrary("datachannel"), .linkedLibrary("juice"), .linkedLibrary("usrsctp"), .linkedLibrary("srtp2"),
                              .linkedLibrary("mbedtls"), .linkedLibrary("mbedx509"), .linkedLibrary("mbedcrypto"),
                              .linkedLibrary("everest"), .linkedLibrary("p256m"), .linkedLibrary("c++")]
         )

@@ -118,6 +118,14 @@ enum PhoneRemotePage {
   .app img { width: 62px; height: 62px; border-radius: 22%; background: var(--key); transition: transform .1s; }
   .app:active img { transform: scale(.9); }
   .app span { font-size: 12px; color: var(--text); max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  /* The window itself, full screen: touched as the app's screen. */
+  #screen { position: fixed; inset: 0; z-index: 7; background: #000; display: none; }
+  #screen.on { display: block; }
+  #screen video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
+  #screen #leave { position: absolute; top: calc(10px + env(safe-area-inset-top)); left: calc(10px + env(safe-area-inset-left));
+    width: 40px; height: 40px; opacity: .45; z-index: 1; }
+  #screen #leave:active { opacity: 1; }
+  #screen #waiting { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: var(--dim); }
   #gone { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.88); align-items: center; justify-content: center;
     text-align: center; padding: 24px; z-index: 9; }
   #gone.on { display: flex; }
@@ -128,6 +136,7 @@ enum PhoneRemotePage {
 <header>
   <button class="round" id="mode" aria-label="Controller"><svg viewBox="0 0 24 24"><path d="M7 8h10a4 4 0 0 1 4 4.5l-.6 3.6a2.3 2.3 0 0 1-4 1L14.6 15H9.4l-1.8 2.1a2.3 2.3 0 0 1-4-1L3 12.5A4 4 0 0 1 7 8z"/><path d="M7.5 10.5v3M6 12h3"/><circle cx="16" cy="11.2" r=".6"/><circle cx="17.6" cy="12.8" r=".6"/></svg></button>
   <div id="pill"><span id="dot"></span><span id="title">Connecting…</span><svg viewBox="0 0 24 24"><path d="M9 5l7 7-7 7"/></svg></div>
+  <button class="round" id="show" aria-label="Show the window"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="12" rx="2"/><path d="M8 20h8M12 17v3"/></svg></button>
   <button class="round" id="assistant" aria-label="Gemini"><svg viewBox="0 0 24 24"><path d="M12 3c.6 4.6 3.4 7.4 9 9-5.6 1.6-8.4 4.4-9 9-.6-4.6-3.4-7.4-9-9 5.6-1.6 8.4-4.4 9-9z"/></svg></button>
 </header>
 <main>
@@ -168,6 +177,8 @@ enum PhoneRemotePage {
   <button class="round" id="back" data-k="back" aria-label="Back"><svg viewBox="0 0 24 24" style="width:36%;height:36%"><path d="M15 4.5L7.5 12l7.5 7.5"/></svg></button>
   <button class="round" data-k="playpause" aria-label="Play or Pause"><svg viewBox="0 0 24 24"><path d="M4.5 6v12l7-6z"/><path d="M15 6.5v11M19.5 6.5v11"/></svg></button>
 </footer>
+<div id="screen"><div id="waiting">Connecting to the window…</div><video id="video" autoplay playsinline muted></video>
+  <button class="round" id="leave" aria-label="Back to the remote"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>
 <div id="apps"><div id="sheet"><div id="grab"></div><div id="grid"></div></div></div>
 <div id="gone"><div><div id="goneText">Not connected to your Mac.</div><button onclick="location.reload()">Try Again</button></div></div>
 <script>
@@ -195,6 +206,7 @@ enum PhoneRemotePage {
   function closeApp() {
     if (app) { app.onclose = null; app.close(); }
     if (peer) { peer.close(); peer = null; }
+    endScreen();
     signaled = null;
     channel = null;
     app = null; appPid = 0; ready = false; dot.classList.remove("on");
@@ -237,10 +249,16 @@ enum PhoneRemotePage {
     appPid = w.pid;
     const socket = new WebSocket("ws://" + location.hostname + ":" + w.port + "/");
     app = socket;
-    socket.onopen = () => { socket.send(JSON.stringify({ t: "hello", token: w.token })); ready = true; dot.classList.add("on"); send(true); startRtc(socket); };
+    socket.onopen = () => {
+      socket.send(JSON.stringify({ t: "hello", token: w.token })); ready = true; dot.classList.add("on"); send(true); startRtc(socket);
+      // Showing the window, the phone shows the one now in front.
+      if (showing) askScreen();
+    };
     socket.onmessage = e => {
       const m = JSON.parse(e.data);
-      if (m.t === "state") muted(m.muted); else if (signaled) signaled(m);
+      if (m.t === "state") muted(m.muted);
+      else if (m.t.startsWith("screen-")) screenSignal(m, socket);
+      else if (signaled) signaled(m);
     };
     socket.onclose = () => { if (app === socket) { app = null; appPid = 0; ready = false; dot.classList.remove("on"); } };
   }
@@ -371,6 +389,70 @@ enum PhoneRemotePage {
   pad.addEventListener("pointerup", lift);
   pad.addEventListener("pointercancel", lift);
 
+  // The window on the phone: the Mac offers its picture as a video track on a connection of its
+  // own (PhoneRemote's screen), which plays here; touches on it are the app's, where they land.
+  const screenView = document.getElementById("screen"), video = document.getElementById("video");
+  const waiting = document.getElementById("waiting");
+  let showing = false, screenPc = null;
+  function askScreen() {
+    endScreen();
+    waiting.style.display = "";
+    if (ready && app && app.readyState === 1) app.send(JSON.stringify({ t: "screen-start" }));
+  }
+  function endScreen() {
+    if (screenPc) { screenPc.close(); screenPc = null; }
+    video.srcObject = null;
+  }
+  function screenSignal(m, socket) {
+    if (m.t === "screen-offer") {
+      endScreen();
+      const pc = new RTCPeerConnection({ iceServers: [] });
+      screenPc = pc;
+      pc.ontrack = e => {
+        video.srcObject = e.streams[0] || new MediaStream([e.track]);
+        video.play().catch(() => {});
+      };
+      pc.onicecandidate = e => {
+        if (e.candidate && socket.readyState === 1)
+          socket.send(JSON.stringify({ t: "screen-candidate", cand: e.candidate.candidate, mid: e.candidate.sdpMid }));
+      };
+      pc.setRemoteDescription({ type: "offer", sdp: m.sdp })
+        .then(() => pc.createAnswer()).then(a => pc.setLocalDescription(a))
+        .then(() => socket.send(JSON.stringify({ t: "screen-answer", sdp: pc.localDescription.sdp }))).catch(() => {});
+    } else if (m.t === "screen-candidate" && screenPc) {
+      screenPc.addIceCandidate({ candidate: m.cand, sdpMid: m.mid }).catch(() => {});
+    }
+  }
+  video.addEventListener("playing", () => { waiting.style.display = "none"; });
+  document.getElementById("show").onclick = () => {
+    buzz();
+    showing = true;
+    screenView.classList.add("on");
+    askScreen();
+    // Sideways for a sideways app, as a phone turns for a video.
+    const lock = () => {
+      if (!screen.orientation || !screen.orientation.lock || !video.videoWidth) return;
+      screen.orientation.lock(video.videoWidth > video.videoHeight ? "landscape" : "portrait").catch(() => {});
+    };
+    video.onresize = lock;
+  };
+  document.getElementById("leave").onclick = () => {
+    buzz();
+    showing = false;
+    screenView.classList.remove("on");
+    if (ready && app && app.readyState === 1) app.send(JSON.stringify({ t: "screen-stop" }));
+    endScreen();
+    if (screen.orientation && screen.orientation.lock && !padMode && screen.orientation.unlock) screen.orientation.unlock();
+  };
+  /// Where the picture is within the video element, as it's fitted (object-fit: contain).
+  function pictureBox() {
+    const box = video.getBoundingClientRect();
+    if (!video.videoWidth) return box;
+    const scale = Math.min(box.width / video.videoWidth, box.height / video.videoHeight);
+    const width = video.videoWidth * scale, height = video.videoHeight * scale;
+    return { left: box.left + (box.width - width) / 2, top: box.top + (box.height - height) / 2, width, height };
+  }
+
   // Touchpad: each finger lands where it is on the app's screen. While down, every finger's
   // place goes once a frame, in step with the screen, whether it moved or not: the phone only
   // reports a finger that moves, and the Mac must tell a finger held still from a gap in the
@@ -380,30 +462,33 @@ enum PhoneRemotePage {
   function place(spot, p) { if (spot) { spot.style.left = (p.x * 100) + "%"; spot.style.top = (p.y * 100) + "%"; } }
   let ticking = false;
   function where(e) {
-    const box = surface.getBoundingClientRect();
-    return { x: (e.clientX - box.left) / box.width, y: (e.clientY - box.top) / box.height };
+    const box = e.currentTarget === video ? pictureBox() : surface.getBoundingClientRect();
+    return { x: Math.min(Math.max((e.clientX - box.left) / box.width, 0), 1),
+             y: Math.min(Math.max((e.clientY - box.top) / box.height, 0), 1) };
   }
   function tick() {
     if (places.size === 0) { ticking = false; return; }
     places.forEach((p, id) => message({ t: "touch", a: "move", id, x: p.x, y: p.y }, true));
     requestAnimationFrame(tick);
   }
-  surface.addEventListener("pointerdown", e => {
+  function land(e) {
     let id = 0; while ([...touches.values()].includes(id)) id++;
-    touches.set(e.pointerId, id); surface.setPointerCapture(e.pointerId);
+    touches.set(e.pointerId, id); e.currentTarget.setPointerCapture(e.pointerId);
     const p = where(e);
     places.set(id, p);
-    const spot = document.createElement("div");
-    spot.className = "spot"; spots.set(id, spot); surface.appendChild(spot); place(spot, p);
+    if (e.currentTarget === surface) {
+      const spot = document.createElement("div");
+      spot.className = "spot"; spots.set(id, spot); surface.appendChild(spot); place(spot, p);
+    }
     message({ t: "touch", a: "down", id, x: p.x, y: p.y });
     if (!ticking) { ticking = true; requestAnimationFrame(tick); }
     e.preventDefault();
-  });
-  surface.addEventListener("pointermove", e => {
+  }
+  function slide(e) {
     if (!touches.has(e.pointerId)) return;
     const id = touches.get(e.pointerId), p = where(e);
     places.set(id, p); place(spots.get(id), p);
-  });
+  }
   function release(e) {
     if (!touches.has(e.pointerId)) return;
     const id = touches.get(e.pointerId);
@@ -413,8 +498,12 @@ enum PhoneRemotePage {
     message({ t: "touch", a: "up", id, x: p.x, y: p.y });
     touches.delete(e.pointerId);
   }
-  surface.addEventListener("pointerup", release);
-  surface.addEventListener("pointercancel", release);
+  for (const target of [surface, video]) {
+    target.addEventListener("pointerdown", land);
+    target.addEventListener("pointermove", slide);
+    target.addEventListener("pointerup", release);
+    target.addEventListener("pointercancel", release);
+  }
 
   // Never zoom: a double tap or a pinch is input for the app, not for the page.
   ["gesturestart", "gesturechange", "gestureend", "dblclick"].forEach(type =>

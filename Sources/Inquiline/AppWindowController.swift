@@ -1046,6 +1046,9 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate, 
             self?.displayView.showPhoneFinger(action, x: x, y: y, finger: finger)
         }
         remote.onInput = { input.handle($0) }
+        // The window's picture on a phone that asks for it.
+        remote.screenDevice = displayView.renderer?.device
+        remote.onScreen = { [weak self] screen in self?.displayView.renderer?.mirror(to: screen) }
         remote.onPhones = { [weak self] count in
             guard let self else { return }
             self.phoneStatus?.stringValue = Self.phoneStatusText(count)
