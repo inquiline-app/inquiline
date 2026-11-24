@@ -20,6 +20,8 @@ final class PhoneRemote {
                  leftTrigger: Double, rightTrigger: Double, buttons: UInt16, hat: UInt8)
         /// A finger on the touchpad, at a point from 0 to 1 across the app's screen.
         case touch(ScrcpySession.TouchAction, x: Double, y: Double, finger: Int)
+        /// A remote's key, pressed and let go: Back, Play/Pause or Mute.
+        case key(Int32)
         case assistant
     }
 
@@ -265,6 +267,11 @@ final class PhoneRemote {
             guard let action = actions[message["a"] as? String ?? ""] else { return }
             input = .touch(action, x: min(max(number("x"), 0), 1), y: min(max(number("y"), 0), 1),
                            finger: Int(number("id")) % 10)
+        case "key":
+            // Android's keycodes for the remote's keys: Back, Play/Pause, Mute.
+            let keys: [String: Int32] = ["back": 4, "playpause": 85, "mute": 164]
+            guard let code = keys[message["k"] as? String ?? ""] else { return }
+            input = .key(code)
         case "assistant":
             input = .assistant
         default:
@@ -433,6 +440,9 @@ final class PhoneInput {
                 fingers[finger] = nil
                 send(.up, x: x, y: y, finger: finger)
             }
+        case let .key(code):
+            session.sendKey(.down, keycode: code)
+            session.sendKey(.up, keycode: code)
         case .assistant:
             DispatchQueue.main.async { self.onAssistant?() }
         }

@@ -17,7 +17,7 @@ enum PhoneRemotePage {
     static func manifest(token: String) -> String {
         """
         {"name": "Inquiline Remote", "short_name": "Inquiline", "start_url": "/\(token)", "scope": "/\(token)",
-         "display": "fullscreen", "orientation": "landscape", "background_color": "#111214", "theme_color": "#111214",
+         "display": "fullscreen", "orientation": "any", "background_color": "#000000", "theme_color": "#000000",
          "icons": [{"src": "/\(token)/icon.png", "sizes": "512x512", "type": "image/png"}]}
         """
     }
@@ -34,76 +34,85 @@ enum PhoneRemotePage {
 <meta name="apple-mobile-web-app-title" content="Inquiline">
 <link rel="manifest" href="/{{TOKEN}}/manifest.json">
 <link rel="apple-touch-icon" href="/{{TOKEN}}/icon.png">
-<meta name="theme-color" content="#111214">
+<meta name="theme-color" content="#000000">
 <title>Inquiline</title>
 <style>
-  :root { --bg: #0e0f11; --panel: #17181b; --key: #24262b; --edge: #33363d; --text: #f2f2f4; --dim: #8b8d94;
-    --glow: rgba(120,160,255,.55); }
+  /* After Apple's TV Remote: black, soft grey rounds with thin icons, one large touch surface. */
+  :root { --bg: #000; --key: #1c1c1e; --press: #3a3a3c; --edge: rgba(255,255,255,.07); --text: #f5f5f7; --dim: #8e8e93;
+    --glow: rgba(10,132,255,.5); }
   * { box-sizing: border-box; -webkit-user-select: none; user-select: none; -webkit-tap-highlight-color: transparent;
       touch-action: none; -webkit-touch-callout: none; }
   html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
     font: 15px -apple-system, system-ui, sans-serif; overflow: hidden; touch-action: none; }
   body { display: flex; flex-direction: column; padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); }
-  header { display: flex; align-items: center; gap: 10px; padding: 6px 14px; }
-  #dot { width: 9px; height: 9px; border-radius: 50%; background: #e5534b; flex: none; }
-  #dot.on { background: #3fb950; }
-  #title { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1; }
-  nav { display: flex; gap: 3px; background: var(--panel); border-radius: 9px; padding: 3px; }
-  nav button { border: 0; background: none; color: var(--dim); font: inherit; font-size: 14px; padding: 5px 12px; border-radius: 7px; }
-  nav button.on { background: var(--key); color: var(--text); }
-  #assistant { border: 0; border-radius: 16px; padding: 6px 14px; font: inherit; font-size: 14px; font-weight: 600;
-    color: var(--text); background: linear-gradient(135deg, #4b7bec, #a55eea); }
+  svg { width: 46%; height: 46%; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; pointer-events: none; }
+  .round { flex: none; width: 52px; height: 52px; border-radius: 50%; border: 1px solid var(--edge); background: var(--key);
+    color: var(--text); display: flex; align-items: center; justify-content: center; padding: 0;
+    transition: background .12s, transform .08s; }
+  .round:active, .round.on { background: var(--press); transform: scale(.95); }
+  header { display: flex; align-items: center; gap: 12px; padding: 10px 16px; }
+  #pill { flex: 1; min-width: 0; height: 40px; margin: 0 auto; max-width: 60%; display: flex; align-items: center; justify-content: center;
+    gap: 8px; padding: 0 16px; border-radius: 20px; background: var(--key); border: 1px solid var(--edge); }
+  #dot { width: 8px; height: 8px; border-radius: 50%; background: #ff453a; flex: none; }
+  #dot.on { background: #30d158; }
+  #title { font-weight: 600; font-size: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #assistant { color: #bf9dff; }
   main { flex: 1; position: relative; }
   section { position: absolute; inset: 0; display: none; }
   section.on { display: block; }
+  footer { display: flex; align-items: center; justify-content: center; gap: 28px; padding: 14px 16px 18px; }
+  footer .round { width: 64px; height: 64px; }
+  footer #back { width: 84px; height: 84px; }
+  body.pad footer { display: none; }
 
   /* The controller, laid out as an Xbox pad on a body of one shape, 2.1 wide for 1 high, as
      large as fits and centered, so it looks the same on any phone and nothing stretches:
      positions in percent of the body's width and height, sizes in its height. */
   #deck { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
-    width: min(100%, calc((100vh - 52px) * 2.1)); aspect-ratio: 2.1 / 1; max-height: 100%; container-type: size; }
+    width: min(100%, calc((100vh - 72px) * 2.1)); aspect-ratio: 2.1 / 1; max-height: 100%; container-type: size; }
   .at { position: absolute; left: calc(var(--x) * 1cqw + var(--dx, 0) * 1cqh); top: calc(var(--y) * 1cqh);
     width: calc(var(--d) * 1cqh); height: calc(var(--d) * 1cqh); transform: translate(-50%, -50%); }
   .key { display: flex; align-items: center; justify-content: center; background: var(--key);
-    border: 1.5px solid var(--edge); color: var(--text); font-weight: 700; border-radius: 50%;
-    box-shadow: 0 3px 0 rgba(0,0,0,.45); transition: transform .05s, box-shadow .05s, background .05s; }
-  .key.on { transform: translate(-50%, -50%) scale(.94); box-shadow: 0 0 calc(4cqh) var(--glow); background: #2e3138; }
+    border: 1px solid var(--edge); color: var(--text); font-weight: 600; border-radius: 50%;
+    transition: transform .06s, background .06s, box-shadow .06s; }
+  .key.on { transform: translate(-50%, -50%) scale(.93); background: var(--press); box-shadow: 0 0 calc(4cqh) var(--glow); }
   .face { font-size: calc(7cqh); }
-  .face[data-b="a"] { color: #5cd65c; } .face[data-b="b"] { color: #ff5c5c; }
-  .face[data-b="x"] { color: #4fa3ff; } .face[data-b="y"] { color: #ffd23f; }
-  .bumper { width: calc(var(--w) * 1cqw); height: calc(var(--h) * 1cqh); border-radius: calc(3cqh); font-size: calc(4.5cqh); color: var(--dim); }
+  .face[data-b="a"] { color: #30d158; } .face[data-b="b"] { color: #ff453a; }
+  .face[data-b="x"] { color: #0a84ff; } .face[data-b="y"] { color: #ffd60a; }
+  .bumper { width: calc(var(--w) * 1cqw); height: calc(var(--h) * 1cqh); border-radius: calc(4.5cqh); font-size: calc(4.5cqh); color: var(--dim); }
   .small { font-size: calc(4.5cqh); color: var(--dim); }
-  .stick { border-radius: 50%; background: radial-gradient(circle, #1b1c20 55%, #121316 100%); border: 1.5px solid var(--edge); }
+  .stick { border-radius: 50%; background: #0d0d0e; border: 1px solid var(--edge); }
   .knob { position: absolute; left: 50%; top: 50%; width: 46%; height: 46%; margin: -23% 0 0 -23%; border-radius: 50%;
-    background: radial-gradient(circle at 40% 35%, #3a3d45, #24262b 70%); border: 1.5px solid var(--edge);
-    box-shadow: 0 4px 10px rgba(0,0,0,.5); }
-  .stick.on .knob { box-shadow: 0 0 calc(4cqh) var(--glow); }
+    background: var(--key); border: 1px solid rgba(255,255,255,.12); box-shadow: 0 4px 14px rgba(0,0,0,.6); }
+  .stick.on .knob { background: var(--press); box-shadow: 0 0 calc(4cqh) var(--glow); }
   .dpad { pointer-events: none; }
-  .dpad::before, .dpad::after { content: ""; position: absolute; background: var(--key); border: 1.5px solid var(--edge);
-    border-radius: calc(2.5cqh); }
+  .dpad::before, .dpad::after { content: ""; position: absolute; background: var(--key); border: 1px solid var(--edge);
+    border-radius: calc(3cqh); }
   .dpad::before { left: 33%; top: 0; width: 34%; height: 100%; }
   .dpad::after { left: 0; top: 33%; width: 100%; height: 34%; }
-  .arrow { background: transparent; border: 0; box-shadow: none; border-radius: calc(2cqh); font-size: calc(4.5cqh); color: var(--dim); }
-  .arrow.on { background: rgba(120,160,255,.25); box-shadow: none; }
+  .arrow { background: transparent; border: 0; border-radius: calc(2cqh); font-size: calc(4cqh); color: var(--dim); }
+  .arrow.on { background: rgba(10,132,255,.25); box-shadow: none; }
   #turn { display: none; position: absolute; inset: 0; align-items: center; justify-content: center; text-align: center;
     color: var(--dim); padding: 24px; }
   @media (orientation: portrait) { #deck { display: none; } #turn { display: flex; } }
-  #surface { position: absolute; inset: 4px 10px 10px; border-radius: 16px; background: var(--panel); border: 1.5px solid var(--edge);
-    display: flex; align-items: center; justify-content: center; color: var(--dim); }
-  #gone { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.85); align-items: center; justify-content: center;
+  #surface { position: absolute; inset: 0 16px; border-radius: 28px; background: var(--key); border: 1px solid var(--edge);
+    display: flex; align-items: center; justify-content: center; color: #48484a; font-size: 14px; overflow: hidden; }
+  #surface .spot { position: absolute; width: 64px; height: 64px; margin: -32px 0 0 -32px; border-radius: 50%;
+    background: radial-gradient(circle, rgba(255,255,255,.16), rgba(255,255,255,0) 70%); pointer-events: none; }
+  #gone { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.88); align-items: center; justify-content: center;
     text-align: center; padding: 24px; z-index: 9; }
   #gone.on { display: flex; }
-  #gone button { margin-top: 14px; border: 0; border-radius: 10px; padding: 9px 18px; font: inherit; background: var(--key); color: var(--text); }
+  #gone button { margin-top: 14px; border: 0; border-radius: 20px; padding: 10px 22px; font: inherit; font-weight: 600; background: var(--key); color: var(--text); }
 </style>
 </head>
 <body>
 <header>
-  <span id="dot"></span><span id="title">Connecting…</span>
-  <button id="assistant">✨ Gemini</button>
-  <nav><button data-tab="pad" class="on">Controller</button><button data-tab="touch">Touchpad</button></nav>
+  <button class="round" id="mode" aria-label="Controller"><svg viewBox="0 0 24 24"><path d="M7 8h10a4 4 0 0 1 4 4.5l-.6 3.6a2.3 2.3 0 0 1-4 1L14.6 15H9.4l-1.8 2.1a2.3 2.3 0 0 1-4-1L3 12.5A4 4 0 0 1 7 8z"/><path d="M7.5 10.5v3M6 12h3"/><circle cx="16" cy="11.2" r=".6"/><circle cx="17.6" cy="12.8" r=".6"/></svg></button>
+  <div id="pill"><span id="dot"></span><span id="title">Connecting…</span></div>
+  <button class="round" id="assistant" aria-label="Gemini"><svg viewBox="0 0 24 24"><path d="M12 3c.6 4.6 3.4 7.4 9 9-5.6 1.6-8.4 4.4-9 9-.6-4.6-3.4-7.4-9-9 5.6-1.6 8.4-4.4 9-9z"/></svg></button>
 </header>
 <main>
-  <section id="pad" class="on">
+  <section id="pad">
     <div id="turn">Turn your phone sideways to use it as a controller.</div>
     <div id="deck">
       <!-- Laid out as an Xbox pad: left stick high, d-pad and right stick low and inward, the
@@ -133,8 +142,13 @@ enum PhoneRemotePage {
       <div class="at stick" data-s="r" style="--x:63;--y:74;--d:34"><div class="knob"></div></div>
     </div>
   </section>
-  <section id="touch"><div id="surface">Touch here as on the app's screen</div></section>
+  <section id="touch"><div id="surface">Touch as on the app's screen</div></section>
 </main>
+<footer>
+  <button class="round" data-k="mute" aria-label="Mute"><svg viewBox="0 0 24 24"><path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"/><path d="M16 9.5l5 5M21 9.5l-5 5"/></svg></button>
+  <button class="round" id="back" data-k="back" aria-label="Back"><svg viewBox="0 0 24 24" style="width:36%;height:36%"><path d="M15 4.5L7.5 12l7.5 7.5"/></svg></button>
+  <button class="round" data-k="playpause" aria-label="Play or Pause"><svg viewBox="0 0 24 24"><path d="M4.5 6v12l7-6z"/><path d="M15 6.5v11M19.5 6.5v11"/></svg></button>
+</footer>
 <div id="gone"><div><div id="goneText">Not connected to your Mac.</div><button onclick="location.reload()">Try Again</button></div></div>
 <script>
 (() => {
@@ -203,12 +217,27 @@ enum PhoneRemotePage {
   }
   function buzz() { if (navigator.vibrate) navigator.vibrate(8); }
 
-  // Tabs
-  document.querySelectorAll("nav button").forEach(b => b.onclick = () => {
-    document.querySelectorAll("nav button").forEach(x => x.classList.toggle("on", x === b));
-    document.querySelectorAll("section").forEach(s => s.classList.toggle("on", s.id === b.dataset.tab));
-  });
+  // Touchpad first, as Apple's remote; the round key at the top left turns it into a
+  // controller and back. The phone remembers which.
+  const modeKey = document.getElementById("mode");
+  let padMode = false;
+  try { padMode = localStorage.getItem("mode") === "pad"; } catch (e) {}
+  function show() {
+    document.body.classList.toggle("pad", padMode);
+    modeKey.classList.toggle("on", padMode);
+    document.getElementById("pad").classList.toggle("on", padMode);
+    document.getElementById("touch").classList.toggle("on", !padMode);
+  }
+  show();
+  modeKey.onclick = () => {
+    buzz(); padMode = !padMode; show();
+    try { localStorage.setItem("mode", padMode ? "pad" : "touch"); } catch (e) {}
+    if (screen.orientation && screen.orientation.lock && (document.fullscreenElement || document.webkitFullscreenElement)) {
+      if (padMode) screen.orientation.lock("landscape").catch(() => {}); else if (screen.orientation.unlock) screen.orientation.unlock();
+    }
+  };
   document.getElementById("assistant").onclick = () => { buzz(); message({ t: "assistant" }); };
+  document.querySelectorAll("footer [data-k]").forEach(b => b.onclick = () => { buzz(); message({ t: "key", k: b.dataset.k }); });
 
   // Controller: GamepadBridge's report bits and hat.
   const bits = { a: 0x0001, b: 0x0002, x: 0x0008, y: 0x0010, lb: 0x0040, rb: 0x0080, back: 0x0400, start: 0x0800 };
@@ -284,7 +313,8 @@ enum PhoneRemotePage {
   // reports a finger that moves, and the Mac must tell a finger held still from a gap in the
   // Wi-Fi, which it bridges. A finger landing or lifting goes at once.
   const surface = document.getElementById("surface");
-  const touches = new Map(), places = new Map();
+  const touches = new Map(), places = new Map(), spots = new Map();
+  function place(spot, p) { if (spot) { spot.style.left = (p.x * 100) + "%"; spot.style.top = (p.y * 100) + "%"; } }
   let ticking = false;
   function where(e) {
     const box = surface.getBoundingClientRect();
@@ -300,18 +330,22 @@ enum PhoneRemotePage {
     touches.set(e.pointerId, id); surface.setPointerCapture(e.pointerId);
     const p = where(e);
     places.set(id, p);
+    const spot = document.createElement("div");
+    spot.className = "spot"; spots.set(id, spot); surface.appendChild(spot); place(spot, p);
     message({ t: "touch", a: "down", id, x: p.x, y: p.y });
     if (!ticking) { ticking = true; requestAnimationFrame(tick); }
     e.preventDefault();
   });
   surface.addEventListener("pointermove", e => {
     if (!touches.has(e.pointerId)) return;
-    places.set(touches.get(e.pointerId), where(e));
+    const id = touches.get(e.pointerId), p = where(e);
+    places.set(id, p); place(spots.get(id), p);
   });
   function release(e) {
     if (!touches.has(e.pointerId)) return;
     const id = touches.get(e.pointerId);
     places.delete(id);
+    if (spots.has(id)) { spots.get(id).remove(); spots.delete(id); }
     const p = where(e);
     message({ t: "touch", a: "up", id, x: p.x, y: p.y });
     touches.delete(e.pointerId);
@@ -330,14 +364,14 @@ enum PhoneRemotePage {
   }, { passive: false });
   document.addEventListener("touchmove", e => { if (e.touches.length > 1 || e.scale !== 1) e.preventDefault(); }, { passive: false });
 
-  // Full screen with the first touch, where the browser allows it, as an app; a controller
+  // Full screen with the first touch, where the browser allows it, as an app; the controller
   // also stays sideways.
   document.addEventListener("pointerdown", () => {
     const root = document.documentElement;
     const request = root.requestFullscreen || root.webkitRequestFullscreen;
     if (request && !(document.fullscreenElement || document.webkitFullscreenElement)) {
       Promise.resolve(request.call(root, { navigationUI: "hide" })).then(() => {
-        if (screen.orientation && screen.orientation.lock) screen.orientation.lock("landscape").catch(() => {});
+        if (padMode && screen.orientation && screen.orientation.lock) screen.orientation.lock("landscape").catch(() => {});
       }).catch(() => {});
     }
   }, { capture: true });
