@@ -103,6 +103,7 @@ final class AndroidRuntime {
                 booted = booted ?? Date()
                 // Never held up by it: after a while the apps open anyway, and are started again
                 // once it's trusted, as before.
+                applyBlockedHosts()
                 if !trustAdBlockAuthority(), let since = booted, Date().timeIntervalSince(since) > 15 {
                     _ = try? shell("su 0 setprop \(Self.authorityReady) 1")
                 }
@@ -131,6 +132,16 @@ final class AndroidRuntime {
         NotificationBridge.shared.start()
         AndroidFiles.watch()
         followMac()
+        // The blocked hosts, again whenever the helper's lists change or ads are blocked in an app
+        // for the first time (applyBlockedHosts only rewrites a changed file).
+        let hostsTimer = DispatchSource.makeTimerSource(queue: .global(qos: .utility))
+        hostsTimer.schedule(deadline: .now() + 30, repeating: 600)
+        hostsTimer.setEventHandler { [weak self] in
+            guard let self, self.isRunning else { return }
+            self.applyBlockedHosts()
+        }
+        hostsTimer.resume()
+        self.hostsTimer = hostsTimer
         // As Android starts again without it, for apps whose ads are blocked; the helper may still
         // be making it, the first time after an update.
         DispatchQueue.global().async {
@@ -1121,6 +1132,8 @@ final class AndroidRuntime {
     /// starts has to be ended to see the authority.
     private static let authorityReady = "vendor.inquiline.authority_ready"
 
+    private var hostsTimer: DispatchSourceTimer?
+
     /// Apps Inquiline ended to start again (wasEndedBySystem), one empty file each.
     private static let restartMarks = "/data/local/tmp/inquiline-restart"
 
@@ -1148,6 +1161,22 @@ final class AndroidRuntime {
         // phone: those running with their ads blocked then start again, their windows reopening
         // them (restartMarks), so they don't refuse every site the proxy opens for them.
         return (try? shell("su 0 sh -c '\(script)'"))?.contains("trusted") == true
+    }
+
+    /// Ad and tracking servers no app or service of Android reaches, as AdAway blocks them on a
+    /// rooted phone: the helper's blocked hosts (Lists.buildHosts) laid over Android's hosts file,
+    /// which the container makes anew each start, while any app has its ads blocked. Without, the
+    /// file is as the container made it.
+    func applyBlockedHosts() {
+        let files = "/data/data/\(NotificationBridge.agent)/files"
+        let script = """
+            H=/system/etc/hosts; O=/dev/inquiline-hosts.orig; B=\(files)/hosts-block; \
+            [ -f $O ] || cp $H $O; \
+            if [ -s \(files)/adblock ] && [ -s $B ]; then \
+            [ "$(cat /dev/inquiline-hosts.stamp 2>/dev/null)" = "$(stat -c %Y $B)" ] || { cat $O $B > $H && stat -c %Y $B > /dev/inquiline-hosts.stamp; }; \
+            elif [ -f /dev/inquiline-hosts.stamp ]; then cat $O > $H && rm /dev/inquiline-hosts.stamp; fi
+            """
+        _ = try? shell("su 0 sh -c '\(script)'")
     }
 
     /// How far the sound leads the picture on the Mac, for Android's sound driver to make up
