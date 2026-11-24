@@ -317,6 +317,30 @@ final class AndroidDisplayView: NSView {
         if controls.isCaught && event.keyCode == 53 { controls.releasePointer(); return }
         if touchObserver != nil && event.keyCode == 53 { onEscapeWhileRecording?(); return }
         if controls.key(Int(event.keyCode), down: true) { return }
+        keyObserver?(Self.stroke(event), true)
+        sendKeyDown(event)
+    }
+
+    /// Told of each key that goes to the app, while a macro records (ControlsOverlay).
+    var keyObserver: ((KeyControl.KeyStroke, Bool) -> Void)?
+
+    private static func stroke(_ event: NSEvent) -> KeyControl.KeyStroke {
+        KeyControl.KeyStroke(code: Int(event.keyCode), flags: event.modifierFlags.rawValue,
+                             characters: event.characters, plain: event.charactersIgnoringModifiers)
+    }
+
+    /// A key a macro recorded, played to the app as it was pressed.
+    func replayKey(_ stroke: KeyControl.KeyStroke, down: Bool) {
+        guard let event = NSEvent.keyEvent(with: down ? .keyDown : .keyUp, location: .zero,
+                                           modifierFlags: NSEvent.ModifierFlags(rawValue: stroke.flags),
+                                           timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window?.windowNumber ?? 0,
+                                           context: nil, characters: stroke.characters ?? "", charactersIgnoringModifiers: stroke.plain ?? "",
+                                           isARepeat: false, keyCode: UInt16(stroke.code))
+        else { return }
+        if down { sendKeyDown(event) } else { sendKeyUp(event) }
+    }
+
+    private func sendKeyDown(_ event: NSEvent) {
         // Esc stays Android's Back, as Android's keyboards give it nothing else to do. A
         // character made with Option goes as text, unless the layout's Option is a PC's AltGr.
         if event.keyCode != 53, !event.modifierFlags.contains(.option) || keyboard?.optionIsAltGr == true,
@@ -337,6 +361,11 @@ final class AndroidDisplayView: NSView {
 
     override func keyUp(with event: NSEvent) {
         if controls.key(Int(event.keyCode), down: false) { return }
+        keyObserver?(Self.stroke(event), false)
+        sendKeyUp(event)
+    }
+
+    private func sendKeyUp(_ event: NSEvent) {
         // Let go even with Option now held: a key pressed through the keyboard is let go there.
         if event.keyCode != 53, keyboard?.key(event.keyCode, down: false) == true { return }
         // Only keys pressed in this window: Esc that cancels a screenshot comes up here alone, and

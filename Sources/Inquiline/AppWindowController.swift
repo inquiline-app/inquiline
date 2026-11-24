@@ -151,6 +151,7 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate, 
             // after, the controls are what they were until Done.
             displayView.controls.releaseAll()
             displayView.touchObserver = observer
+            displayView.keyObserver = observer == nil ? nil : { [unowned self] stroke, down in overlay.recordKey(stroke, down: down) }
             if observer != nil {
                 displayView.controls.set = working
                 gamepads?.update()

@@ -29,6 +29,8 @@ final class ControlsOverlay: NSView {
         var lastDown: Date?
         /// Fingers down now: their step, when they touched down, when they last moved.
         var fingers: [Int64: (step: Int, down: Date, moved: Date)] = [:]
+        /// Keys down now, that go to the app: their step and when they were pressed.
+        var keys: [Int: (step: Int, down: Date)] = [:]
     }
     private var live: Live?
     /// Lets the display view tell this overlay of the touches going to the app, or stop; the
@@ -174,7 +176,8 @@ final class ControlsOverlay: NSView {
             let step = KeyControl.Step(x: x, y: y, delay: ms(since: current.lastDown))
             set.controls[current.index].steps?.append(step)
             let count = set.controls[current.index].steps?.count ?? 0
-            if count == 1 {
+            // The macro sits where its first touch lands.
+            if set.controls[current.index].steps?.filter(\.isTouch).count == 1 {
                 set.controls[current.index].x = x
                 set.controls[current.index].y = y
             }
@@ -203,14 +206,35 @@ final class ControlsOverlay: NSView {
         needsDisplay = true
     }
 
+    /// A key that went to the app while recording, as arrow keys in a game that takes them.
+    func recordKey(_ stroke: KeyControl.KeyStroke, down: Bool) {
+        guard var current = live, current.index < set.controls.count else { return }
+        let now = Date()
+        if down {
+            // A held key repeats; it's one press.
+            guard current.keys[stroke.code] == nil else { return }
+            let delay = current.lastDown.map { min(Int(now.timeIntervalSince($0) * 1000), 10_000) } ?? 0
+            set.controls[current.index].steps?.append(KeyControl.Step(x: 0, y: 0, delay: delay, key: stroke))
+            current.lastDown = now
+            current.keys[stroke.code] = ((set.controls[current.index].steps?.count ?? 1) - 1, now)
+        } else {
+            guard let held = current.keys.removeValue(forKey: stroke.code) else { return }
+            set.controls[current.index].steps?[held.step].hold = Int(now.timeIntervalSince(held.down) * 1000)
+        }
+        live = current
+    }
+
     @objc private func stopTapped() { stopRecording() }
 
     private func stopRecording(showSettings: Bool = true) {
         guard let current = live else { return }
         live = nil
         observeTouches?(set, nil)
-        // Fingers still down when it stopped lift where they are.
+        // Fingers and keys still down when it stopped let go there.
         if current.index < set.controls.count {
+            for held in current.keys.values {
+                set.controls[current.index].steps?[held.step].hold = Int(Date().timeIntervalSince(held.down) * 1000)
+            }
             for (_, held) in current.fingers {
                 guard var step = set.controls[current.index].steps?[held.step] else { continue }
                 step.hold = Int(Date().timeIntervalSince(held.down) * 1000)
@@ -336,7 +360,7 @@ final class ControlsOverlay: NSView {
 
     private func control(at point: CGPoint) -> Int? {
         if let index = set.controls.indices.reversed().first(where: { index in
-            set.controls[index].kind == .macro && (set.controls[index].steps ?? []).contains { step in
+            set.controls[index].kind == .macro && (set.controls[index].steps ?? []).filter(\.isTouch).contains { step in
                 let c = viewPoint(KeyControl(kind: .macro, x: step.x, y: step.y))
                 return hypot(point.x - c.x, point.y - c.y) <= 14
             }
@@ -361,7 +385,7 @@ final class ControlsOverlay: NSView {
     /// The macro tap under the pointer.
     private func macroStep(at point: CGPoint) -> (control: Int, step: Int)? {
         for index in set.controls.indices.reversed() where set.controls[index].kind == .macro {
-            for (n, step) in (set.controls[index].steps ?? []).enumerated() {
+            for (n, step) in (set.controls[index].steps ?? []).enumerated() where step.isTouch {
                 let c = viewPoint(KeyControl(kind: .macro, x: step.x, y: step.y))
                 if hypot(point.x - c.x, point.y - c.y) <= 14 { return (index, n) }
             }
@@ -543,7 +567,7 @@ final class ControlsOverlay: NSView {
         }
         let alpha: CGFloat = isEditing ? 1 : 0.55
         for (index, control) in set.controls.enumerated() {
-            // A macro shows from its first tap on; while one records, only it does.
+            // A macro shows from its first step on; while one records, only it does.
             if control.kind == .macro, (control.steps ?? []).isEmpty { continue }
             if let live, live.index != index { continue }
             let c = viewPoint(control), r = radius(control)
@@ -560,7 +584,9 @@ final class ControlsOverlay: NSView {
                 text("Mouse", at: c, size: 11, alpha: alpha)
             case .macro:
                 // Numbered dots joined in their order; the key on the first.
-                let points = (control.steps ?? []).map { viewPoint(KeyControl(kind: .macro, x: $0.x, y: $0.y)) }
+                // Its touches; keys it presses show in its settings.
+                let touches = (control.steps ?? []).filter(\.isTouch)
+                let points = touches.map { viewPoint(KeyControl(kind: .macro, x: $0.x, y: $0.y)) }
                 let path = NSBezierPath()
                 for (n, p) in points.enumerated() { if n == 0 { path.move(to: p) } else { path.line(to: p) } }
                 NSColor.white.withAlphaComponent(0.6 * alpha).setStroke()
@@ -568,7 +594,7 @@ final class ControlsOverlay: NSView {
                 path.setLineDash([4, 3], count: 2, phase: 0)
                 path.stroke()
                 // A swipe's slide, solid, from where it lands.
-                for (n, step) in (control.steps ?? []).enumerated() {
+                for (n, step) in touches.enumerated() {
                     guard let slide = step.path, !slide.isEmpty else { continue }
                     let trail = NSBezierPath()
                     trail.move(to: points[n])
@@ -587,7 +613,7 @@ final class ControlsOverlay: NSView {
                     dot.stroke()
                     text("\(n + 1)", at: p, size: 11, alpha: alpha)
                 }
-                if !points.isEmpty { text((control.label ?? "?") + " 1", at: c, size: 11, alpha: alpha) }
+                text((control.label ?? "?") + (points.isEmpty ? "" : " 1"), at: c, size: 11, alpha: alpha)
             case .stick:
                 text("W", at: CGPoint(x: c.x, y: c.y - r + 12), size: 13, alpha: alpha)
                 text("S", at: CGPoint(x: c.x, y: c.y + r - 12), size: 13, alpha: alpha)

@@ -29,6 +29,11 @@ struct KeyControl: Codable, Equatable {
         var hold: Int?
         /// Where the finger slides while down, each point a time after it touched down.
         var path: [PathPoint]?
+        /// A key pressed to the app instead of a touch, as arrow keys in a game that takes the
+        /// keyboard: held for `hold`. Its x and y mean nothing.
+        var key: KeyStroke?
+
+        var isTouch: Bool { key == nil }
 
         func moved(dx: Double, dy: Double) -> Step {
             var step = self
@@ -37,6 +42,14 @@ struct KeyControl: Codable, Equatable {
             step.path = path?.map { PathPoint(x: $0.x + dx, y: $0.y + dy, t: $0.t) }
             return step
         }
+    }
+
+    /// A Mac key as the app got it.
+    struct KeyStroke: Codable, Equatable {
+        var code: Int
+        var flags: UInt
+        var characters: String?
+        var plain: String?
     }
 
     struct PathPoint: Codable, Equatable {
@@ -283,9 +296,21 @@ final class KeyControlPlayer {
         var at = 0.0, end = 0.0
         for (index, step) in steps.enumerated() {
             if index > 0 { at += Double(macro.interval ?? step.delay) }
+            let start = at
+            if let stroke = step.key {
+                let up = start + max(Double(step.hold ?? 0), 40 * speed)
+                end = max(end, up)
+                DispatchQueue.main.asyncAfter(deadline: later(start)) { [weak self] in
+                    guard let self, rounds[key] == round else { return }
+                    view?.replayKey(stroke, down: true)
+                }
+                DispatchQueue.main.asyncAfter(deadline: later(up)) { [weak self] in
+                    self?.view?.replayKey(stroke, down: false)
+                }
+                continue
+            }
             // Fingers in turn, so a quick touch can land before the last one lifts.
             let finger = Self.macroFinger + Int64(index % 4)
-            let start = at
             let down = CGPoint(x: step.x * size.width, y: step.y * size.height)
             DispatchQueue.main.asyncAfter(deadline: later(start)) { [weak self] in
                 guard let self, rounds[key] == round else { return }

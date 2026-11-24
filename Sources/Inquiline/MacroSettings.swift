@@ -118,7 +118,12 @@ final class MacroSettings: NSViewController, NSPopoverDelegate {
         let steps = macro.steps ?? []
         let length = steps.reduce(0) { $0 + $1.delay } + (steps.last?.hold ?? 40)
         let seconds = Double(length) / 1000 / current
-        summary.stringValue = "\(steps.count) touch\(steps.count == 1 ? "" : "es"), \(String(format: "%.1f", seconds)) s"
+        let touches = steps.filter(\.isTouch).count, keys = steps.count - touches
+        var parts: [String] = []
+        if touches > 0 { parts.append("\(touches) touch\(touches == 1 ? "" : "es")") }
+        if keys > 0 { parts.append("\(keys) key\(keys == 1 ? "" : "s")") }
+        parts.append(String(format: "%.1f s", seconds))
+        summary.stringValue = parts.joined(separator: ", ")
     }
 
     private static func format(_ speed: Double) -> String {
