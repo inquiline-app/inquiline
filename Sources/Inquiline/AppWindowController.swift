@@ -1089,8 +1089,14 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate, 
         // The window's picture on a phone that asks for it.
         remote.screenDevice = displayView.renderer?.device
         remote.onScreen = { [weak self] screen in
-            self?.displayView.renderer?.mirror(to: screen)
-            if screen == nil { self?.unfitFromPhone() }
+            guard let self else { return }
+            self.displayView.renderer?.mirror(to: screen)
+            if screen == nil { self.unfitFromPhone() }
+            // Typed by touch on the phone: Android's own keyboard shows in the picture.
+            if let display = self.watchedDisplay.flatMap({ Int($0.filter(\.isNumber)) }) { // "Display #2"
+                let on = screen != nil
+                DispatchQueue.global().async { AndroidRuntime.shared.setTouchKeyboard(on, display: display) }
+            }
         }
         remote.windowFits = isFlexible
         remote.onScreenFit = { [weak self] shape in self?.fit(phoneShape: shape) }

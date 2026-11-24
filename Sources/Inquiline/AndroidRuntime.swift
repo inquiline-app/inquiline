@@ -321,6 +321,16 @@ final class AndroidRuntime {
         _ = try? shell("CLASSPATH=$(pm path \(agent) | cut -d: -f2) app_process / \(agent).Focus \(task)")
     }
 
+    /// Android's on-screen keyboard on a task's screen, for a phone that shows the window and
+    /// types by touch, as on a phone; or none, as Inquiline's windows type with the Mac's
+    /// keyboard. Android hides it while a keyboard is plugged in (the Mac's, KeyboardBridge)
+    /// unless asked to show it anyway, as its own setting does ("Show on-screen keyboard").
+    func setTouchKeyboard(_ on: Bool, display: Int) {
+        let agent = NotificationBridge.agent
+        _ = try? shell("CLASSPATH=$(pm path \(agent) | cut -d: -f2) app_process / \(agent).Keyboard \(display) \(on ? 0 : 2); "
+                       + "settings put secure show_ime_with_hard_keyboard \(on ? 1 : 0)")
+    }
+
     /// When no window shows Android, the assistant stops listening (Gemini Live): on a phone its
     /// bar and notification show while it talks, here nothing would, nor let it be ended.
     func endListeningAssistant() {
