@@ -852,6 +852,10 @@ final class AndroidRuntime {
         env["INQUILINE_STORAGE"] = AndroidFiles.folder.path
         // MoltenVK's errors only; its warnings would fill the log.
         env["MVK_CONFIG_LOG_LEVEL"] = "1"
+        // A GPU error in one app's work (a timeout, or the Mac's GPU discarding others' work as it
+        // recovers) drops that work only, as a phone's GPU driver does, instead of losing every
+        // app's device; MoltenVK still loses it all when the GPU itself is gone.
+        env["MVK_CONFIG_RESUME_LOST_DEVICE"] = "1"
         process.environment = env
         process.standardOutput = FileHandle.nullDevice
         process.standardError = Self.engineLog() ?? FileHandle.nullDevice
