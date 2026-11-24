@@ -288,6 +288,14 @@ final class PhoneRemote {
         }
     }
 
+    fileprivate func screenPeerLost(_ peer: PhoneScreenPeer) {
+        queue.async { [self] in
+            guard screenPeers[peer.key] === peer else { return }
+            AppLog.write("The phone showing the window is gone")
+            dropScreen(peer.key)
+        }
+    }
+
     fileprivate func screenWantsKeyFrame() {
         screen?.keyFrame()
     }
@@ -628,6 +636,13 @@ private final class PhoneScreenPeer {
             peer.remote?.signal(["t": "screen-candidate", "cand": String(cString: candidate),
                                  "mid": mid.map { String(cString: $0) } ?? "video"], key: peer.key)
         }
+        // A phone gone without a word (locked, out of Wi-Fi, out of battery): the connection
+        // stops answering, and the window is the Mac's again.
+        rtcSetStateChangeCallback(pc) { _, state, user in
+            guard let user, state == RTC_DISCONNECTED || state == RTC_FAILED || state == RTC_CLOSED else { return }
+            let peer = Unmanaged<PhoneScreenPeer>.fromOpaque(user).takeUnretainedValue()
+            peer.remote?.screenPeerLost(peer)
+        }
         let ssrc = UInt32.random(in: 1...UInt32.max)
         startTimestamp = UInt32.random(in: 0...UInt32.max)
         // Constrained baseline, as the encoder makes it: every phone's browser plays it in hardware.
@@ -693,6 +708,11 @@ private final class PhoneScreenPeer {
 
     func close() {
         open = false
-        if pc >= 0 { rtcDeletePeerConnection(pc) }
+        // No callback may reach this peer once it's gone.
+        if track >= 0 { rtcSetUserPointer(track, nil) }
+        if pc >= 0 {
+            rtcSetUserPointer(pc, nil)
+            rtcDeletePeerConnection(pc)
+        }
     }
 }

@@ -476,6 +476,10 @@ enum PhoneRemotePage {
   for (const type of ["pointerup", "pointercancel"]) {
     video.addEventListener(type, e => { swipe.delete(e.pointerId); lastY.delete(e.pointerId); });
   }
+  // The phone locked, or the page left: the window is the Mac's again, and the remote shows
+  // when the page comes back.
+  document.addEventListener("visibilitychange", () => { if (document.hidden && showing) leaveScreen(); });
+  window.addEventListener("pagehide", () => { if (showing) leaveScreen(); });
   function leaveScreen() {
     // The fingers lift for the app too.
     touches.forEach((id, pointer) => {
