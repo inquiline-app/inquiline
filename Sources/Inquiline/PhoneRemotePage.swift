@@ -122,9 +122,10 @@ enum PhoneRemotePage {
   #screen { position: fixed; inset: 0; z-index: 7; background: #000; display: none; }
   #screen.on { display: block; }
   #screen video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
-  #screen #leave { position: absolute; top: calc(10px + env(safe-area-inset-top)); left: calc(10px + env(safe-area-inset-left));
-    width: 40px; height: 40px; opacity: .45; z-index: 1; }
-  #screen #leave:active { opacity: 1; }
+  #hint { position: absolute; left: 50%; bottom: calc(24px + env(safe-area-inset-bottom)); transform: translateX(-50%);
+    padding: 8px 16px; border-radius: 18px; background: rgba(28,28,30,.85); color: var(--text); font-size: 14px;
+    white-space: nowrap; pointer-events: none; opacity: 0; transition: opacity .4s; z-index: 1; }
+  #hint.on { opacity: 1; }
   #screen #waiting { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: var(--dim); }
   #gone { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.88); align-items: center; justify-content: center;
     text-align: center; padding: 24px; z-index: 9; }
@@ -178,7 +179,7 @@ enum PhoneRemotePage {
   <button class="round" data-k="playpause" aria-label="Play or Pause"><svg viewBox="0 0 24 24"><path d="M4.5 6v12l7-6z"/><path d="M15 6.5v11M19.5 6.5v11"/></svg></button>
 </footer>
 <div id="screen"><div id="waiting">Connecting to the window…</div><video id="video" autoplay playsinline muted></video>
-  <button class="round" id="leave" aria-label="Back to the remote"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>
+  <div id="hint">Swipe up with three fingers to go back</div></div>
 <div id="apps"><div id="sheet"><div id="grab"></div><div id="grid"></div></div></div>
 <div id="gone"><div><div id="goneText">Not connected to your Mac.</div><button onclick="location.reload()">Try Again</button></div></div>
 <script>
@@ -428,6 +429,7 @@ enum PhoneRemotePage {
     buzz();
     showing = true;
     screenView.classList.add("on");
+    showHint();
     askScreen();
     // Sideways for a sideways app, as a phone turns for a video.
     const lock = () => {
@@ -436,7 +438,40 @@ enum PhoneRemotePage {
     };
     video.onresize = lock;
   };
-  document.getElementById("leave").onclick = () => {
+  // Back to the remote: three fingers swiped up, a gesture apps hardly use, as iPadOS and
+  // Android take three fingers for the system's own.
+  const hint = document.getElementById("hint");
+  let hintTimer = 0;
+  function showHint() {
+    hint.classList.add("on");
+    clearTimeout(hintTimer);
+    hintTimer = setTimeout(() => hint.classList.remove("on"), 2500);
+  }
+  const swipe = new Map(); // pointerId -> {y, time}
+  video.addEventListener("pointerdown", e => swipe.set(e.pointerId, { y: e.clientY, time: e.timeStamp }));
+  video.addEventListener("pointermove", e => {
+    if (swipe.size < 3 || !showing) return;
+    const now = e.timeStamp;
+    const all = [...swipe.entries()];
+    const latest = all.every(([id, s]) => now - s.time < 800);
+    const moved = all.map(([id, s]) => (lastY.get(id) ?? s.y) - s.y);
+    lastY.set(e.pointerId, e.clientY);
+    if (latest && moved.length >= 3 && moved.every(d => d < -60)) leaveScreen();
+  });
+  const lastY = new Map();
+  for (const type of ["pointerup", "pointercancel"]) {
+    video.addEventListener(type, e => { swipe.delete(e.pointerId); lastY.delete(e.pointerId); });
+  }
+  function leaveScreen() {
+    // The fingers lift for the app too.
+    touches.forEach((id, pointer) => {
+      const p = places.get(id) || { x: 0, y: 0 };
+      places.delete(id);
+      message({ t: "touch", a: "up", id, x: p.x, y: p.y });
+    });
+    touches.clear();
+    swipe.clear();
+    lastY.clear();
     buzz();
     showing = false;
     screenView.classList.remove("on");
