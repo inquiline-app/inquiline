@@ -192,6 +192,10 @@ final class NotificationBridge: NSObject, UNUserNotificationCenterDelegate {
         // Android's key: user|package|id|tag|uid.
         let parts = key.split(separator: "|", omittingEmptySubsequences: false)
         let package = parts.count > 1 ? String(parts[1]) : (body["appName"] as? String ?? "")
+        // Android's "keyboard configured" (SystemMessage NOTE_SELECT_KEYBOARD_LAYOUT, 19): about
+        // the keyboard each window plugs in for the Mac's, whose layout already follows the
+        // Mac's; nothing for the user to do.
+        if package == "android", parts.count > 2, parts[2] == "19" { return }
         let title = body["title"] as? String ?? ""
         let text = body["text"] as? String ?? ""
         // The time the app gives the message too: the same words sent again are a new message.
