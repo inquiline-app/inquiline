@@ -61,7 +61,7 @@ const std::vector<Kind>& Kinds() {
           C2Config::LEVEL_AVC_5_2}},
         {2, "vp9", "c2.inquiline.vp9.decoder", MEDIA_MIMETYPE_VIDEO_VP9,
          C2Config::PROFILE_VP9_0, C2Config::LEVEL_VP9_5,
-         {C2Config::PROFILE_VP9_0},
+         {C2Config::PROFILE_VP9_0, C2Config::PROFILE_VP9_2},
          {C2Config::LEVEL_VP9_1, C2Config::LEVEL_VP9_1_1, C2Config::LEVEL_VP9_2, C2Config::LEVEL_VP9_2_1,
           C2Config::LEVEL_VP9_3, C2Config::LEVEL_VP9_3_1, C2Config::LEVEL_VP9_4, C2Config::LEVEL_VP9_4_1,
           C2Config::LEVEL_VP9_5, C2Config::LEVEL_VP9_5_1, C2Config::LEVEL_VP9_5_2, C2Config::LEVEL_VP9_6}},
@@ -236,6 +236,44 @@ public:
                 .withSetter(ColorAspectsSetter, mDefaultColorAspects, mCodedColorAspects)
                 .build());
 
+        // HDR10's static metadata, as AOSP's HEVC and AV1 decoders take it: it makes Android list
+        // the HDR profiles (Codec2InfoBuilder), so apps offer HDR video. The Mac tone-maps the
+        // pictures to SDR as it decodes them (engine patch 0111).
+        auto hdrDefault = [] {
+            auto* info = new C2StreamHdrStaticInfo::output(0u);
+            info->mastering = {
+                    .red = {.x = 0.708, .y = 0.292},
+                    .green = {.x = 0.170, .y = 0.797},
+                    .blue = {.x = 0.131, .y = 0.046},
+                    .white = {.x = 0.3127, .y = 0.3290},
+                    .maxLuminance = 0,
+                    .minLuminance = 0,
+            };
+            info->maxCll = 0;
+            info->maxFall = 0;
+            return info;
+        };
+        mHdrStaticInfo.reset(hdrDefault());
+        addParameter(
+                DefineParam(mHdrStaticInfo, C2_PARAMKEY_HDR_STATIC_INFO)
+                .withDefault(hdrDefault())
+                .withFields({
+                    C2F(mHdrStaticInfo, mastering.red.x).inRange(0, 1),
+                    C2F(mHdrStaticInfo, mastering.red.y).inRange(0, 1),
+                    C2F(mHdrStaticInfo, mastering.green.x).inRange(0, 1),
+                    C2F(mHdrStaticInfo, mastering.green.y).inRange(0, 1),
+                    C2F(mHdrStaticInfo, mastering.blue.x).inRange(0, 1),
+                    C2F(mHdrStaticInfo, mastering.blue.y).inRange(0, 1),
+                    C2F(mHdrStaticInfo, mastering.white.x).inRange(0, 1),
+                    C2F(mHdrStaticInfo, mastering.white.y).inRange(0, 1),
+                    C2F(mHdrStaticInfo, mastering.maxLuminance).inRange(0, 65535),
+                    C2F(mHdrStaticInfo, mastering.minLuminance).inRange(0, 6.5535),
+                    C2F(mHdrStaticInfo, maxCll).inRange(0, 0XFFFF),
+                    C2F(mHdrStaticInfo, maxFall).inRange(0, 0XFFFF)
+                })
+                .withSetter(HdrStaticInfoSetter)
+                .build());
+
         // TODO: support more formats?
         addParameter(
                 DefineParam(mPixelFormat, C2_PARAMKEY_PIXEL_FORMAT)
@@ -318,6 +356,23 @@ public:
         return C2R::Ok();
     }
 
+    static C2R HdrStaticInfoSetter(bool mayBlock, C2P<C2StreamHdrStaticInfo::output> &me) {
+        (void)mayBlock;
+        if (me.v.mastering.red.x > 1) me.set().mastering.red.x = 1;
+        if (me.v.mastering.red.y > 1) me.set().mastering.red.y = 1;
+        if (me.v.mastering.green.x > 1) me.set().mastering.green.x = 1;
+        if (me.v.mastering.green.y > 1) me.set().mastering.green.y = 1;
+        if (me.v.mastering.blue.x > 1) me.set().mastering.blue.x = 1;
+        if (me.v.mastering.blue.y > 1) me.set().mastering.blue.y = 1;
+        if (me.v.mastering.white.x > 1) me.set().mastering.white.x = 1;
+        if (me.v.mastering.white.y > 1) me.set().mastering.white.y = 1;
+        if (me.v.mastering.maxLuminance > 65535.0) me.set().mastering.maxLuminance = 65535.0;
+        if (me.v.mastering.minLuminance > 6.5535) me.set().mastering.minLuminance = 6.5535;
+        if (me.v.maxCll > 65535.0) me.set().maxCll = 65535.0;
+        if (me.v.maxFall > 65535.0) me.set().maxFall = 65535.0;
+        return C2R::Ok();
+    }
+
     static C2R ColorAspectsSetter(bool mayBlock, C2P<C2StreamColorAspectsInfo::output> &me,
                                   const C2P<C2StreamColorAspectsTuning::output> &def,
                                   const C2P<C2StreamColorAspectsInfo::input> &coded) {
@@ -329,11 +384,28 @@ public:
         me.set().transfer = coded.v.transfer == TRANSFER_UNSPECIFIED
                 ? def.v.transfer : coded.v.transfer;
         me.set().matrix = coded.v.matrix == MATRIX_UNSPECIFIED ? def.v.matrix : coded.v.matrix;
+        // HDR video (PQ or HLG) comes out of the Mac tone-mapped to SDR BT.709, and is said so,
+        // so Android shows it as it is and doesn't tone-map it again.
+        if (me.v.transfer == C2Color::TRANSFER_ST2084 || me.v.transfer == C2Color::TRANSFER_HLG) {
+            me.set().primaries = C2Color::PRIMARIES_BT709;
+            me.set().transfer = C2Color::TRANSFER_170M;
+            me.set().matrix = C2Color::MATRIX_BT709;
+            me.set().range = C2Color::RANGE_LIMITED;
+        }
         return C2R::Ok();
     }
 
     std::shared_ptr<C2StreamColorAspectsInfo::output> getColorAspects_l() {
         return mColorAspects;
+    }
+
+    /// The colour Android takes from the container, as ITU-T H.273 codes, for the Mac: HDR's
+    /// alone matters, which a VP9 stream doesn't say itself.
+    void containerColour_l(uint8_t codes[3]) {
+        const auto& v = *mDefaultColorAspects;
+        codes[0] = v.primaries == C2Color::PRIMARIES_BT2020 ? 9 : v.primaries == C2Color::PRIMARIES_BT709 ? 1 : 2;
+        codes[1] = v.transfer == C2Color::TRANSFER_ST2084 ? 16 : v.transfer == C2Color::TRANSFER_HLG ? 18 : 2;
+        codes[2] = v.matrix == C2Color::MATRIX_BT2020 ? 9 : v.matrix == C2Color::MATRIX_BT709 ? 1 : 2;
     }
 
 private:
@@ -345,6 +417,7 @@ private:
     std::shared_ptr<C2StreamColorAspectsInfo::input> mCodedColorAspects;
     std::shared_ptr<C2StreamColorAspectsTuning::output> mDefaultColorAspects;
     std::shared_ptr<C2StreamColorAspectsInfo::output> mColorAspects;
+    std::shared_ptr<C2StreamHdrStaticInfo::output> mHdrStaticInfo;
     std::shared_ptr<C2StreamPixelFormatInfo::output> mPixelFormat;
 };
 
@@ -359,6 +432,7 @@ private:
 ///   'F' flush, answered with 'L'
 ///   'P' u64 index, u32 resource, u32 width, u32 height: copy that picture into the resource,
 ///       answered with 'S' and a status byte, 0 on success
+///   'C' u8 primaries, u8 transfer, u8 matrix (ITU-T H.273): the colour the container gives
 ///   event 'R' u64 index, u32 width, u32 height: a picture to show, in the order pictures are
 ///       shown (width 0: the input made no picture)
 class Mac {
@@ -412,6 +486,12 @@ public:
         memcpy(head + 21, &size, 4);
         std::lock_guard<std::mutex> lock(mSendLock);
         return sendAll(head, sizeof(head)) && (size == 0 || sendAll(data, size));
+    }
+
+    bool colour(const uint8_t codes[3]) {
+        uint8_t request[4] = {'C', codes[0], codes[1], codes[2]};
+        std::lock_guard<std::mutex> lock(mSendLock);
+        return sendAll(request, sizeof(request));
     }
 
     bool drain() {
@@ -642,6 +722,15 @@ protected:
             if (view.error()) return fail(work);
         }
         if (view.capacity() > 0) {
+            uint8_t codes[3];
+            {
+                auto lock = mIntf->lock();
+                mIntf->containerColour_l(codes);
+            }
+            if (memcmp(codes, mSentColour, 3) != 0) {
+                if (!mMac->colour(codes)) return fail(work);
+                memcpy(mSentColour, codes, 3);
+            }
             uint32_t flags = (config ? 1 : 0) | (eos ? 2 : 0);
             if (!mMac->decode(index, work->input.ordinal.timestamp.peeku(), flags, view.data(),
                               view.capacity())) {
@@ -816,6 +905,8 @@ private:
     std::unique_ptr<Mac> mMac;
     const uint8_t mCodec;
     std::thread mOutput;
+    /// The colour last told to the Mac; it starts unknown (2, 2, 2), as the Mac does.
+    uint8_t mSentColour[3] = {2, 2, 2};
     // Guards what process(), the output thread and the Mac's events share.
     std::mutex mLock;
     std::condition_variable mChanged;
