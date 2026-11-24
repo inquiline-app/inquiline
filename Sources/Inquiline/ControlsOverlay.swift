@@ -22,21 +22,27 @@ final class ControlsOverlay: NSView {
     private var resizing: Int?
     /// A macro's tap being moved on its own, not the first, which moves the whole macro.
     private var draggingStep: (control: Int, step: Int)?
-    /// A macro being recorded: first its key, then its taps.
-    private var recording: (index: Int, hasKey: Bool, last: Date?)?
-    /// The macro being recorded, if it's still there: Clear All, or a new set of controls, can
-    /// take it away while it records.
-    private var recordingMacro: (index: Int, hasKey: Bool, last: Date?)? {
-        guard let current = recording else { return nil }
-        guard current.index < set.controls.count, set.controls[current.index].kind == .macro else {
-            recording = nil
-            return nil
-        }
-        return current
+    /// A macro being recorded as the game is played: its touches go to the app too.
+    private struct Live {
+        let index: Int
+        var lastDown: Date?
+        var down: Date?
+        var lastMove: Date?
     }
+    private var live: Live?
+    /// Lets the display view tell this overlay of the pointer's touches, or stop.
+    var observeTouches: ((((ScrcpySession.TouchAction, Double, Double) -> Void)?) -> Void)?
+    /// Plays a macro once, from its settings; nil stops one playing.
+    var onTry: ((KeyControl?) -> Void)?
+    private var settings: NSPopover?
+    private var settingsController: MacroSettings?
+    /// Where the pointer went down on a control, to tell a click from a drag.
+    private var pressed: (index: Int, at: CGPoint, moved: Bool)?
     private let hint = NSTextField(labelWithString: "")
     private static let editHint = "Click a button in the game, then press its key or controller button."
     private let bar = NSStackView()
+    private var editButtons: [NSButton] = []
+    private let stopButton = NSButton(title: "Stop", target: nil, action: nil)
 
     override init(frame: NSRect) {
         super.init(frame: frame)
@@ -51,7 +57,13 @@ final class ControlsOverlay: NSView {
 
     /// Lets clicks through to the app unless editing.
     override func hitTest(_ point: NSPoint) -> NSView? {
-        isEditing ? super.hitTest(point) : nil
+        guard isEditing else { return nil }
+        // While a macro records, the game gets every click but the bar's.
+        if live != nil {
+            let inside = convert(point, from: superview)
+            return bar.frame.contains(inside) ? super.hitTest(point) : nil
+        }
+        return super.hitTest(point)
     }
 
     func beginEditing() {
@@ -64,7 +76,8 @@ final class ControlsOverlay: NSView {
     }
 
     private func endEditing() {
-        finishRecording()
+        stopRecording(showSettings: false)
+        settings?.close()
         isEditing = false
         selected = nil
         bar.isHidden = true
@@ -87,10 +100,18 @@ final class ControlsOverlay: NSView {
         done.keyEquivalent = "\r"
         hint.stringValue = Self.editHint
         hint.textColor = .secondaryLabelColor
-        for view in [hint, button("Move Stick (WASD, Left Stick)", "dpad", #selector(addStick)),
-                     button("Aim (Mouse, Right Stick)", "scope", #selector(addAim)),
-                     button("Macro", "list.number", #selector(addMacro)),
-                     button("Clear", "trash", #selector(clearAll)), done] as [NSView] {
+        editButtons = [button("Move Stick (WASD, Left Stick)", "dpad", #selector(addStick)),
+                       button("Aim (Mouse, Right Stick)", "scope", #selector(addAim)),
+                       button("Record Macro", "record.circle", #selector(addMacro)),
+                       button("Clear", "trash", #selector(clearAll)), done]
+        stopButton.bezelStyle = .rounded
+        stopButton.image = NSImage(systemSymbolName: "stop.fill", accessibilityDescription: "Stop")
+        stopButton.imagePosition = .imageLeading
+        stopButton.contentTintColor = .systemRed
+        stopButton.target = self
+        stopButton.action = #selector(stopTapped)
+        stopButton.isHidden = true
+        for view in [hint] + editButtons + [stopButton] as [NSView] {
             bar.addArrangedSubview(view)
         }
         bar.orientation = .horizontal
@@ -109,96 +130,142 @@ final class ControlsOverlay: NSView {
     }
 
     @objc private func done() {
-        if recording != nil { finishRecording() } else { endEditing() }
+        if live != nil { stopRecording() } else { endEditing() }
     }
 
     // MARK: - Macros
 
+    /// Recording as AssistiveTouch's custom gestures and a game player's macro recorder do: the
+    /// game is played as usual, and its taps, holds and swipes are kept with their timing.
     @objc private func addMacro() {
-        finishRecording()
+        settings?.close()
         set.controls.append(KeyControl(kind: .macro, x: 0.5, y: 0.5, steps: []))
-        recording = (set.controls.count - 1, false, nil)
-        selected = recording!.index
-        hint.stringValue = "Press the key or controller button for this macro."
+        startRecording(set.controls.count - 1)
+    }
+
+    private func startRecording(_ index: Int) {
+        guard index < set.controls.count else { return }
+        onTry?(nil)
+        set.controls[index].steps = []
+        live = Live(index: index)
+        selected = index
+        editButtons.forEach { $0.isHidden = true }
+        stopButton.isHidden = false
+        hint.stringValue = "● Recording: play the game as usual, then Stop (or Esc)."
+        hint.textColor = .systemRed
+        observeTouches? { [weak self] action, x, y in self?.recorded(action, x, y) }
         needsDisplay = true
     }
 
-    private func finishRecording() {
-        guard let recording else { return }
-        self.recording = nil
+    private func recorded(_ action: ScrcpySession.TouchAction, _ x: Double, _ y: Double) {
+        guard var current = live, current.index < set.controls.count else { return }
+        let now = Date()
+        func ms(since date: Date?) -> Int { date.map { min(Int(now.timeIntervalSince($0) * 1000), 10_000) } ?? 0 }
+        switch action {
+        case .down:
+            let step = KeyControl.Step(x: x, y: y, delay: ms(since: current.lastDown))
+            set.controls[current.index].steps?.append(step)
+            if set.controls[current.index].steps?.count == 1 {
+                set.controls[current.index].x = x
+                set.controls[current.index].y = y
+            }
+            current.lastDown = now
+            current.down = now
+            current.lastMove = now
+        case .move:
+            // A point every 10 ms is a smooth slide, and keeps a long one small.
+            guard current.down != nil, ms(since: current.lastMove) >= 10,
+                  var step = set.controls[current.index].steps?.last else { break }
+            var path = step.path ?? []
+            path.append(KeyControl.PathPoint(x: x, y: y, t: ms(since: current.down)))
+            step.path = path
+            set.controls[current.index].steps?[set.controls[current.index].steps!.count - 1] = step
+            current.lastMove = now
+        case .up:
+            guard current.down != nil, var step = set.controls[current.index].steps?.last else { break }
+            let hold = ms(since: current.down)
+            // A short touch that didn't slide is a tap; anything else keeps how it was held.
+            let slid = (step.path ?? []).contains { hypot($0.x - step.x, $0.y - step.y) > 0.01 }
+            if !slid { step.path = nil }
+            step.hold = slid || hold > 150 ? hold : nil
+            set.controls[current.index].steps?[set.controls[current.index].steps!.count - 1] = step
+            current.down = nil
+        default:
+            break
+        }
+        live = current
+        needsDisplay = true
+    }
+
+    @objc private func stopTapped() { stopRecording() }
+
+    private func stopRecording(showSettings: Bool = true) {
+        guard let current = live else { return }
+        live = nil
+        observeTouches?(nil)
+        editButtons.forEach { $0.isHidden = false }
+        stopButton.isHidden = true
         hint.stringValue = Self.editHint
-        if recording.index < set.controls.count,
-           set.controls[recording.index].key == nil || (set.controls[recording.index].steps ?? []).isEmpty {
-            set.controls.remove(at: recording.index)
-            selected = nil
-        }
+        hint.textColor = .secondaryLabelColor
+        window?.makeFirstResponder(self)
         needsDisplay = true
-    }
-
-    private func addMacroItems(to menu: NSMenu, for macro: KeyControl) {
-        let plays: [(String, KeyControl.Repeat)] = [("Play Once", .once), ("Repeat While Held", .whileHeld),
-                                                    ("Repeat Until Pressed Again", .untilPressedAgain)]
-        for (title, mode) in plays {
-            let item = menu.addItem(withTitle: title, action: #selector(setRepeat(_:)), keyEquivalent: "")
-            item.target = self
-            item.representedObject = mode.rawValue
-            item.state = (macro.repeats ?? .once) == mode ? .on : .off
+        guard current.index < set.controls.count else { return }
+        if (set.controls[current.index].steps ?? []).isEmpty {
+            set.controls.remove(at: current.index)
+            selected = nil
+            return
         }
-        menu.addItem(.separator())
-        let pause = menu.addItem(withTitle: "Pause Between Taps", action: nil, keyEquivalent: "")
-        let pauses = NSMenu()
-        let recorded = pauses.addItem(withTitle: "As Recorded", action: #selector(setInterval(_:)), keyEquivalent: "")
-        recorded.target = self
-        recorded.tag = -1
-        recorded.state = macro.interval == nil ? .on : .off
-        pauses.addItem(.separator())
-        let presets = [50, 100, 250, 500, 1000]
-        for ms in presets {
-            let item = pauses.addItem(withTitle: "\(ms) ms", action: #selector(setInterval(_:)), keyEquivalent: "")
-            item.target = self
-            item.tag = ms
-            item.state = macro.interval == ms ? .on : .off
+        if showSettings { self.showSettings(current.index) }
+    }
+
+    /// A macro's settings, beside it: its key, how it plays, its speed, and trying it.
+    private func showSettings(_ index: Int) {
+        guard index < set.controls.count, set.controls[index].kind == .macro else { return }
+        settings?.close()
+        selected = index
+        let controller = MacroSettings(macro: set.controls[index])
+        controller.changed = { [weak self] macro in
+            guard let self, index < set.controls.count else { return }
+            if let key = macro.key, key != set.controls[index].key {
+                // A key works one control; giving it to the macro takes it from the others.
+                for other in set.controls.indices where other != index && set.controls[other].key == key {
+                    set.controls[other].key = nil
+                }
+            }
+            set.controls[index] = macro
+            needsDisplay = true
         }
-        let custom = pauses.addItem(withTitle: macro.interval.map { presets.contains($0) ? "Custom…" : "Custom (\($0) ms)…" } ?? "Custom…",
-                                    action: #selector(customInterval), keyEquivalent: "")
-        custom.target = self
-        custom.state = macro.interval.map { !presets.contains($0) } == true ? .on : .off
-        pause.submenu = pauses
-        menu.addItem(.separator())
-    }
-
-    @objc private func setRepeat(_ sender: NSMenuItem) {
-        guard let selected, let raw = sender.representedObject as? String else { return }
-        set.controls[selected].repeats = KeyControl.Repeat(rawValue: raw)
-    }
-
-    @objc private func setInterval(_ sender: NSMenuItem) {
-        guard let selected else { return }
-        set.controls[selected].interval = sender.tag < 0 ? nil : sender.tag
-    }
-
-    @objc private func customInterval() {
-        guard let selected, let window else { return }
-        let alert = NSAlert()
-        alert.messageText = "Pause Between Taps"
-        alert.informativeText = "Milliseconds between one tap and the next, from 10 to 10000."
-        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 120, height: 24))
-        field.integerValue = set.controls[selected].interval ?? 100
-        alert.accessoryView = field
-        alert.addButton(withTitle: "OK")
-        alert.addButton(withTitle: "Cancel")
-        alert.beginSheetModal(for: window) { [self] response in
-            guard response == .alertFirstButtonReturn, selected < set.controls.count else { return }
-            set.controls[selected].interval = min(max(field.integerValue, 10), 10000)
-            window.makeFirstResponder(self)
+        controller.tryIt = { [weak self] in
+            guard let self, index < set.controls.count else { return }
+            onTry?(set.controls[index])
         }
-        alert.window.initialFirstResponder = field
-    }
-
-    private func cancelRecording() {
-        guard let recording else { return }
-        if recording.index < set.controls.count { set.controls[recording.index].steps = [] }
-        finishRecording()
+        controller.recordAgain = { [weak self] in
+            self?.settings?.close()
+            self?.startRecording(index)
+        }
+        controller.remove = { [weak self] in
+            guard let self else { return }
+            settings?.close()
+            self.selected = index
+            removeSelected()
+        }
+        controller.closed = { [weak self] in
+            guard let self else { return }
+            onTry?(nil)
+            settings = nil
+            settingsController = nil
+            window?.makeFirstResponder(self)
+            needsDisplay = true
+        }
+        let popover = NSPopover()
+        popover.behavior = .semitransient
+        popover.contentViewController = controller
+        popover.delegate = controller
+        let c = viewPoint(set.controls[index])
+        popover.show(relativeTo: NSRect(x: c.x - 14, y: c.y - 14, width: 28, height: 28), of: self, preferredEdge: .maxX)
+        settings = popover
+        settingsController = controller
+        needsDisplay = true
     }
 
     @objc private func addStick() {
@@ -222,6 +289,8 @@ final class ControlsOverlay: NSView {
     }
 
     @objc private func clearAll() {
+        stopRecording(showSettings: false)
+        settings?.close()
         set.controls.removeAll()
         selected = nil
         needsDisplay = true
@@ -292,20 +361,7 @@ final class ControlsOverlay: NSView {
         if let hit = macroStep(at: point), hit.step > 0 {
             selected = hit.control
             draggingStep = hit
-            needsDisplay = true
-            return
-        }
-        if let current = recordingMacro, macroStep(at: point) == nil {
-            guard current.hasKey, screenRect().contains(CGPoint(x: point.x, y: bounds.height - point.y)) else { return }
-            let now = Date()
-            let delay = current.last.map { Int(now.timeIntervalSince($0) * 1000) } ?? 0
-            let (x, y) = fraction(point)
-            set.controls[current.index].steps?.append(KeyControl.Step(x: x, y: y, delay: min(delay, 5000)))
-            if set.controls[current.index].steps?.count == 1 {
-                set.controls[current.index].x = x
-                set.controls[current.index].y = y
-            }
-            recording = (current.index, true, now)
+            pressed = (hit.control, point, false)
             needsDisplay = true
             return
         }
@@ -316,6 +372,7 @@ final class ControlsOverlay: NSView {
             selected = index
             let c = viewPoint(set.controls[index])
             dragging = (index, CGPoint(x: point.x - c.x, y: point.y - c.y))
+            pressed = (index, point, false)
         } else if screenRect().contains(CGPoint(x: point.x, y: bounds.height - point.y)) {
             set.controls.removeAll { $0.kind == .tap && $0.key == nil }
             let (x, y) = fraction(point)
@@ -330,10 +387,11 @@ final class ControlsOverlay: NSView {
 
     override func mouseDragged(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
-        if let draggingStep, draggingStep.control < set.controls.count {
+        if let press = pressed, hypot(point.x - press.at.x, point.y - press.at.y) > 3 { pressed?.moved = true }
+        if let draggingStep, draggingStep.control < set.controls.count,
+           let step = set.controls[draggingStep.control].steps?[draggingStep.step] {
             let (x, y) = fraction(point)
-            set.controls[draggingStep.control].steps?[draggingStep.step].x = x
-            set.controls[draggingStep.control].steps?[draggingStep.step].y = y
+            set.controls[draggingStep.control].steps?[draggingStep.step] = step.moved(dx: x - step.x, dy: y - step.y)
             needsDisplay = true
             return
         }
@@ -348,7 +406,7 @@ final class ControlsOverlay: NSView {
         if set.controls[dragging.index].kind == .macro, let steps = set.controls[dragging.index].steps {
             // A macro moves whole.
             let dx = x - set.controls[dragging.index].x, dy = y - set.controls[dragging.index].y
-            set.controls[dragging.index].steps = steps.map { KeyControl.Step(x: $0.x + dx, y: $0.y + dy, delay: $0.delay) }
+            set.controls[dragging.index].steps = steps.map { $0.moved(dx: dx, dy: dy) }
         }
         set.controls[dragging.index].x = x
         set.controls[dragging.index].y = y
@@ -359,6 +417,11 @@ final class ControlsOverlay: NSView {
         dragging = nil
         draggingStep = nil
         resizing = nil
+        // A click on a macro, not a drag, opens its settings.
+        if let press = pressed, !press.moved, press.index < set.controls.count, set.controls[press.index].kind == .macro {
+            showSettings(press.index)
+        }
+        pressed = nil
     }
 
     /// The rim of a stick shows it can be resized, as a window's edge does.
@@ -381,7 +444,6 @@ final class ControlsOverlay: NSView {
             menu.addItem(withTitle: "Use Right Click (While Aiming)", action: #selector(useRightClick), keyEquivalent: "").target = self
             menu.addItem(.separator())
         }
-        if set.controls[index].kind == .macro { addMacroItems(to: menu, for: set.controls[index]) }
         menu.addItem(withTitle: "Remove", action: #selector(removeSelected), keyEquivalent: "").target = self
         NSMenu.popUpContextMenu(menu, with: event, for: self)
     }
@@ -413,40 +475,18 @@ final class ControlsOverlay: NSView {
     /// Returns whether it was taken.
     func padPressed(_ code: Int) -> Bool {
         guard isEditing, let name = KeyControl.Pad(rawValue: code)?.name else { return false }
-        if let current = recordingMacro {
-            guard !current.hasKey else { return true }
-            for index in set.controls.indices where index != current.index && set.controls[index].key == code {
-                set.controls[index].key = nil
-            }
-            set.controls[current.index].key = code
-            set.controls[current.index].label = name
-            recording = (current.index, true, nil)
-            hint.stringValue = "Click where it taps, in order. Return when done."
-            needsDisplay = true
+        if let settingsController, settingsController.isChoosingKey {
+            settingsController.choose(key: code, label: name)
             return true
         }
+        guard live == nil else { return true }
         assign(code, name)
         return true
     }
 
     override func keyDown(with event: NSEvent) {
-        if let current = recordingMacro {
-            switch event.keyCode {
-            case 53: cancelRecording() // Esc
-            case 36, 76: finishRecording() // Return
-            default:
-                guard !current.hasKey else { return }
-                let code = Int(event.keyCode)
-                // A key works one control; giving it to the macro takes it from the others.
-                for index in set.controls.indices where index != current.index && set.controls[index].key == code {
-                    set.controls[index].key = nil
-                }
-                set.controls[current.index].key = code
-                set.controls[current.index].label = KeyName.of(event)
-                recording = (current.index, true, nil)
-                hint.stringValue = "Click where it taps, in order. Return when done."
-                needsDisplay = true
-            }
+        if live != nil {
+            if [53, 36, 76].contains(event.keyCode) { stopRecording() } // Esc, Return
             return
         }
         switch event.keyCode {
@@ -482,14 +522,16 @@ final class ControlsOverlay: NSView {
 
     override func draw(_ dirtyRect: NSRect) {
         guard isEditing || showsLabels else { return }
-        if isEditing {
+        // While a macro records, the game shows as it is, with only what's recorded on it.
+        if isEditing && live == nil {
             NSColor.black.withAlphaComponent(0.35).setFill()
             bounds.fill()
         }
         let alpha: CGFloat = isEditing ? 1 : 0.55
         for (index, control) in set.controls.enumerated() {
-            // A macro shows from its first tap on.
+            // A macro shows from its first tap on; while one records, only it does.
             if control.kind == .macro, (control.steps ?? []).isEmpty { continue }
+            if let live, live.index != index { continue }
             let c = viewPoint(control), r = radius(control)
             let circle = NSBezierPath(ovalIn: NSRect(x: c.x - r, y: c.y - r, width: r * 2, height: r * 2))
             NSColor.black.withAlphaComponent(0.45 * alpha).setFill()
@@ -511,6 +553,17 @@ final class ControlsOverlay: NSView {
                 path.lineWidth = 2
                 path.setLineDash([4, 3], count: 2, phase: 0)
                 path.stroke()
+                // A swipe's slide, solid, from where it lands.
+                for (n, step) in (control.steps ?? []).enumerated() {
+                    guard let slide = step.path, !slide.isEmpty else { continue }
+                    let trail = NSBezierPath()
+                    trail.move(to: points[n])
+                    for point in slide { trail.line(to: viewPoint(KeyControl(kind: .macro, x: point.x, y: point.y))) }
+                    NSColor.controlAccentColor.withAlphaComponent(0.9 * alpha).setStroke()
+                    trail.lineWidth = 3
+                    trail.lineCapStyle = .round
+                    trail.stroke()
+                }
                 for (n, p) in points.enumerated() where n > 0 {
                     let dot = NSBezierPath(ovalIn: NSRect(x: p.x - 11, y: p.y - 11, width: 22, height: 22))
                     NSColor.black.withAlphaComponent(0.45 * alpha).setFill()

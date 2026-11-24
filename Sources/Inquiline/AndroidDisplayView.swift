@@ -130,12 +130,18 @@ final class AndroidDisplayView: NSView {
         )
     }
 
+    /// Told of each touch the pointer makes, as fractions of the screen, while a macro records
+    /// (ControlsOverlay); the touches go to the app too, and the controls are left out meanwhile.
+    var touchObserver: ((ScrcpySession.TouchAction, Double, Double) -> Void)?
+
     private func sendTouch(_ action: ScrcpySession.TouchAction, _ event: NSEvent) {
         let point = androidPoint(for: event)
         session?.sendTouch(action, x: point.x, y: point.y, width: Int(displaySize.width), height: Int(displaySize.height))
+        touchObserver?(action, Double(point.x) / displaySize.width, Double(point.y) / displaySize.height)
     }
 
     override func mouseDown(with event: NSEvent) {
+        if touchObserver != nil { sendTouch(.down, event); return }
         if controls.isCaught { _ = controls.key(KeyControl.leftClick, down: true); return }
         // With a mouse-aim control, a click catches the pointer, as a Mac game does.
         if controls.set.isActive && controls.set.hasAim { controls.catchPointer(); return }
@@ -143,11 +149,13 @@ final class AndroidDisplayView: NSView {
     }
 
     override func mouseDragged(with event: NSEvent) {
+        if touchObserver != nil { sendTouch(.move, event); return }
         if controls.isCaught { controls.aim(dx: event.deltaX, dy: event.deltaY); return }
         sendTouch(.move, event)
     }
 
     override func mouseUp(with event: NSEvent) {
+        if touchObserver != nil { sendTouch(.up, event); return }
         if controls.isCaught { _ = controls.key(KeyControl.leftClick, down: false); return }
         guard !(controls.set.isActive && controls.set.hasAim) else { return }
         sendTouch(.up, event)

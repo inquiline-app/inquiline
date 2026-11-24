@@ -146,6 +146,10 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate, 
         overlay.set = set
         overlay.showsLabels = UserDefaults.standard.bool(forKey: controlsLabelsKey)
         overlay.screenRect = { [unowned self] in displayView.screenRect }
+        overlay.observeTouches = { [unowned self] observer in displayView.touchObserver = observer }
+        overlay.onTry = { [unowned self] macro in
+            if let macro { displayView.controls.preview(macro) } else { displayView.controls.stopPreview() }
+        }
         overlay.onDone = { [unowned self] set in
             displayView.controls.set = set
             set.save(package: package)
@@ -166,7 +170,7 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate, 
             alert.messageText = "Keyboard controls"
             alert.informativeText = "Click a button in the game, then press the key that should press it. "
                 + "Add a stick for W, A, S and D, Mouse Aim to look around with the mouse (click the game to aim, Esc to stop), "
-                + "and macros that tap several buttons in turn with one key.\n\n"
+                + "and macros: record taps, holds and swipes once by playing, then play them with one key.\n\n"
                 + "Online games such as shooters may not allow playing with a keyboard, a mouse or macros against touch players, "
                 + "and can ban accounts that do. Use controls in those at your own risk."
             alert.addButton(withTitle: "Continue")

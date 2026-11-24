@@ -13,15 +13,37 @@ struct KeyControl: Codable, Equatable {
         /// While the pointer is caught, the mouse drags a finger here, as a thumb turns the
         /// camera in a shooter.
         case aim
-        /// A key taps a row of spots, one after another, with the pauses they were recorded with.
+        /// A key plays back touches recorded on the game: taps, holds and swipes, with the
+        /// pauses they were recorded with.
         case macro
     }
 
+    /// One finger's touch in a macro: where it lands, and, recorded as played, how long it stays
+    /// down and where it slides meanwhile.
     struct Step: Codable, Equatable {
         var x: Double
         var y: Double
-        /// Milliseconds after the step before.
+        /// Milliseconds after the step before touched down.
         var delay: Int
+        /// Milliseconds the finger stays down; none for a quick tap.
+        var hold: Int?
+        /// Where the finger slides while down, each point a time after it touched down.
+        var path: [PathPoint]?
+
+        func moved(dx: Double, dy: Double) -> Step {
+            var step = self
+            step.x += dx
+            step.y += dy
+            step.path = path?.map { PathPoint(x: $0.x + dx, y: $0.y + dy, t: $0.t) }
+            return step
+        }
+    }
+
+    struct PathPoint: Codable, Equatable {
+        var x: Double
+        var y: Double
+        /// Milliseconds after the finger touched down.
+        var t: Int
     }
 
     var kind: Kind
@@ -37,7 +59,10 @@ struct KeyControl: Codable, Equatable {
     /// How a macro plays: once a press, over and over while held, or until pressed again.
     var repeats: Repeat?
     /// A macro's pause between taps in milliseconds, or nil for the pauses it was recorded with.
+    /// Set by earlier versions; a macro now has a speed instead.
     var interval: Int?
+    /// How fast a macro plays against how it was recorded: 2 is twice as fast.
+    var speed: Double?
 
     enum Repeat: String, Codable {
         case once, whileHeld, untilPressedAgain
@@ -142,14 +167,14 @@ final class KeyControlPlayer {
             guard heldKeys.insert(code).inserted else { return true } // a key repeating
             for macro in macros {
                 switch macro.repeats ?? .once {
-                case .once: play(macro, round: nextRound(code))
-                case .whileHeld: play(macro, round: nextRound(code), again: { [weak self] in self?.heldKeys.contains(code) == true })
+                case .once: play(macro, round: nextRound(code), key: code)
+                case .whileHeld: play(macro, round: nextRound(code), key: code, again: { [weak self] in self?.heldKeys.contains(code) == true })
                 case .untilPressedAgain:
                     if looping.remove(code) != nil {
                         _ = nextRound(code) // ends the one playing
                     } else {
                         looping.insert(code)
-                        play(macro, round: nextRound(code), again: { [weak self] in self?.looping.contains(code) == true })
+                        play(macro, round: nextRound(code), key: code, again: { [weak self] in self?.looping.contains(code) == true })
                     }
                 }
             }
@@ -249,32 +274,61 @@ final class KeyControlPlayer {
         }
     }
 
-    /// Taps a macro's spots in turn, each held for a moment as a finger's tap is, and starts
-    /// over while `again` says so. A newer round for the same key ends this one.
-    private func play(_ macro: KeyControl, round: Int, again: (() -> Bool)? = nil) {
-        guard let key = macro.key, let steps = macro.steps, !steps.isEmpty else { return }
-        var at = 0
+    /// Plays a macro's touches as they were recorded, at its speed, and starts over while
+    /// `again` says so. A newer round for the same key ends this one.
+    private func play(_ macro: KeyControl, round: Int, key: Int, again: (() -> Bool)? = nil) {
+        guard let steps = macro.steps, !steps.isEmpty else { return }
+        let speed = max(min(macro.speed ?? 1, 8), 0.1)
+        func later(_ ms: Double) -> DispatchTime { .now() + .milliseconds(Int(ms / speed)) }
+        var at = 0.0, end = 0.0
         for (index, step) in steps.enumerated() {
-            if index > 0 { at += macro.interval ?? step.delay }
-            let p = CGPoint(x: step.x * size.width, y: step.y * size.height)
-            // Two fingers in turn, so a quick step can land before the last one lifts.
-            let finger = Self.macroFinger + Int64(index % 2)
-            DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(at)) { [weak self] in
+            if index > 0 { at += Double(macro.interval ?? step.delay) }
+            // Fingers in turn, so a quick touch can land before the last one lifts.
+            let finger = Self.macroFinger + Int64(index % 4)
+            let start = at
+            let down = CGPoint(x: step.x * size.width, y: step.y * size.height)
+            DispatchQueue.main.asyncAfter(deadline: later(start)) { [weak self] in
                 guard let self, rounds[key] == round else { return }
-                touch(.down, p, finger: finger)
-                DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(40)) { [weak self] in
-                    self?.touch(.up, p, finger: finger)
+                touch(.down, down, finger: finger)
+            }
+            var last = down
+            for point in step.path ?? [] {
+                let p = CGPoint(x: point.x * size.width, y: point.y * size.height)
+                last = p
+                DispatchQueue.main.asyncAfter(deadline: later(start + Double(point.t))) { [weak self] in
+                    guard let self, rounds[key] == round else { return }
+                    touch(.move, p, finger: finger)
                 }
+            }
+            // A quick tap is held 40 ms, as a finger's is, whatever the speed.
+            let up = start + max(Double(step.hold ?? 0), 40 * speed)
+            end = max(end, up)
+            let lift = last
+            DispatchQueue.main.asyncAfter(deadline: later(up)) { [weak self] in
+                self?.touch(.up, lift, finger: finger)
             }
         }
         guard let again else { return }
-        // The next round after the same pause as between taps, at least 50 ms.
-        let pause = max(macro.interval ?? steps.last?.delay ?? 100, 50)
-        DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(at + pause)) { [weak self] in
+        // The next round once this one is done, after the same pause as between its touches.
+        let pause = max(Double(macro.interval ?? steps.last?.delay ?? 100), 50)
+        DispatchQueue.main.asyncAfter(deadline: later(end + pause)) { [weak self] in
             guard let self, rounds[key] == round, again() else { return }
-            play(macro, round: round, again: again)
+            play(macro, round: round, key: key, again: again)
         }
     }
+
+    /// Plays a macro once from its settings, to try it while editing.
+    func preview(_ macro: KeyControl) {
+        let key = Self.previewKey
+        play(macro, round: nextRound(key), key: key)
+    }
+
+    /// Stops a macro being tried.
+    func stopPreview() {
+        _ = nextRound(Self.previewKey)
+    }
+
+    private static let previewKey = -1
 
     private var rounds: [Int: Int] = [:]
     private var looping = Set<Int>()
