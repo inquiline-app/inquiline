@@ -1,6 +1,6 @@
 diff -ru orig1/com/android/server/am/BroadcastQueueModernImpl.smali out-classes1.dex/com/android/server/am/BroadcastQueueModernImpl.smali
---- orig1/com/android/server/am/BroadcastQueueModernImpl.smali	2026-11-19 02:40:26
-+++ out-classes1.dex/com/android/server/am/BroadcastQueueModernImpl.smali	2026-11-19 19:55:54
+--- orig1/com/android/server/am/BroadcastQueueModernImpl.smali	2026-11-24 09:01:17
++++ out-classes1.dex/com/android/server/am/BroadcastQueueModernImpl.smali	2026-11-24 09:01:19
 @@ -2158,6 +2158,24 @@
      .line 1221
      invoke-static {v4}, Lcom/android/server/am/BroadcastQueue;->logw(Ljava/lang/String;)V
@@ -27,8 +27,8 @@ diff -ru orig1/com/android/server/am/BroadcastQueueModernImpl.smali out-classes1
  
      const/16 v5, 0x1a
 diff -ru orig1/com/android/server/display/DisplayManagerService.smali out-classes1.dex/com/android/server/display/DisplayManagerService.smali
---- orig1/com/android/server/display/DisplayManagerService.smali	2026-11-19 02:40:26
-+++ out-classes1.dex/com/android/server/display/DisplayManagerService.smali	2026-11-19 19:55:41
+--- orig1/com/android/server/display/DisplayManagerService.smali	2026-11-24 09:01:17
++++ out-classes1.dex/com/android/server/display/DisplayManagerService.smali	2026-11-24 09:01:19
 @@ -4560,6 +4560,18 @@
  .method public final createVirtualDisplayLocked(Landroid/hardware/display/IVirtualDisplayCallback;Landroid/media/projection/IMediaProjection;ILjava/lang/String;Ljava/lang/String;Landroid/companion/virtual/IVirtualDevice;Landroid/view/Surface;ILandroid/hardware/display/VirtualDisplayConfig;)I
      .registers 23
@@ -49,9 +49,28 @@ diff -ru orig1/com/android/server/display/DisplayManagerService.smali out-classe
      iget-object v0, p0, Lcom/android/server/display/DisplayManagerService;->mVirtualDisplayAdapter:Lcom/android/server/display/VirtualDisplayAdapter;
  
 diff -ru orig1/com/android/server/display/VirtualDisplayAdapter$VirtualDisplayDevice.smali out-classes1.dex/com/android/server/display/VirtualDisplayAdapter$VirtualDisplayDevice.smali
---- orig1/com/android/server/display/VirtualDisplayAdapter$VirtualDisplayDevice.smali	2026-11-19 02:40:26
-+++ out-classes1.dex/com/android/server/display/VirtualDisplayAdapter$VirtualDisplayDevice.smali	2026-11-19 19:55:41
-@@ -659,6 +659,16 @@
+--- orig1/com/android/server/display/VirtualDisplayAdapter$VirtualDisplayDevice.smali	2026-11-24 09:01:17
++++ out-classes1.dex/com/android/server/display/VirtualDisplayAdapter$VirtualDisplayDevice.smali	2026-11-24 09:01:49
+@@ -160,7 +160,7 @@
+ 
+     move-result p3
+ 
+-    invoke-static {p1, p2, p3}, Lcom/android/server/display/DisplayAdapter;->createMode(IIF)Landroid/view/Display$Mode;
++    invoke-static {p1, p2, p3}, Lcom/android/server/display/VirtualDisplayAdapter$VirtualDisplayDevice;->inquilineHdrMode(IIF)Landroid/view/Display$Mode;
+ 
+     move-result-object p1
+ 
+@@ -528,6 +528,9 @@
+ 
+     invoke-direct {v0}, Lcom/android/server/display/DisplayDeviceInfo;-><init>()V
+ 
++    # Inquiline: an app's screen shows HDR video, as the Mac makes it SDR (engine patch 0111).
++    invoke-static {v0}, Lcom/android/server/display/VirtualDisplayAdapter$VirtualDisplayDevice;->inquilineHdr(Lcom/android/server/display/DisplayDeviceInfo;)V
++
+     iput-object v0, p0, Lcom/android/server/display/VirtualDisplayAdapter$VirtualDisplayDevice;->mInfo:Lcom/android/server/display/DisplayDeviceInfo;
+ 
+     .line 542
+@@ -659,6 +662,16 @@
  
      iput v3, v0, Lcom/android/server/display/DisplayDeviceInfo;->flags:I
  
@@ -68,3 +87,86 @@ diff -ru orig1/com/android/server/display/VirtualDisplayAdapter$VirtualDisplayDe
      goto :goto_84
  
      .line 562
+@@ -1261,7 +1274,7 @@
+ 
+     move-result v0
+ 
+-    invoke-static {p1, p2, v0}, Lcom/android/server/display/DisplayAdapter;->createMode(IIF)Landroid/view/Display$Mode;
++    invoke-static {p1, p2, v0}, Lcom/android/server/display/VirtualDisplayAdapter$VirtualDisplayDevice;->inquilineHdrMode(IIF)Landroid/view/Display$Mode;
+ 
+     move-result-object p1
+ 
+@@ -1450,4 +1463,73 @@
+     iput-boolean v0, p0, Lcom/android/server/display/VirtualDisplayAdapter$VirtualDisplayDevice;->mStopped:Z
+ 
+     return-void
++.end method
++
++
++# Inquiline: Inquiline's screens are the windows of Android's apps, and apps choose HDR video by
++# their screen's HDR capabilities (Display.getHdrCapabilities, isHdr): HDR10 and HLG, which the
++# Mac decodes and tone-maps (engine patch 0111), as a phone's screen says what it shows.
++.method private static inquilineHdr(Lcom/android/server/display/DisplayDeviceInfo;)V
++    .registers 6
++
++    new-instance v0, Landroid/view/Display$HdrCapabilities;
++
++    const/4 v1, 0x2
++
++    new-array v1, v1, [I
++
++    fill-array-data v1, :types
++
++    const/high16 v2, 0x447a0000    # 1000.0f, peak nits
++
++    const/high16 v3, 0x43fa0000    # 500.0f, average
++
++    const v4, 0x3a03126f    # 0.0005f, black
++
++    invoke-direct {v0, v1, v2, v3, v4}, Landroid/view/Display$HdrCapabilities;-><init>([IFFF)V
++
++    iput-object v0, p0, Lcom/android/server/display/DisplayDeviceInfo;->hdrCapabilities:Landroid/view/Display$HdrCapabilities;
++
++    return-void
++
++    :types
++    .array-data 4
++        0x2
++        0x3
++    .end array-data
++.end method
++
++# Inquiline: the screen's mode, with the HDR types (HDR10, HLG) Display.getHdrCapabilities reads.
++.method private static inquilineHdrMode(IIF)Landroid/view/Display$Mode;
++    .registers 9
++
++    move v0, p0
++
++    move v1, p1
++
++    move v2, p2
++
++    move v3, p2
++
++    const/4 v4, 0x0
++
++    new-array v4, v4, [F
++
++    const/4 v5, 0x2
++
++    new-array v5, v5, [I
++
++    fill-array-data v5, :types
++
++    invoke-static/range {v0 .. v5}, Lcom/android/server/display/DisplayAdapter;->createMode(IIFF[F[I)Landroid/view/Display$Mode;
++
++    move-result-object v0
++
++    return-object v0
++
++    :types
++    .array-data 4
++        0x2
++        0x3
++    .end array-data
+ .end method
