@@ -22,16 +22,20 @@ final class ControlsOverlay: NSView {
     private var resizing: Int?
     /// A macro's tap being moved on its own, not the first, which moves the whole macro.
     private var draggingStep: (control: Int, step: Int)?
-    /// A macro being recorded as the game is played: its touches go to the app too.
+    /// A macro being recorded as the game is played, by pointer, keys or a controller: every
+    /// finger that touches the app is kept, with its timing.
     private struct Live {
         let index: Int
         var lastDown: Date?
-        var down: Date?
-        var lastMove: Date?
+        /// Fingers down now: their step, when they touched down, when they last moved.
+        var fingers: [Int64: (step: Int, down: Date, moved: Date)] = [:]
     }
     private var live: Live?
-    /// Lets the display view tell this overlay of the pointer's touches, or stop.
-    var observeTouches: ((((ScrcpySession.TouchAction, Double, Double) -> Void)?) -> Void)?
+    /// Lets the display view tell this overlay of the touches going to the app, or stop; the
+    /// controls work meanwhile as they are here, so they can be recorded.
+    var observeTouches: ((KeyControlSet, ((ScrcpySession.TouchAction, Double, Double, Int64) -> Void)?) -> Void)?
+    /// Asks this overlay to stop recording, from Esc in the game.
+    func stopRecordingFromGame() { stopRecording() }
     /// Plays a macro once, from its settings; nil stops one playing.
     var onTry: ((KeyControl?) -> Void)?
     private var settings: NSPopover?
@@ -151,13 +155,17 @@ final class ControlsOverlay: NSView {
         selected = index
         editButtons.forEach { $0.isHidden = true }
         stopButton.isHidden = false
-        hint.stringValue = "● Recording: play the game as usual, then Stop (or Esc)."
+        hint.stringValue = "● Recording: play with the mouse, keys or a controller, then Stop (or Esc)."
         hint.textColor = .systemRed
-        observeTouches? { [weak self] action, x, y in self?.recorded(action, x, y) }
+        // The controls as they are now, without the macro, work while it records.
+        var working = set
+        working.controls.remove(at: index)
+        working.isOn = true
+        observeTouches?(working) { [weak self] action, x, y, finger in self?.recorded(action, x, y, finger: finger) }
         needsDisplay = true
     }
 
-    private func recorded(_ action: ScrcpySession.TouchAction, _ x: Double, _ y: Double) {
+    private func recorded(_ action: ScrcpySession.TouchAction, _ x: Double, _ y: Double, finger: Int64) {
         guard var current = live, current.index < set.controls.count else { return }
         let now = Date()
         func ms(since date: Date?) -> Int { date.map { min(Int(now.timeIntervalSince($0) * 1000), 10_000) } ?? 0 }
@@ -165,31 +173,29 @@ final class ControlsOverlay: NSView {
         case .down:
             let step = KeyControl.Step(x: x, y: y, delay: ms(since: current.lastDown))
             set.controls[current.index].steps?.append(step)
-            if set.controls[current.index].steps?.count == 1 {
+            let count = set.controls[current.index].steps?.count ?? 0
+            if count == 1 {
                 set.controls[current.index].x = x
                 set.controls[current.index].y = y
             }
             current.lastDown = now
-            current.down = now
-            current.lastMove = now
+            current.fingers[finger] = (count - 1, now, now)
         case .move:
             // A point every 10 ms is a smooth slide, and keeps a long one small.
-            guard current.down != nil, ms(since: current.lastMove) >= 10,
-                  var step = set.controls[current.index].steps?.last else { break }
-            var path = step.path ?? []
-            path.append(KeyControl.PathPoint(x: x, y: y, t: ms(since: current.down)))
-            step.path = path
-            set.controls[current.index].steps?[set.controls[current.index].steps!.count - 1] = step
-            current.lastMove = now
+            guard let held = current.fingers[finger], ms(since: held.moved) >= 10,
+                  var step = set.controls[current.index].steps?[held.step] else { break }
+            step.path = (step.path ?? []) + [KeyControl.PathPoint(x: x, y: y, t: ms(since: held.down))]
+            set.controls[current.index].steps?[held.step] = step
+            current.fingers[finger] = (held.step, held.down, now)
         case .up:
-            guard current.down != nil, var step = set.controls[current.index].steps?.last else { break }
-            let hold = ms(since: current.down)
+            guard let held = current.fingers.removeValue(forKey: finger),
+                  var step = set.controls[current.index].steps?[held.step] else { break }
+            let hold = ms(since: held.down)
             // A short touch that didn't slide is a tap; anything else keeps how it was held.
             let slid = (step.path ?? []).contains { hypot($0.x - step.x, $0.y - step.y) > 0.01 }
             if !slid { step.path = nil }
             step.hold = slid || hold > 150 ? hold : nil
-            set.controls[current.index].steps?[set.controls[current.index].steps!.count - 1] = step
-            current.down = nil
+            set.controls[current.index].steps?[held.step] = step
         default:
             break
         }
@@ -202,7 +208,15 @@ final class ControlsOverlay: NSView {
     private func stopRecording(showSettings: Bool = true) {
         guard let current = live else { return }
         live = nil
-        observeTouches?(nil)
+        observeTouches?(set, nil)
+        // Fingers still down when it stopped lift where they are.
+        if current.index < set.controls.count {
+            for (_, held) in current.fingers {
+                guard var step = set.controls[current.index].steps?[held.step] else { continue }
+                step.hold = Int(Date().timeIntervalSince(held.down) * 1000)
+                set.controls[current.index].steps?[held.step] = step
+            }
+        }
         editButtons.forEach { $0.isHidden = false }
         stopButton.isHidden = true
         hint.stringValue = Self.editHint
@@ -479,7 +493,7 @@ final class ControlsOverlay: NSView {
             settingsController.choose(key: code, label: name)
             return true
         }
-        guard live == nil else { return true }
+        guard live == nil else { return false } // while a macro records, the controller plays
         assign(code, name)
         return true
     }

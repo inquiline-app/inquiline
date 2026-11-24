@@ -35,6 +35,7 @@ final class AndroidDisplayView: NSView {
     func sendFinger(_ action: ScrcpySession.TouchAction, x: Int, y: Int, finger: Int64) {
         let x = min(max(x, 0), Int(displaySize.width) - 1), y = min(max(y, 0), Int(displaySize.height) - 1)
         session?.sendTouch(action, x: x, y: y, width: Int(displaySize.width), height: Int(displaySize.height), finger: finger)
+        touchObserver?(action, Double(x) / displaySize.width, Double(y) / displaySize.height, finger)
     }
 
     func showCaughtNote(_ on: Bool) { onCaught?(on) }
@@ -130,18 +131,20 @@ final class AndroidDisplayView: NSView {
         )
     }
 
-    /// Told of each touch the pointer makes, as fractions of the screen, while a macro records
-    /// (ControlsOverlay); the touches go to the app too, and the controls are left out meanwhile.
-    var touchObserver: ((ScrcpySession.TouchAction, Double, Double) -> Void)?
+    /// Told of every touch that goes to the app, from the pointer or a control (keys, a
+    /// controller, mouse aim), each finger apart, as fractions of the screen, while a macro
+    /// records (ControlsOverlay).
+    var touchObserver: ((ScrcpySession.TouchAction, Double, Double, Int64) -> Void)?
+    /// Esc while a macro records, unless it lets go of a caught pointer.
+    var onEscapeWhileRecording: (() -> Void)?
 
     private func sendTouch(_ action: ScrcpySession.TouchAction, _ event: NSEvent) {
         let point = androidPoint(for: event)
         session?.sendTouch(action, x: point.x, y: point.y, width: Int(displaySize.width), height: Int(displaySize.height))
-        touchObserver?(action, Double(point.x) / displaySize.width, Double(point.y) / displaySize.height)
+        touchObserver?(action, Double(point.x) / displaySize.width, Double(point.y) / displaySize.height, ScrcpySession.mouseFinger)
     }
 
     override func mouseDown(with event: NSEvent) {
-        if touchObserver != nil { sendTouch(.down, event); return }
         if controls.isCaught { _ = controls.key(KeyControl.leftClick, down: true); return }
         // With a mouse-aim control, a click catches the pointer, as a Mac game does.
         if controls.set.isActive && controls.set.hasAim { controls.catchPointer(); return }
@@ -149,13 +152,11 @@ final class AndroidDisplayView: NSView {
     }
 
     override func mouseDragged(with event: NSEvent) {
-        if touchObserver != nil { sendTouch(.move, event); return }
         if controls.isCaught { controls.aim(dx: event.deltaX, dy: event.deltaY); return }
         sendTouch(.move, event)
     }
 
     override func mouseUp(with event: NSEvent) {
-        if touchObserver != nil { sendTouch(.up, event); return }
         if controls.isCaught { _ = controls.key(KeyControl.leftClick, down: false); return }
         guard !(controls.set.isActive && controls.set.hasAim) else { return }
         sendTouch(.up, event)
@@ -314,6 +315,7 @@ final class AndroidDisplayView: NSView {
     override func keyDown(with event: NSEvent) {
         // Esc lets go of a caught pointer, as in Mac games, instead of going back.
         if controls.isCaught && event.keyCode == 53 { controls.releasePointer(); return }
+        if touchObserver != nil && event.keyCode == 53 { onEscapeWhileRecording?(); return }
         if controls.key(Int(event.keyCode), down: true) { return }
         // Esc stays Android's Back, as Android's keyboards give it nothing else to do. A
         // character made with Option goes as text, unless the layout's Option is a PC's AltGr.

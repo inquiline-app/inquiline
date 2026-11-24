@@ -146,7 +146,21 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate, 
         overlay.set = set
         overlay.showsLabels = UserDefaults.standard.bool(forKey: controlsLabelsKey)
         overlay.screenRect = { [unowned self] in displayView.screenRect }
-        overlay.observeTouches = { [unowned self] observer in displayView.touchObserver = observer }
+        overlay.observeTouches = { [unowned self] working, observer in
+            // While a macro records, the game has the keyboard and the controls as edited so far;
+            // after, the controls are what they were until Done.
+            displayView.controls.releaseAll()
+            displayView.touchObserver = observer
+            if observer != nil {
+                displayView.controls.set = working
+                gamepads?.update()
+                window.makeFirstResponder(displayView)
+            } else {
+                displayView.controls.set = KeyControlSet.load(package: package)
+                gamepads?.update()
+            }
+        }
+        displayView.onEscapeWhileRecording = { [unowned self] in overlay.stopRecordingFromGame() }
         overlay.onTry = { [unowned self] macro in
             if let macro { displayView.controls.preview(macro) } else { displayView.controls.stopPreview() }
         }
