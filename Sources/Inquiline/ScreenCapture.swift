@@ -291,6 +291,12 @@ final class EngineAudio {
     static let shared = EngineAudio()
 
     private let queue = DispatchQueue(label: "inquiline.engine-sound", qos: .userInitiated)
+    /// The tap's sound comes on a queue of its own: the tap is stopped and started on `queue`,
+    /// and stopping waits for its last delivery, which on the same queue would never come.
+    private let ioQueue = DispatchQueue(label: "inquiline.engine-sound-io", qos: .userInteractive)
+    /// Guards the listeners, which both queues use.
+    private let lock = NSLock()
+    private var reconciling = false
     private var listeners: [Int32] = []
     /// Listeners that take the sound from the Mac, as a phone showing a window plays it there
     /// (PhoneSound): while one listens, the engine is silent on the Mac.
@@ -324,17 +330,24 @@ final class EngineAudio {
         var on: Int32 = 1
         setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &on, socklen_t(MemoryLayout<Int32>.size))
         guard connected == 0 else { close(fd); return }
+        lock.lock()
         if path.hasSuffix(PhoneSound.socketSuffix) { silencing.insert(fd) }
+        let silence = !silencing.isEmpty
+        lock.unlock()
         // A tap that silences, or that no longer must, is made anew; its listeners stay.
-        if device != kAudioObjectUnknown, tapSilences != !silencing.isEmpty { stopTap() }
+        if device != kAudioObjectUnknown, tapSilences != silence { stopTap() }
         guard device != kAudioObjectUnknown || startTap() else {
-            silencing.remove(fd)
+            lock.lock(); silencing.remove(fd); lock.unlock()
             close(fd)
             return
         }
         var rate = format.mSampleRate.bitPattern.littleEndian
-        guard Darwin.send(fd, &rate, 8, 0) == 8 else { close(fd); return }
-        listeners.append(fd)
+        guard Darwin.send(fd, &rate, 8, 0) == 8 else {
+            lock.lock(); silencing.remove(fd); lock.unlock()
+            close(fd)
+            return
+        }
+        lock.lock(); listeners.append(fd); lock.unlock()
     }
 
     /// The engine's sound, as it plays it, still heard on the Mac.
@@ -345,7 +358,7 @@ final class EngineAudio {
         }
         let description = CATapDescription(stereoMixdownOfProcesses: [engine])
         description.uuid = UUID()
-        tapSilences = !silencing.isEmpty
+        lock.lock(); tapSilences = !silencing.isEmpty; lock.unlock()
         description.muteBehavior = tapSilences ? .muted : .unmuted
         description.isPrivate = true
         guard AudioHardwareCreateProcessTap(description, &tap) == noErr else {
@@ -371,7 +384,8 @@ final class EngineAudio {
             settings[kAudioAggregateDeviceSubDeviceListKey] = [[kAudioSubDeviceUIDKey: output]]
         }
         guard AudioHardwareCreateAggregateDevice(settings as CFDictionary, &device) == noErr,
-              AudioDeviceCreateIOProcIDWithBlock(&proc, device, queue, { [weak self] _, input, inputTime, _, _ in
+              Self.takeDeviceRate(device, into: &format),
+              AudioDeviceCreateIOProcIDWithBlock(&proc, device, ioQueue, { [weak self] _, input, inputTime, _, _ in
                   self?.deliver(input, at: inputTime.pointee.mHostTime)
               }) == noErr,
               AudioDeviceStart(device, proc) == noErr
@@ -423,6 +437,7 @@ final class EngineAudio {
                 }
             }
         }
+        lock.lock()
         listeners.removeAll { fd in
             let sent = packet.withUnsafeBytes { Darwin.send(fd, $0.baseAddress!, $0.count, MSG_DONTWAIT) }
             guard sent != packet.count else { return false }
@@ -430,16 +445,31 @@ final class EngineAudio {
             silencing.remove(fd)
             return true
         }
-        if listeners.isEmpty {
+        // With no listener left the tap stops; with the phone gone, the Mac plays the sound again,
+        // for a recording still listening. Done on `queue`, once this delivery is over.
+        let change = !reconciling && (listeners.isEmpty || tapSilences != !silencing.isEmpty)
+        if change { reconciling = true }
+        lock.unlock()
+        if change { queue.async { [self] in reconcile() } }
+    }
+
+    /// On `queue`: the tap as its listeners want it, or none.
+    private func reconcile() {
+        lock.lock()
+        reconciling = false
+        let none = listeners.isEmpty, silence = !silencing.isEmpty
+        lock.unlock()
+        guard device != kAudioObjectUnknown else { return }
+        if none {
             stopTap()
-        } else if tapSilences, silencing.isEmpty {
-            // The phone is gone: the Mac plays the sound again, for the recording still listening;
-            // made anew once this delivery is done.
-            tapSilences = false
-            queue.async { [self] in
-                guard !listeners.isEmpty, silencing.isEmpty, device != kAudioObjectUnknown else { return }
-                stopTap()
-                _ = startTap()
+        } else if tapSilences != silence {
+            stopTap()
+            if !startTap() {
+                lock.lock()
+                listeners.forEach { close($0) }
+                listeners.removeAll()
+                silencing.removeAll()
+                lock.unlock()
             }
         }
     }
@@ -464,6 +494,18 @@ final class EngineAudio {
             if String(cString: path).hasSuffix("/" + AndroidRuntime.engineName) { return object }
         }
         return nil
+    }
+
+    /// The tap's sound comes at the device's rate, the Mac's speakers' (44.1 kHz for many
+    /// displays), not the engine's own 48 kHz, which the tap's format says: taken as the
+    /// engine's, the sound ran 9% fast and ahead of the picture.
+    private static func takeDeviceRate(_ device: AudioObjectID, into format: inout AudioStreamBasicDescription) -> Bool {
+        var address = AudioObjectPropertyAddress(mSelector: kAudioDevicePropertyNominalSampleRate,
+                                                 mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
+        var rate: Float64 = 0
+        var size = UInt32(MemoryLayout<Float64>.size)
+        if AudioObjectGetPropertyData(device, &address, 0, nil, &size, &rate) == noErr, rate > 0 { format.mSampleRate = rate }
+        return true
     }
 
     private static func outputUID() -> String? {
