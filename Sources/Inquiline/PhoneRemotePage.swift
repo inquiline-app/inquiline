@@ -135,6 +135,9 @@ enum PhoneRemotePage {
   /* The phone's own keyboard, typing into the app: its text field sits above the keyboard. */
   #typeKey { position: absolute; right: 30px; bottom: 14px; width: 44px; height: 44px; z-index: 2; }
   #padKey { position: absolute; left: 30px; bottom: 14px; width: 44px; height: 44px; z-index: 2; }
+  #shotKey { position: absolute; left: 30px; top: 14px; width: 44px; height: 44px; z-index: 2; }
+  #recordKey { position: absolute; right: 30px; top: 14px; width: 44px; height: 44px; z-index: 2; }
+  #recordKey.on { background: #ff453a; color: #fff; }
   #typing { position: fixed; left: 0; right: 0; bottom: 0; z-index: 8; display: none; padding: 10px 12px calc(10px + env(safe-area-inset-bottom));
     background: rgba(28,28,30,.97); border-top: 1px solid var(--edge); gap: 10px; align-items: center; }
   #typing.on { display: flex; }
@@ -188,6 +191,8 @@ enum PhoneRemotePage {
     </div>
   </section>
   <section id="touch"><div id="surface">Touch as on the app's screen</div>
+    <button class="round" id="shotKey" aria-label="Screenshot"><svg viewBox="0 0 24 24"><path d="M4 8h3l1.5-2h7L17 8h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></svg></button>
+    <button class="round" id="recordKey" aria-label="Record"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="3.5" fill="currentColor"/></svg></button>
     <button class="round" id="padKey" aria-label="Trackpad"><svg viewBox="0 0 24 24"><path d="M6 3l12 9-5.5 1.2L15.5 20l-2.6 1.1-3-6.6L6 18z"/></svg></button>
     <button class="round" id="typeKey" aria-label="Type"><svg viewBox="0 0 24 24"><rect x="2.5" y="6" width="19" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 14h10"/></svg></button></section>
 </main>
@@ -276,7 +281,7 @@ enum PhoneRemotePage {
     };
     socket.onmessage = e => {
       const m = JSON.parse(e.data);
-      if (m.t === "state") muted(m.muted);
+      if (m.t === "state") { muted(m.muted); document.getElementById("recordKey").classList.toggle("on", !!m.recording); }
       else if (m.t === "player") document.getElementById("player").textContent = "Player " + m.n;
       else if (m.t.startsWith("screen-")) screenSignal(m, socket);
       else if (signaled) signaled(m);
@@ -310,6 +315,9 @@ enum PhoneRemotePage {
     }
   };
   document.getElementById("assistant").onclick = () => { buzz(); message({ t: "assistant" }); };
+  // The window's screenshot and recording, saved on the Mac as its own capture button does.
+  document.getElementById("shotKey").onclick = () => { buzz(); message({ t: "screenshot" }); };
+  document.getElementById("recordKey").onclick = () => { buzz(); message({ t: "record" }); };
   document.querySelectorAll("footer [data-k]").forEach(b => b.onclick = () => { buzz(); message({ t: "key", k: b.dataset.k }); });
 
   // The title opens Inquiline's apps, as the Dock shows them; one tapped opens on the Mac, in

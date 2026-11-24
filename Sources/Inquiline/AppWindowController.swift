@@ -1042,6 +1042,7 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate, 
 
     /// A camera; while recording, a red button that stops it.
     private func updateCaptureItem() {
+        phoneRemote?.share(recording: recorder != nil)
         guard let item = captureToolbarItem else { return }
         if recorder != nil {
             let red = NSImage.SymbolConfiguration(paletteColors: [.white, .systemRed])
@@ -1084,6 +1085,9 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate, 
         let input = phoneInput
         input.update(session: session, size: displaySize, task: watchedTask)
         input.onAssistant = { [weak self] in self?.askAssistant() }
+        input.onCapture = { [weak self] recording in
+            if recording { self?.toggleRecording(nil) } else { self?.takeScreenshot(nil) }
+        }
         input.onMute = { [weak self] in
             guard let self else { return }
             self.setMuted(!UserDefaults.standard.bool(forKey: self.mutedKey))

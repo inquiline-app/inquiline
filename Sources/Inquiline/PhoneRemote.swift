@@ -31,6 +31,8 @@ final class PhoneRemote {
         enum MouseAction: String { case move, click, down, up, scroll }
         /// The window's own mute, which works for any app, switched.
         case mute
+        /// A screenshot, or recording started or stopped, as the window's own capture button.
+        case screenshot, record
         case assistant
     }
 
@@ -363,9 +365,15 @@ final class PhoneRemote {
     /// to every phone when it changes, and to a phone when it connects.
     private var shared: [String: Any] = [:]
 
-    func share(muted: Bool) {
+    func share(muted: Bool) { share("muted", muted) }
+
+    /// Whether the window is being recorded, which the phone's record key shows.
+    func share(recording: Bool) { share("recording", recording) }
+
+    private func share(_ name: String, _ value: Any) {
         queue.async { [self] in
-            shared = ["t": "state", "muted": muted]
+            shared["t"] = "state"
+            shared[name] = value
             for key in trusted { signal(shared, key: key) }
         }
     }
@@ -420,6 +428,10 @@ final class PhoneRemote {
         case "text":
             guard let text = message["s"] as? String, !text.isEmpty else { return }
             input = .text(String(text.prefix(2000)))
+        case "screenshot":
+            input = .screenshot
+        case "record":
+            input = .record
         case "assistant":
             input = .assistant
         default:
@@ -445,6 +457,8 @@ final class PhoneInput {
     var onAssistant: (() -> Void)?
     /// The phone's mute key, for the window's own mute; called on the main queue.
     var onMute: (() -> Void)?
+    /// The phone's capture keys: a screenshot (false) or recording (true); on the main queue.
+    var onCapture: ((Bool) -> Void)?
     /// A touchpad finger, for showing it on the Mac; called on the main queue.
     var onTouch: ((ScrcpySession.TouchAction, Double, Double, Int) -> Void)?
     /// The trackpad's cursor, from 0 to 1 across the app's screen, for showing it on the Mac;
@@ -646,6 +660,10 @@ final class PhoneInput {
             }
         case .mute:
             DispatchQueue.main.async { self.onMute?() }
+        case .screenshot:
+            DispatchQueue.main.async { self.onCapture?(false) }
+        case .record:
+            DispatchQueue.main.async { self.onCapture?(true) }
         case .assistant:
             DispatchQueue.main.async { self.onAssistant?() }
         }
