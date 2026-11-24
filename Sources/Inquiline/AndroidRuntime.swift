@@ -699,8 +699,7 @@ final class AndroidRuntime {
     /// 34: Android's video decoders take HDR video (VP9 profile 2, AV1 and HEVC HDR10), which the
     /// Mac tone-maps to SDR (engine patch 0111).
     /// 35: they tell the Mac the colour the container gives, as VP9 can't say HDR itself.
-    /// 36: apps' screens say they show HDR10 and HLG (services.jar), so apps offer HDR video.
-    private static let diskRevision = 36
+    private static let diskRevision = 35
 
     private var builtInScreen: ScrcpySession.Screen { ScrcpySession.Resolution.forThisMac.screen(landscape: false) }
     /// The VM's memory map fits the 36-bit (64 GB) address space Apple's M1 and M2 give a VM:
