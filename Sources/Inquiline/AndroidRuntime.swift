@@ -95,7 +95,18 @@ final class AndroidRuntime {
         }
 
         let start = Date(), deadline = start.addingTimeInterval(180)
+        var booted: Date?
         while !isReady() {
+            // The ad blocker's authority is trusted as Android starts, before any window opens
+            // its app, so none has to start again for it.
+            if (try? AdbClient.shell("getprop sys.boot_completed", timeout: 5))?.trimmingCharacters(in: .whitespacesAndNewlines) == "1" {
+                booted = booted ?? Date()
+                // Never held up by it: after a while the apps open anyway, and are started again
+                // once it's trusted, as before.
+                if !trustAdBlockAuthority(), let since = booted, Date().timeIntervalSince(since) > 15 {
+                    _ = try? shell("su 0 setprop \(Self.authorityReady) 1")
+                }
+            }
             if let vm, !vm.isRunning {
                 throw RuntimeError("The Android VM exited during startup.")
             }
@@ -566,7 +577,8 @@ final class AndroidRuntime {
               booted.trimmingCharacters(in: .whitespacesAndNewlines) == "1",
               (try? AdbClient.shell("settings get global device_name", timeout: 5))?.isEmpty == false,
               let packages = try? AdbClient.shell("cmd package path android", timeout: 5),
-              packages.contains("package:")
+              packages.contains("package:"),
+              (try? AdbClient.shell("getprop \(authorityReady)", timeout: 5))?.trimmingCharacters(in: .whitespacesAndNewlines) == "1"
         else { return false }
         return true
     }
@@ -708,7 +720,9 @@ final class AndroidRuntime {
     /// the Mac's 48 kHz: about a third of the delay it had.
     /// 34-37: HDR video, tried by testers and withdrawn.
     /// 38: the video decoders and system services as in 33.
-    private static let diskRevision = 38
+    /// 39: the sound driver says the sound is as far along as it leads the picture on the Mac
+    /// (vendor.inquiline.audio.lead_ms, PictureSoundSync), so players keep the two together.
+    private static let diskRevision = 39
 
     private var builtInScreen: ScrcpySession.Screen { ScrcpySession.Resolution.forThisMac.screen(landscape: false) }
     /// The VM's memory map fits the 36-bit (64 GB) address space Apple's M1 and M2 give a VM:
@@ -1102,6 +1116,11 @@ final class AndroidRuntime {
         }
     }
 
+    /// Set once Android trusts the ad blocker's authority this start, or there is none yet:
+    /// windows wait for it before they open their apps (isReady), so no app opened as Android
+    /// starts has to be ended to see the authority.
+    private static let authorityReady = "vendor.inquiline.authority_ready"
+
     /// Apps Inquiline ended to start again (wasEndedBySystem), one empty file each.
     private static let restartMarks = "/data/local/tmp/inquiline-restart"
 
@@ -1116,19 +1135,25 @@ final class AndroidRuntime {
         let files = "/data/data/\(NotificationBridge.agent)/files"
         let store = "/apex/com.android.conscrypt/cacerts", copy = "/dev/inquiline-cacerts"
         let script = """
-            N=$(cat \(files)/ca.name 2>/dev/null); [ -n "$N" ] || { echo none; exit 0; }; \
+            N=$(cat \(files)/ca.name 2>/dev/null); [ -n "$N" ] || { setprop \(Self.authorityReady) 1; echo none; exit 0; }; \
             if [ ! -f \(copy)/$N ]; then mkdir -p \(copy) && cp \(store)/* \(copy)/ && cp \(files)/ca.pem \(copy)/$N && chmod 644 \(copy)/*; fi; \
             [ -f \(store)/$N ] || mount --bind \(copy) \(store); \
             Z=$(pidof zygote64 zygote); NEW=; \
             for p in $Z; do nsenter --mount=/proc/$p/ns/mnt -- sh -c "[ -f \(store)/$N ]" || { NEW=1; nsenter --mount=/proc/$p/ns/mnt -- mount --bind \(copy) \(store); }; done; \
             U=/data/misc/user/0/cacerts-added; mkdir -p $U && cp \(files)/ca.pem $U/$N && chown system:system $U $U/$N && chmod 644 $U/$N; \
             if [ -n "$NEW" ]; then for a in $(cut -d" " -f1 \(files)/adblock 2>/dev/null); do P=$(pidof $a) && mkdir -p \(Self.restartMarks) && touch \(Self.restartMarks)/$a && kill -9 $P; done; fi; \
-            echo trusted
+            setprop \(Self.authorityReady) 1; echo trusted
             """
         // An app only sees an authority added after it started once it starts again, as on a
         // phone: those running with their ads blocked then start again, their windows reopening
         // them (restartMarks), so they don't refuse every site the proxy opens for them.
         return (try? shell("su 0 sh -c '\(script)'"))?.contains("trusted") == true
+    }
+
+    /// How far the sound leads the picture on the Mac, for Android's sound driver to make up
+    /// (PictureSoundSync).
+    func setSoundLead(ms: Int) {
+        _ = try? shell("su 0 setprop vendor.inquiline.audio.lead_ms \(min(max(ms, 0), 200))")
     }
 
     /// Mutes one app as Android itself does, by taking away its permission to play sound

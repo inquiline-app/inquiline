@@ -175,6 +175,12 @@ final class FrameRenderer {
             encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
             encoder.endEncoding()
         }
+        // When the frame is actually on the screen, for keeping the sound with it (PictureSoundSync).
+        let committed = CACurrentMediaTime()
+        drawable.addPresentedHandler { shown in
+            guard shown.presentedTime > 0 else { return }
+            PictureSoundSync.shared.framePresented(after: shown.presentedTime - committed)
+        }
         commands.present(drawable)
         commands.addCompletedHandler { [freeSlots] _ in freeSlots.signal() }
         commands.commit()

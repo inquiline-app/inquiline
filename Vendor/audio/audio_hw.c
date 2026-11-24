@@ -409,12 +409,39 @@ static ssize_t out_write(struct audio_stream_out *stream, const void* buffer,
     return bytes;
 }
 
+/* How far the Mac shows a picture after it plays the sound that goes with it, in ms, as
+ * Inquiline measures it (the picture's way to the Mac's screen, less the sound's to its
+ * speakers): the sound is said to be that far along, so players, which time their pictures by
+ * the sound, show them that much sooner, as goldfish tells Android the host's sound latency
+ * (ro.hardware.audio.tinyalsa.host_latency_ms). Read again each second. */
+static int64_t lead_frames(uint32_t rate)
+{
+    static pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
+    static int64_t read_ns, lead_ms;
+    pthread_mutex_lock(&lock);
+    int64_t now = now_ns();
+    if (now - read_ns > 1000000000LL) {
+        read_ns = now;
+        unsigned ms = audio_property("vendor.inquiline.audio.lead_ms", 0);
+        lead_ms = ms > 200 ? 200 : ms;
+    }
+    int64_t frames = lead_ms * rate / 1000;
+    pthread_mutex_unlock(&lock);
+    return frames;
+}
+
 static int out_get_presentation_position(const struct audio_stream_out *stream,
                                          uint64_t *frames, struct timespec *timestamp)
 {
     const struct stub_stream_out *out = (const struct stub_stream_out *)stream;
     if (!out->sink) return -ENODATA;
     sink_position(out->sink, frames, timestamp);
+    /* Never past what was written: a player takes that for sound it never gave. */
+    pthread_mutex_lock(&out->sink->lock);
+    uint64_t written = out->sink->received;
+    pthread_mutex_unlock(&out->sink->lock);
+    uint64_t ahead = *frames + (uint64_t)lead_frames(out->sample_rate);
+    *frames = ahead < written ? ahead : written;
     *frames += out->frames_before;
     return 0;
 }
