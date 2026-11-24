@@ -24,6 +24,16 @@ final class ControlsOverlay: NSView {
     private var draggingStep: (control: Int, step: Int)?
     /// A macro being recorded: first its key, then its taps.
     private var recording: (index: Int, hasKey: Bool, last: Date?)?
+    /// The macro being recorded, if it's still there: Clear All, or a new set of controls, can
+    /// take it away while it records.
+    private var recordingMacro: (index: Int, hasKey: Bool, last: Date?)? {
+        guard let current = recording else { return nil }
+        guard current.index < set.controls.count, set.controls[current.index].kind == .macro else {
+            recording = nil
+            return nil
+        }
+        return current
+    }
     private let hint = NSTextField(labelWithString: "")
     private static let editHint = "Click a button in the game, then press its key or controller button."
     private let bar = NSStackView()
@@ -285,7 +295,7 @@ final class ControlsOverlay: NSView {
             needsDisplay = true
             return
         }
-        if let current = recording, macroStep(at: point) == nil {
+        if let current = recordingMacro, macroStep(at: point) == nil {
             guard current.hasKey, screenRect().contains(CGPoint(x: point.x, y: bounds.height - point.y)) else { return }
             let now = Date()
             let delay = current.last.map { Int(now.timeIntervalSince($0) * 1000) } ?? 0
@@ -403,7 +413,7 @@ final class ControlsOverlay: NSView {
     /// Returns whether it was taken.
     func padPressed(_ code: Int) -> Bool {
         guard isEditing, let name = KeyControl.Pad(rawValue: code)?.name else { return false }
-        if let current = recording {
+        if let current = recordingMacro {
             guard !current.hasKey else { return true }
             for index in set.controls.indices where index != current.index && set.controls[index].key == code {
                 set.controls[index].key = nil
@@ -420,7 +430,7 @@ final class ControlsOverlay: NSView {
     }
 
     override func keyDown(with event: NSEvent) {
-        if let current = recording {
+        if let current = recordingMacro {
             switch event.keyCode {
             case 53: cancelRecording() // Esc
             case 36, 76: finishRecording() // Return

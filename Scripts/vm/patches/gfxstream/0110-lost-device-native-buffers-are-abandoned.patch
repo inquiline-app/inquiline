@@ -1,0 +1,32 @@
+Inquiline: a lost device's Android native buffers are abandoned, not torn down: their
+queue waits reached a MoltenVK queue already freed and crashed the engine.
+
+diff -ru a/host/vulkan/vk_android_native_buffer_operations.h b/host/vulkan/vk_android_native_buffer_operations.h
+--- a/host/vulkan/vk_android_native_buffer_operations.h
++++ b/host/vulkan/vk_android_native_buffer_operations.h
+@@ -56,6 +56,10 @@
+     AndroidNativeBufferInfo(AndroidNativeBufferInfo&&) = delete;
+     AndroidNativeBufferInfo& operator=(AndroidNativeBufferInfo&&) = delete;
+ 
++    // Inquiline: its device was lost, and wasn't destroyed: what it holds is left as it is, as
++    // waiting on or freeing it would reach a queue the driver may already have freed.
++    void abandon() { mDevice = VK_NULL_HANDLE; }
++
+     ~AndroidNativeBufferInfo();
+ 
+     VkImage getImage() const { return mImage; }
+diff -ru a/host/vulkan/vk_decoder_global_state.cpp b/host/vulkan/vk_decoder_global_state.cpp
+--- a/host/vulkan/vk_decoder_global_state.cpp
++++ b/host/vulkan/vk_decoder_global_state.cpp
+@@ -11117,6 +11117,11 @@
+                     "Cannot destroy Vulkan device and objects. "
+                     "vkDeviceWaitIdle failed with %s [%d].",
+                     string_VkResult(res), res);
++                // Inquiline: the device objects are still freed with the instance, and an Android
++                // native buffer's would wait on its lost queue (MoltenVK then reads freed memory).
++                for (auto& [image, imageInfo] : deviceObjects.images) {
++                    if (imageInfo.anbInfo) imageInfo.anbInfo->abandon();
++                }
+                 return;
+             }
+ 
