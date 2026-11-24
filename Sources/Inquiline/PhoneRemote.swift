@@ -25,6 +25,10 @@ final class PhoneRemote {
         case key(Int32)
         /// Text typed or pasted on the phone's own keyboard.
         case text(String)
+        /// The touchpad as a Mac's trackpad: the cursor moved by a part of the screen's width
+        /// (dx, dy), a click, a press and its release for a drag, or a scroll.
+        case mouse(MouseAction, dx: Double, dy: Double)
+        enum MouseAction: String { case move, click, down, up, scroll }
         /// The window's own mute, which works for any app, switched.
         case mute
         case assistant
@@ -410,6 +414,9 @@ final class PhoneRemote {
             let keys: [String: Int32] = ["back": 4, "playpause": 85, "delete": 67, "enter": 66]
             guard let code = keys[message["k"] as? String ?? ""] else { return }
             input = .key(code)
+        case "mouse":
+            guard let action = Input.MouseAction(rawValue: message["a"] as? String ?? "") else { return }
+            input = .mouse(action, dx: max(min(number("dx"), 1), -1), dy: max(min(number("dy"), 1), -1))
         case "text":
             guard let text = message["s"] as? String, !text.isEmpty else { return }
             input = .text(String(text.prefix(2000)))
@@ -440,6 +447,15 @@ final class PhoneInput {
     var onMute: (() -> Void)?
     /// A touchpad finger, for showing it on the Mac; called on the main queue.
     var onTouch: ((ScrcpySession.TouchAction, Double, Double, Int) -> Void)?
+    /// The trackpad's cursor, from 0 to 1 across the app's screen, for showing it on the Mac;
+    /// called on the main queue.
+    var onCursor: ((Double, Double) -> Void)?
+
+    /// The trackpad's cursor, from 0 to 1 across the app's screen; a drag holds it down.
+    private var cursorX = 0.5, cursorY = 0.5
+    private var dragging = false
+    /// The trackpad's finger, apart from the touchpad's (0 to 9).
+    private static let cursorFinger = 9
 
     /// The phones' controllers in Android, after the Mac's own (GamepadBridge, 3 to 10): one
     /// for each player, from 11.
@@ -595,6 +611,31 @@ final class PhoneInput {
         case let .key(code):
             session.sendKey(.down, keycode: code)
             session.sendKey(.up, keycode: code)
+        case let .mouse(action, dx, dy):
+            guard width > 0, height > 0 else { return }
+            switch action {
+            case .move:
+                // Across the screen's width as one: the same move goes as far either way.
+                cursorX = min(max(cursorX + dx, 0), 1)
+                cursorY = min(max(cursorY + dy * Double(width) / Double(height), 0), 1)
+                if dragging { send(.move, x: cursorX, y: cursorY, finger: Self.cursorFinger) }
+            case .click:
+                send(.down, x: cursorX, y: cursorY, finger: Self.cursorFinger)
+                send(.up, x: cursorX, y: cursorY, finger: Self.cursorFinger)
+            case .down:
+                dragging = true
+                send(.down, x: cursorX, y: cursorY, finger: Self.cursorFinger)
+            case .up:
+                guard dragging else { return }
+                dragging = false
+                send(.up, x: cursorX, y: cursorY, finger: Self.cursorFinger)
+            case .scroll:
+                // Natural scrolling, as the Mac's: content follows the fingers.
+                session.sendScroll(x: Int(cursorX * Double(width)), y: Int(cursorY * Double(height)), width: width, height: height,
+                                   horizontal: max(min(dx * 40, 16), -16), vertical: max(min(dy * 40, 16), -16))
+            }
+            let x = cursorX, y = cursorY
+            if let onCursor { DispatchQueue.main.async { onCursor(x, y) } }
         case let .text(text):
             // Typed as keys where Android's keyboard map has them; other letters (ğ, ş, emoji)
             // and pasted text go as a paste, as scrcpy does.

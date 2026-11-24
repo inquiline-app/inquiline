@@ -44,6 +44,37 @@ final class AndroidDisplayView: NSView {
     /// phone's "show taps" does, so that watching the Mac one sees where the finger is.
     private var phoneFingers: [Int: CALayer] = [:]
 
+    /// The phone's trackpad cursor, the Mac's own arrow, at a point from 0 to 1 across Android's
+    /// screen; it fades when the trackpad rests, as the Mac's does.
+    private var phoneCursor: CALayer?
+    private var cursorFade: DispatchWorkItem?
+
+    func showPhoneCursor(x: Double, y: Double) {
+        let rect = screenRect
+        let cursor = phoneCursor ?? {
+            let cursor = CALayer()
+            let image = NSCursor.arrow.image
+            cursor.contents = image
+            cursor.bounds = CGRect(origin: .zero, size: image.size)
+            // The arrow's tip is its hot spot.
+            let spot = NSCursor.arrow.hotSpot
+            cursor.anchorPoint = CGPoint(x: spot.x / image.size.width, y: 1 - spot.y / image.size.height)
+            cursor.zPosition = 11
+            layer?.addSublayer(cursor)
+            phoneCursor = cursor
+            return cursor
+        }()
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        cursor.position = CGPoint(x: rect.minX + x * rect.width, y: rect.maxY - y * rect.height)
+        cursor.opacity = 1
+        CATransaction.commit()
+        cursorFade?.cancel()
+        let fade = DispatchWorkItem { [weak cursor] in cursor?.opacity = 0 }
+        cursorFade = fade
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3, execute: fade)
+    }
+
     func showPhoneFinger(_ action: ScrcpySession.TouchAction, x: Double, y: Double, finger: Int) {
         let rect = screenRect
         let center = CGPoint(x: rect.minX + x * rect.width, y: rect.maxY - y * rect.height)

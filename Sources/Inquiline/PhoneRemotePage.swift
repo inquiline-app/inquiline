@@ -134,6 +134,7 @@ enum PhoneRemotePage {
   #screen #waiting { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: var(--dim); }
   /* The phone's own keyboard, typing into the app: its text field sits above the keyboard. */
   #typeKey { position: absolute; right: 30px; bottom: 14px; width: 44px; height: 44px; z-index: 2; }
+  #padKey { position: absolute; left: 30px; bottom: 14px; width: 44px; height: 44px; z-index: 2; }
   #typing { position: fixed; left: 0; right: 0; bottom: 0; z-index: 8; display: none; padding: 10px 12px calc(10px + env(safe-area-inset-bottom));
     background: rgba(28,28,30,.97); border-top: 1px solid var(--edge); gap: 10px; align-items: center; }
   #typing.on { display: flex; }
@@ -187,6 +188,7 @@ enum PhoneRemotePage {
     </div>
   </section>
   <section id="touch"><div id="surface">Touch as on the app's screen</div>
+    <button class="round" id="padKey" aria-label="Trackpad"><svg viewBox="0 0 24 24"><path d="M6 3l12 9-5.5 1.2L15.5 20l-2.6 1.1-3-6.6L6 18z"/></svg></button>
     <button class="round" id="typeKey" aria-label="Type"><svg viewBox="0 0 24 24"><rect x="2.5" y="6" width="19" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 14h10"/></svg></button></section>
 </main>
 <footer>
@@ -580,7 +582,71 @@ enum PhoneRemotePage {
     places.forEach((p, id) => message({ t: "touch", a: "move", id, x: p.x, y: p.y }, true));
     requestAnimationFrame(tick);
   }
+  // The touchpad as a Mac's trackpad, as KDE Connect's has it: one finger moves the cursor,
+  // a tap clicks, a tap then a finger held moves while pressed (a drag), two fingers scroll,
+  // two tapped press and hold (Android's long press, its right click). The cursor speeds up
+  // with the finger, after libinput's touchpad acceleration (filter-touchpad.c, MIT): slower
+  // than the finger when slow, for precision, one to one in between, up to further when fast.
+  const padKey = document.getElementById("padKey");
+  let trackpad = false;
+  try { trackpad = localStorage.getItem("trackpad") === "on"; } catch (e) {}
+  function showTrackpad() {
+    padKey.classList.toggle("on", trackpad);
+    surface.firstChild.textContent = trackpad ? "Trackpad" : "Touch as on the app's screen";
+  }
+  padKey.onclick = () => {
+    buzz(); trackpad = !trackpad; showTrackpad();
+    try { localStorage.setItem("trackpad", trackpad ? "on" : "off"); } catch (e) {}
+  };
+  showTrackpad();
+  function accelerate(speed) { // CSS px per second, about 0.16 mm each
+    const mm = speed * 0.16, threshold = 130, baseline = 0.9;
+    let factor;
+    if (mm < 7) factor = Math.min(baseline, 0.1 * mm + 0.3);
+    else if (mm < threshold) factor = baseline;
+    else { const v = Math.min(mm, threshold * 4); factor = 0.0025 * (v / threshold) * (v - threshold) + baseline; }
+    return factor / baseline;
+  }
+  const track = { fingers: new Map(), start: 0, moved: 0, lastTap: 0, dragging: false, maxFingers: 0 };
+  function padDown(e) {
+    track.fingers.set(e.pointerId, { x: e.clientX, y: e.clientY, t: e.timeStamp });
+    surface.setPointerCapture(e.pointerId);
+    if (track.fingers.size === 1) {
+      track.start = e.timeStamp; track.moved = 0; track.maxFingers = 1;
+      // A tap just before, then this finger: a drag, pressed until it lifts.
+      if (e.timeStamp - track.lastTap < 300) { track.dragging = true; message({ t: "mouse", a: "down" }); }
+    }
+    track.maxFingers = Math.max(track.maxFingers, track.fingers.size);
+    e.preventDefault();
+  }
+  function padMove(e) {
+    const f = track.fingers.get(e.pointerId);
+    if (!f) return;
+    const dx = e.clientX - f.x, dy = e.clientY - f.y, dt = Math.max(e.timeStamp - f.t, 1) / 1000;
+    f.x = e.clientX; f.y = e.clientY; f.t = e.timeStamp;
+    track.moved += Math.hypot(dx, dy);
+    const width = surface.clientWidth;
+    if (track.fingers.size >= 2) {
+      // Two fingers scroll, each finger's half, as the content follows them.
+      message({ t: "mouse", a: "scroll", dx: dx / width / track.fingers.size, dy: dy / width / track.fingers.size }, true);
+      return;
+    }
+    const gain = accelerate(Math.hypot(dx, dy) / dt);
+    message({ t: "mouse", a: "move", dx: dx * gain / width, dy: dy * gain / width }, true);
+  }
+  function padUp(e) {
+    if (!track.fingers.delete(e.pointerId) || track.fingers.size > 0) return;
+    const short = e.timeStamp - track.start < 250 && track.moved < 10;
+    if (track.dragging) { track.dragging = false; message({ t: "mouse", a: "up" }); track.lastTap = 0; return; }
+    if (short && track.maxFingers === 1) { message({ t: "mouse", a: "click" }); track.lastTap = e.timeStamp; }
+    else if (short && track.maxFingers === 2) {
+      message({ t: "mouse", a: "down" });
+      setTimeout(() => message({ t: "mouse", a: "up" }), 600);
+    }
+  }
+
   function land(e) {
+    if (trackpad && e.currentTarget === surface) return padDown(e);
     let id = 0; while ([...touches.values()].includes(id)) id++;
     touches.set(e.pointerId, id); e.currentTarget.setPointerCapture(e.pointerId);
     const p = where(e);
@@ -594,11 +660,13 @@ enum PhoneRemotePage {
     e.preventDefault();
   }
   function slide(e) {
+    if (trackpad && e.currentTarget === surface) return padMove(e);
     if (!touches.has(e.pointerId)) return;
     const id = touches.get(e.pointerId), p = where(e);
     places.set(id, p); place(spots.get(id), p);
   }
   function release(e) {
+    if (trackpad && e.currentTarget === surface) return padUp(e);
     if (!touches.has(e.pointerId)) return;
     const id = touches.get(e.pointerId);
     places.delete(id);
