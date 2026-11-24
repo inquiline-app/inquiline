@@ -476,6 +476,12 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate, 
 
     // MARK: - Shown on a phone
 
+    /// Whether a phone shows the window now, which offers the phone as where the sound plays.
+    private var phoneShowsWindow = false
+    static let soundOnPhoneKey = "SoundOnPhone"
+    /// The phone, unless the user chose the Mac: a phone showing the window is the one in use.
+    static var soundOnPhone: Bool { UserDefaults.standard.object(forKey: soundOnPhoneKey) as? Bool ?? true }
+
     /// The window's frame before a phone showed it, to go back to.
     private var frameBeforePhone: NSRect?
 
@@ -1091,6 +1097,7 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate, 
         remote.onScreen = { [weak self] screen in
             guard let self else { return }
             self.displayView.renderer?.mirror(to: screen)
+            self.phoneShowsWindow = screen != nil
             if screen == nil { self.unfitFromPhone() }
             // Typed by touch on the phone: Android's own keyboard shows in the picture.
             if let display = self.watchedDisplay.flatMap({ Int($0.filter(\.isNumber)) }) { // "Display #2"
@@ -1099,6 +1106,7 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate, 
             }
         }
         remote.windowFits = isFlexible
+        remote.setSoundOnPhone(Self.soundOnPhone)
         remote.onScreenFit = { [weak self] shape in self?.fit(phoneShape: shape) }
         remote.onPhones = { [weak self] count in
             guard let self else { return }
@@ -1169,7 +1177,12 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate, 
     @objc private func showSound(_ sender: Any?) {
         let popover = NSPopover()
         popover.behavior = .transient
-        let view = SoundView(muted: UserDefaults.standard.bool(forKey: mutedKey))
+        let view = SoundView(muted: UserDefaults.standard.bool(forKey: mutedKey),
+                             soundOnPhone: phoneShowsWindow ? Self.soundOnPhone : nil)
+        view.outputChanged = { [weak self] onPhone in
+            UserDefaults.standard.set(onPhone, forKey: Self.soundOnPhoneKey)
+            self?.phoneRemote?.setSoundOnPhone(onPhone)
+        }
         view.muteChanged = { [weak self] muted in self?.setMuted(muted) }
         let controller = NSViewController()
         controller.view = view
@@ -2121,8 +2134,12 @@ private final class SoundView: NSView {
     var onResize: ((NSSize) -> Void)?
     var muteChanged: ((Bool) -> Void)?
     private let mute = NSSwitch()
+    /// Where the sound plays while a phone shows the window: the Mac (0) or the phone (1), as
+    /// AirPlay's output; nil hides the choice, with no phone showing.
+    var outputChanged: ((Bool) -> Void)?
+    private let output = NSSegmentedControl(labels: ["Mac", "Phone"], trackingMode: .selectOne, target: nil, action: nil)
 
-    init(muted: Bool) {
+    init(muted: Bool, soundOnPhone: Bool? = nil) {
         super.init(frame: .zero)
         slider.isEnabled = Self.lastLevel != nil
         slider.target = self
@@ -2185,7 +2202,14 @@ private final class SoundView: NSView {
         let muteRow = NSStackView(views: [NSTextField(labelWithString: "Mute This App"), NSView(), mute])
         muteRow.orientation = .horizontal
 
-        let stack = NSStackView(views: [volume, muteRow, equalizerRow, bandRow, loudnessRow])
+        output.selectedSegment = soundOnPhone == true ? 1 : 0
+        output.target = self
+        output.action = #selector(outputToggled)
+        let outputRow = NSStackView(views: [NSTextField(labelWithString: "Play On"), NSView(), output])
+        outputRow.orientation = .horizontal
+        outputRow.isHidden = soundOnPhone == nil
+
+        let stack = NSStackView(views: [outputRow, volume, muteRow, equalizerRow, bandRow, loudnessRow])
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 16
@@ -2201,6 +2225,7 @@ private final class SoundView: NSView {
             bandRow.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -36),
             loudnessRow.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -36),
             muteRow.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -36),
+            outputRow.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -36),
         ])
         if let equalizer = Self.lastEqualizer { show(equalizer) }
         DispatchQueue.global().async { [weak self] in
@@ -2244,6 +2269,8 @@ private final class SoundView: NSView {
 
     @objc private func volumeChanged() { set(slider.integerValue) }
     @objc private func muteToggled() { muteChanged?(mute.state == .on) }
+
+    @objc private func outputToggled() { outputChanged?(output.selectedSegment == 1) }
 
     private func set(_ level: Int) {
         slider.integerValue = level

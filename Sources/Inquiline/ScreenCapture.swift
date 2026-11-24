@@ -292,6 +292,10 @@ final class EngineAudio {
 
     private let queue = DispatchQueue(label: "inquiline.engine-sound", qos: .userInitiated)
     private var listeners: [Int32] = []
+    /// Listeners that take the sound from the Mac, as a phone showing a window plays it there
+    /// (PhoneSound): while one listens, the engine is silent on the Mac.
+    private var silencing: Set<Int32> = []
+    private var tapSilences = false
     private var tap = AudioObjectID(kAudioObjectUnknown)
     private var device = AudioObjectID(kAudioObjectUnknown)
     private var proc: AudioDeviceIOProcID?
@@ -319,7 +323,12 @@ final class EngineAudio {
         }
         var on: Int32 = 1
         setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &on, socklen_t(MemoryLayout<Int32>.size))
-        guard connected == 0, device != kAudioObjectUnknown || startTap() else {
+        guard connected == 0 else { close(fd); return }
+        if path.hasSuffix(PhoneSound.socketSuffix) { silencing.insert(fd) }
+        // A tap that silences, or that no longer must, is made anew; its listeners stay.
+        if device != kAudioObjectUnknown, tapSilences != !silencing.isEmpty { stopTap() }
+        guard device != kAudioObjectUnknown || startTap() else {
+            silencing.remove(fd)
             close(fd)
             return
         }
@@ -336,7 +345,8 @@ final class EngineAudio {
         }
         let description = CATapDescription(stereoMixdownOfProcesses: [engine])
         description.uuid = UUID()
-        description.muteBehavior = .unmuted
+        tapSilences = !silencing.isEmpty
+        description.muteBehavior = tapSilences ? .muted : .unmuted
         description.isPrivate = true
         guard AudioHardwareCreateProcessTap(description, &tap) == noErr else {
             AppLog.write("Android's sound can't be recorded: the Mac doesn't allow it")
@@ -417,9 +427,21 @@ final class EngineAudio {
             let sent = packet.withUnsafeBytes { Darwin.send(fd, $0.baseAddress!, $0.count, MSG_DONTWAIT) }
             guard sent != packet.count else { return false }
             close(fd)
+            silencing.remove(fd)
             return true
         }
-        if listeners.isEmpty { stopTap() }
+        if listeners.isEmpty {
+            stopTap()
+        } else if tapSilences, silencing.isEmpty {
+            // The phone is gone: the Mac plays the sound again, for the recording still listening;
+            // made anew once this delivery is done.
+            tapSilences = false
+            queue.async { [self] in
+                guard !listeners.isEmpty, silencing.isEmpty, device != kAudioObjectUnknown else { return }
+                stopTap()
+                _ = startTap()
+            }
+        }
     }
 
     /// The engine, among the processes the Mac's sound system knows.

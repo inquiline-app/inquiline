@@ -182,7 +182,7 @@ enum PhoneRemotePage {
   <button class="round" id="back" data-k="back" aria-label="Back"><svg viewBox="0 0 24 24" style="width:36%;height:36%"><path d="M15 4.5L7.5 12l7.5 7.5"/></svg></button>
   <button class="round" data-k="playpause" aria-label="Play or Pause"><svg viewBox="0 0 24 24"><path d="M4.5 6v12l7-6z"/><path d="M15 6.5v11M19.5 6.5v11"/></svg></button>
 </footer>
-<div id="screen"><div id="waiting">Connecting to the window…</div><video id="video" autoplay playsinline muted></video>
+<div id="screen"><div id="waiting">Connecting to the window…</div><video id="video" autoplay playsinline></video>
   <div id="hint">Swipe up with three fingers to go back</div></div>
 <div id="apps"><div id="sheet"><div id="grab"></div><div id="grid"></div></div></div>
 <div id="gone"><div><div id="goneText">Not connected to your Mac.</div><button onclick="location.reload()">Try Again</button></div></div>
@@ -423,8 +423,11 @@ enum PhoneRemotePage {
       tellShape();
       const pc = new RTCPeerConnection({ iceServers: [] });
       screenPc = pc;
+      // The picture and Android's sound, one stream, played together.
       pc.ontrack = e => {
-        video.srcObject = e.streams[0] || new MediaStream([e.track]);
+        const stream = e.streams[0] || video.srcObject || new MediaStream();
+        if (!e.streams[0]) stream.addTrack(e.track);
+        if (video.srcObject !== stream) video.srcObject = stream;
         video.play().catch(() => {});
       };
       pc.onicecandidate = e => {
@@ -442,6 +445,9 @@ enum PhoneRemotePage {
   document.getElementById("show").onclick = () => {
     buzz();
     showing = true;
+    // The tap that shows the window lets it play sound, as browsers want a touch first.
+    video.muted = false;
+    video.play().catch(() => {});
     screenView.classList.add("on");
     showHint();
     askScreen();

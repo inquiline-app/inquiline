@@ -266,16 +266,44 @@ final class PhoneRemote {
     var onScreenFit: ((Double) -> Void)?
     private var screenPeers: [ObjectIdentifier: PhoneScreenPeer] = [:]
     private var screen: PhoneScreen?
+    private var sound: PhoneSound?
+    private var soundOnPhone = true
+
+    /// Whether the window's sound plays on the phone showing it (silent on the Mac) or on the
+    /// Mac, as chosen in the window's Sound settings.
+    func setSoundOnPhone(_ on: Bool) {
+        queue.async { [self] in
+            soundOnPhone = on
+            updateSound()
+        }
+    }
+
+    /// On `queue`: sound for the phones while they show the window and want it.
+    private func updateSound() {
+        let wanted = soundOnPhone && screen != nil
+        if wanted, sound == nil {
+            let made = PhoneSound()
+            made.onPacket = { [weak self] data, time in
+                self?.queue.async { self?.screenPeers.values.forEach { $0.sendSound(data, time: time) } }
+            }
+            made.start()
+            sound = made
+        } else if !wanted, let playing = sound {
+            sound = nil
+            playing.stop()
+        }
+    }
 
     /// On `queue`.
     fileprivate func screenOpened(_ key: ObjectIdentifier) {
         if screen == nil, let device = screenDevice, let made = PhoneScreen(device: device) {
             made.onFrame = { [weak self] data, seconds in
-                self?.queue.async { self?.screenPeers.values.forEach { $0.send(data, seconds: seconds) } }
+                self?.queue.async { self?.screenPeers.values.forEach { $0.send(data, time: seconds) } }
             }
             screen = made
             DispatchQueue.main.async { self.onScreen?(made) }
             AppLog.write("A phone shows the window")
+            updateSound()
         }
         screen?.keyFrame()
     }
@@ -305,6 +333,7 @@ final class PhoneRemote {
         screenPeers.removeValue(forKey: key)?.close()
         guard screenPeers.isEmpty, let ended = screen else { return }
         screen = nil
+        updateSound()
         DispatchQueue.main.async {
             self.onScreen?(nil)
             ended.stop()
@@ -609,6 +638,11 @@ private final class PhonePeer {
 private final class PhoneScreenPeer {
     private let pc: Int32
     private var track: Int32 = -1
+    private var soundTrack: Int32 = -1
+    private var soundStartTimestamp: UInt32 = 0
+    /// The Mac's time when the connection was made, from which both tracks count their time,
+    /// as libdatachannel's sender reports do, so the phone plays sound and picture together.
+    private let created = CACurrentMediaTime()
     let key: ObjectIdentifier
     weak var remote: PhoneRemote?
     private var open = false
@@ -674,6 +708,32 @@ private final class PhoneScreenPeer {
             let peer = Unmanaged<PhoneScreenPeer>.fromOpaque(user).takeUnretainedValue()
             peer.remote?.screenWantsKeyFrame()
         }
+        // Android's sound, as Opus (PhoneSound), in the same stream, so the phone keeps the two in step.
+        let soundSsrc = UInt32.random(in: 1...UInt32.max)
+        soundStartTimestamp = UInt32.random(in: 0...UInt32.max)
+        soundTrack = "audio".withCString { mid in
+            "screen".withCString { name in
+                "sound".withCString { trackId in
+                    "minptime=10;useinbandfec=1;stereo=1;sprop-stereo=1".withCString { profile in
+                        var init_ = rtcTrackInit(direction: RTC_DIRECTION_SENDONLY, codec: RTC_CODEC_OPUS, payloadType: 111,
+                                                 ssrc: soundSsrc, mid: mid, name: name, msid: name, trackId: trackId, profile: profile)
+                        return rtcAddTrackEx(pc, &init_)
+                    }
+                }
+            }
+        }
+        if soundTrack >= 0 {
+            var soundPacketizer = rtcPacketizerInit()
+            soundPacketizer.ssrc = soundSsrc
+            soundPacketizer.payloadType = 111
+            soundPacketizer.clockRate = 48_000
+            soundPacketizer.timestamp = soundStartTimestamp
+            "screen".withCString { cname in
+                soundPacketizer.cname = cname
+                rtcSetOpusPacketizer(soundTrack, &soundPacketizer)
+            }
+            rtcChainRtcpSrReporter(soundTrack)
+        }
         rtcSetOpenCallback(track) { _, user in
             guard let user else { return }
             let peer = Unmanaged<PhoneScreenPeer>.fromOpaque(user).takeUnretainedValue()
@@ -695,12 +755,22 @@ private final class PhoneScreenPeer {
         rtcAddRemoteCandidate(pc, candidate, mid ?? "video")
     }
 
-    /// An access unit, at its time from the stream's start. On the remote's queue.
-    func send(_ data: Data, seconds: Double) {
+    /// An access unit, drawn at `time` (CACurrentMediaTime's clock). On the remote's queue.
+    func send(_ data: Data, time: Double) {
         guard open, track >= 0 else { return }
+        Self.send(data, on: track, start: startTimestamp, seconds: time - created)
+    }
+
+    /// An Opus packet starting at `time`. On the remote's queue.
+    func sendSound(_ data: Data, time: Double) {
+        guard open, soundTrack >= 0 else { return }
+        Self.send(data, on: soundTrack, start: soundStartTimestamp, seconds: time - created)
+    }
+
+    private static func send(_ data: Data, on track: Int32, start: UInt32, seconds: Double) {
         var elapsed: UInt32 = 0
-        rtcTransformSecondsToTimestamp(track, seconds, &elapsed)
-        rtcSetTrackRtpTimestamp(track, startTimestamp &+ elapsed)
+        rtcTransformSecondsToTimestamp(track, max(seconds, 0), &elapsed)
+        rtcSetTrackRtpTimestamp(track, start &+ elapsed)
         data.withUnsafeBytes { bytes in
             _ = rtcSendMessage(track, bytes.baseAddress?.assumingMemoryBound(to: CChar.self), Int32(bytes.count))
         }
@@ -710,6 +780,7 @@ private final class PhoneScreenPeer {
         open = false
         // No callback may reach this peer once it's gone.
         if track >= 0 { rtcSetUserPointer(track, nil) }
+        if soundTrack >= 0 { rtcSetUserPointer(soundTrack, nil) }
         if pc >= 0 {
             rtcSetUserPointer(pc, nil)
             rtcDeletePeerConnection(pc)

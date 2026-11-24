@@ -9,8 +9,8 @@ import VideoToolbox
 /// for reordering. A still screen sends nothing; a phone missing a picture asks for a key frame.
 final class PhoneScreen {
     /// H.264 access units, each NAL unit after its 4-byte length (AVCC), with the sequence and
-    /// picture parameter sets before a key frame; and the picture's time in seconds. Called on
-    /// the encoder's thread.
+    /// picture parameter sets before a key frame; and the Mac's time the picture was drawn, in
+    /// seconds (CACurrentMediaTime's clock), which the sound shares. On the encoder's thread.
     var onFrame: ((Data, Double) -> Void)?
 
     private let device: MTLDevice
@@ -169,7 +169,7 @@ final class PhoneScreen {
                                         presentationTimeStamp: CMTime(seconds: seconds, preferredTimescale: 90_000),
                                         duration: .invalid, frameProperties: options, infoFlagsOut: nil) { [weak self] status, _, sample in
             guard status == noErr, let sample, let self, let data = Self.accessUnit(sample) else { return }
-            self.onFrame?(data, seconds)
+            self.onFrame?(data, time)
         }
     }
 
