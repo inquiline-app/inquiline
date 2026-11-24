@@ -160,6 +160,10 @@ final class KeyControlPlayer {
     private var aimPoint: CGPoint?
     private var aimStart = CGPoint.zero
     private var aimRest: DispatchWorkItem?
+    /// When the aim's finger last landed, and the mouse's movement since, held back a frame.
+    private var aimLanded: CFTimeInterval = 0
+    private var aimPending = CGVector.zero
+    private var aimFlush: DispatchWorkItem?
     private(set) var isCaught = false
 
     private var size: CGSize { view?.androidSize ?? CGSize(width: 1, height: 1) }
@@ -419,38 +423,73 @@ final class KeyControlPlayer {
         view?.showCaughtNote(false)
     }
 
-    /// The mouse moved by this many points while caught; a point of mouse movement is a pixel
-    /// and a half of finger movement on the app's screen.
+    /// The mouse moved by this many points while caught. QtScrcpy's mouse look (Apache-2.0,
+    /// inputconvertgame.cpp), with the Mac's own pointer lock rather than its cursor warping:
+    /// a finger on the aim control follows the mouse, as far as the screen's edge, where it
+    /// lifts and lands again; it lifts when the mouse rests. The same move turns as far in any
+    /// window size, times the control's sensitivity (its speed).
     func aim(dx: CGFloat, dy: CGFloat) {
-        guard isCaught else { return }
-        drag(dx: dx * 1.5, dy: dy * 1.5)
+        guard isCaught, let control = set.controls.first(where: { $0.kind == .aim }) else { return }
+        let scale = 1.5 * max(size.width, size.height) / 1600 * (control.speed ?? 1)
+        drag(dx: dx * scale, dy: dy * scale)
     }
 
     /// Drags the aim control's finger by this many pixels of the app's screen.
     private func drag(dx: CGFloat, dy: CGFloat) {
         guard let control = set.controls.first(where: { $0.kind == .aim }) else { return }
-        let start = point(control)
+        let now = CACurrentMediaTime()
         if aimPoint == nil {
+            let start = point(control)
             touch(.down, start, finger: Self.aimFinger)
             aimPoint = start
             aimStart = start
+            aimLanded = now
+        }
+        aimPending.dx += dx
+        aimPending.dy += dy
+        scheduleAimRest()
+        // A finger that just landed waits a frame before it moves, so the game sees it land and
+        // not a flick it might take for a tap (QtScrcpy skips the first moves).
+        let settled = aimLanded + 0.034
+        guard now >= settled else {
+            if aimFlush == nil {
+                let flush = DispatchWorkItem { [weak self] in
+                    self?.aimFlush = nil
+                    self?.drag(dx: 0, dy: 0)
+                }
+                aimFlush = flush
+                DispatchQueue.main.asyncAfter(deadline: .now() + (settled - now), execute: flush)
+            }
+            return
         }
         guard var p = aimPoint else { return }
-        p.x += dx
-        p.y += dy
+        p.x += aimPending.dx
+        p.y += aimPending.dy
+        aimPending = .zero
+        // At the screen's edge the thumb lifts and starts again from the control.
+        let margin = 0.05
+        let edge = p.x < size.width * margin || p.x > size.width * (1 - margin)
+            || p.y < size.height * margin || p.y > size.height * (1 - margin)
+        p.x = min(max(p.x, 0), size.width - 1)
+        p.y = min(max(p.y, 0), size.height - 1)
         touch(.move, p, finger: Self.aimFinger)
         aimPoint = p
-        // A thumb runs out of screen and lifts to start again; so does this one.
-        let limit = size.height * 0.25
-        if abs(p.x - aimStart.x) > limit || abs(p.y - aimStart.y) > limit { liftAim() }
+        if edge { liftAim() }
+    }
+
+    /// The finger lifts once the mouse rests, so the control is free for the game's own use.
+    private func scheduleAimRest() {
         aimRest?.cancel()
         let rest = DispatchWorkItem { [weak self] in self?.liftAim() }
         aimRest = rest
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25, execute: rest)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: rest)
     }
 
     private func liftAim() {
         aimRest?.cancel()
+        aimFlush?.cancel()
+        aimFlush = nil
+        aimPending = .zero
         if let p = aimPoint { touch(.up, p, finger: Self.aimFinger) }
         aimPoint = nil
     }

@@ -278,7 +278,7 @@ final class ControlsOverlay: NSView {
 
     /// A macro's settings, beside it: its key, how it plays, its speed, and trying it.
     private func showSettings(_ index: Int) {
-        guard index < set.controls.count, set.controls[index].kind == .macro else { return }
+        guard index < set.controls.count, [.macro, .aim].contains(set.controls[index].kind) else { return }
         settings?.close()
         selected = index
         let controller = MacroSettings(macro: set.controls[index])
@@ -475,8 +475,9 @@ final class ControlsOverlay: NSView {
         dragging = nil
         draggingStep = nil
         resizing = nil
-        // A click on a macro, not a drag, opens its settings.
-        if let press = pressed, !press.moved, press.index < set.controls.count, set.controls[press.index].kind == .macro {
+        // A click on a macro or the mouse aim, not a drag, opens its settings.
+        if let press = pressed, !press.moved, press.index < set.controls.count,
+           [.macro, .aim].contains(set.controls[press.index].kind) {
             showSettings(press.index)
         }
         pressed = nil

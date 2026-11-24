@@ -1,8 +1,9 @@
 import AppKit
 
 /// A macro's settings, shown beside it while editing controls (ControlsOverlay): its key, how it
-/// plays, how fast, and buttons to try it, record it again or delete it. Every change applies
-/// at once, as in the rest of Inquiline's settings.
+/// plays, how fast, and buttons to try it, record it again or delete it. The mouse-aim control's
+/// are its sensitivity alone, which its speed holds. Every change applies at once, as in the
+/// rest of Inquiline's settings.
 final class MacroSettings: NSViewController, NSPopoverDelegate {
     private var macro: KeyControl
     var changed: ((KeyControl) -> Void)?
@@ -19,6 +20,9 @@ final class MacroSettings: NSViewController, NSPopoverDelegate {
 
     /// Speeds the slider stops at.
     private static let speeds: [Double] = [0.5, 0.75, 1, 1.5, 2, 3, 4]
+    private static let sensitivities: [Double] = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 2, 3]
+    private var isAim: Bool { macro.kind == .aim }
+    private var stops: [Double] { isAim ? Self.sensitivities : Self.speeds }
     private static let modes: [(String, KeyControl.Repeat)] = [
         ("Once", .once), ("While Held", .whileHeld), ("Until Pressed Again", .untilPressedAgain),
     ]
@@ -42,7 +46,7 @@ final class MacroSettings: NSViewController, NSPopoverDelegate {
     }
 
     override func loadView() {
-        let title = NSTextField(labelWithString: "Macro")
+        let title = NSTextField(labelWithString: isAim ? "Mouse Aim" : "Macro")
         title.font = .systemFont(ofSize: 13, weight: .semibold)
         summary.textColor = .secondaryLabelColor
         summary.font = .systemFont(ofSize: 11)
@@ -56,8 +60,8 @@ final class MacroSettings: NSViewController, NSPopoverDelegate {
         plays.action = #selector(playsChanged)
 
         speed.minValue = 0
-        speed.maxValue = Double(Self.speeds.count - 1)
-        speed.numberOfTickMarks = Self.speeds.count
+        speed.maxValue = Double(stops.count - 1)
+        speed.numberOfTickMarks = stops.count
         speed.allowsTickMarkValuesOnly = true
         speed.target = self
         speed.action = #selector(speedChanged)
@@ -70,7 +74,9 @@ final class MacroSettings: NSViewController, NSPopoverDelegate {
             field.alignment = .right
             return field
         }
-        let grid = NSGridView(views: [
+        let grid = NSGridView(views: isAim ? [
+            [label("Sensitivity:"), NSStackView(views: [speed, speedLabel])],
+        ] : [
             [label("Key:"), keyButton],
             [label("Plays:"), plays],
             [label("Speed:"), NSStackView(views: [speed, speedLabel])],
@@ -89,7 +95,7 @@ final class MacroSettings: NSViewController, NSPopoverDelegate {
         }
         let delete = button("Delete", "trash", #selector(deleteTapped))
         delete.contentTintColor = .systemRed
-        let buttons = NSStackView(views: [button("Try", "play.fill", #selector(tryTapped)),
+        let buttons = NSStackView(views: isAim ? [delete] : [button("Try", "play.fill", #selector(tryTapped)),
                                           button("Record Again", "record.circle", #selector(recordTapped)), delete])
         buttons.spacing = 8
 
@@ -105,16 +111,20 @@ final class MacroSettings: NSViewController, NSPopoverDelegate {
     override func viewDidAppear() {
         super.viewDidAppear()
         // A new macro asks for its key first.
-        if macro.key == nil { keyButton.beginChoosing() }
+        if macro.key == nil, !isAim { keyButton.beginChoosing() }
     }
 
     private func update() {
         keyButton.title = macro.key == nil ? "Choose a Key…" : (macro.label ?? "Key")
         plays.selectItem(at: Self.modes.firstIndex { $0.1 == (macro.repeats ?? .once) } ?? 0)
         let current = macro.speed ?? 1
-        let stop = Self.speeds.indices.min { abs(Self.speeds[$0] - current) < abs(Self.speeds[$1] - current) } ?? 2
+        let stop = stops.indices.min { abs(stops[$0] - current) < abs(stops[$1] - current) } ?? 2
         speed.doubleValue = Double(stop)
-        speedLabel.stringValue = Self.format(Self.speeds[stop])
+        speedLabel.stringValue = Self.format(stops[stop])
+        if isAim {
+            summary.stringValue = "Click the game to catch the pointer; Esc lets it go"
+            return
+        }
         let steps = macro.steps ?? []
         let length = steps.reduce(0) { $0 + $1.delay } + (steps.last?.hold ?? 40)
         let seconds = Double(length) / 1000 / current
@@ -138,7 +148,7 @@ final class MacroSettings: NSViewController, NSPopoverDelegate {
     }
 
     @objc private func speedChanged() {
-        macro.speed = Self.speeds[Int(speed.doubleValue.rounded())]
+        macro.speed = stops[Int(speed.doubleValue.rounded())]
         // A pause set by an earlier version gives way to the recorded timing at this speed.
         macro.interval = nil
         update()
