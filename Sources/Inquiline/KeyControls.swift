@@ -405,20 +405,19 @@ final class KeyControlPlayer {
 
     // MARK: - Aiming with the mouse
 
-    /// The key that starts and stops aiming, as Android emulators have one (BlueStacks' F1,
-    /// Gameloop's ~): the aim control's own, or the key left of 1 (§ on ISO keyboards, ` on
-    /// ANSI ones), which games rarely use. Not aiming, the mouse works the game's menus.
-    var aimKey: Int {
-        self.set.controls.first { $0.kind == .aim }?.key ?? Self.keyLeftOfOne
-    }
-
-    static var keyLeftOfOne: Int {
-        KBGetLayoutType(Int16(LMGetKbdType())) == kKeyboardISO ? kVK_ISO_Section : kVK_ANSI_Grave
+    /// Whether a key starts and stops aiming, as Android emulators have one (BlueStacks' F1,
+    /// Gameloop's ~): the aim control's own, or the key left of 1, which games rarely use. It
+    /// sends § on ISO keyboards and ` on ANSI ones, and macOS can't tell which a keyboard is
+    /// (it calls a Turkish ISO one ANSI), so either is it. Not aiming, the mouse works menus.
+    func isAimKey(_ code: Int) -> Bool {
+        if let key = self.set.controls.first(where: { $0.kind == .aim })?.key { return code == key }
+        return code == kVK_ISO_Section || code == kVK_ANSI_Grave
     }
 
     func toggleAim() {
         freed = false
         if isCaught { releasePointer() } else { catchPointer() }
+        AppLog.write(isCaught ? "Aiming with the mouse" : "Not aiming with the mouse")
     }
 
     /// Option held while aiming frees the pointer for a moment, for a button on the game's

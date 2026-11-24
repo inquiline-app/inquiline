@@ -345,7 +345,7 @@ final class AndroidDisplayView: NSView {
         // Esc lets go of a caught pointer, as in Mac games, instead of going back.
         if controls.isCaught && event.keyCode == 53 { controls.releasePointer(); return }
         // The aim key starts and stops aiming with the mouse.
-        if controls.set.isActive, controls.set.hasAim, Int(event.keyCode) == controls.aimKey, touchObserver == nil {
+        if controls.set.isActive, controls.set.hasAim, controls.isAimKey(Int(event.keyCode)), touchObserver == nil {
             if !event.isARepeat { controls.toggleAim() }
             return
         }
@@ -394,7 +394,7 @@ final class AndroidDisplayView: NSView {
     }
 
     override func keyUp(with event: NSEvent) {
-        if controls.set.isActive, controls.set.hasAim, Int(event.keyCode) == controls.aimKey, touchObserver == nil { return }
+        if controls.set.isActive, controls.set.hasAim, controls.isAimKey(Int(event.keyCode)), touchObserver == nil { return }
         if controls.key(Int(event.keyCode), down: false) { return }
         keyObserver?(Self.stroke(event), false)
         sendKeyUp(event)
