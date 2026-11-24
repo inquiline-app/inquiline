@@ -14,6 +14,8 @@ final class GamepadBridge {
     private weak var controls: KeyControlPlayer?
     /// While the controls are being edited, a button pressed is offered here; true takes it.
     var onEditPress: ((Int) -> Bool)?
+    /// Told of each state a plugged controller sends the app, while a macro records.
+    var reportObserver: (([UInt8]) -> Void)?
     private var held: [ObjectIdentifier: Set<Int>] = [:]
     /// The HID id each controller has in Android. scrcpy keeps 1 and 2 for a keyboard and mouse.
     private var plugged: [ObjectIdentifier: UInt16] = [:]
@@ -34,6 +36,21 @@ final class GamepadBridge {
 
     deinit {
         observers.forEach(NotificationCenter.default.removeObserver)
+    }
+
+    /// Plays a controller state a macro recorded on the plugged controllers, or with nil, puts
+    /// back the controllers' own. Returns whether one is plugged to play it on.
+    @discardableResult
+    func replay(_ report: [UInt8]?) -> Bool {
+        guard !plugged.isEmpty else { return false }
+        let pads = Dictionary(uniqueKeysWithValues: GCController.controllers().compactMap { controller in
+            controller.extendedGamepad.map { (ObjectIdentifier(controller), $0) }
+        })
+        for (key, id) in plugged {
+            let own = pads[key].map { NSApp.isActive ? Self.report($0) : Self.atRest } ?? Self.atRest
+            session.sendHIDInput(id: id, report: report ?? own)
+        }
+        return true
     }
 
     /// Unplugs every controller, as when the app's window closes.
@@ -81,7 +98,9 @@ final class GamepadBridge {
             for code in pressed.subtracting(before) where onEditPress(code) { return }
         }
         if let id = plugged[key] {
-            session.sendHIDInput(id: id, report: Self.report(pad))
+            let report = Self.report(pad)
+            session.sendHIDInput(id: id, report: report)
+            reportObserver?(report)
             return
         }
         guard let controls, controls.set.usesPad else { return }

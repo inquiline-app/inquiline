@@ -152,6 +152,7 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate, 
             displayView.controls.releaseAll()
             displayView.touchObserver = observer
             displayView.keyObserver = observer == nil ? nil : { [unowned self] stroke, down in overlay.recordKey(stroke, down: down) }
+            gamepads?.reportObserver = observer == nil ? nil : { [unowned self] report in overlay.recordPad(report) }
             if observer != nil {
                 displayView.controls.set = working
                 gamepads?.update()
@@ -284,6 +285,7 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate, 
                 self.launchScreen.removeFromSuperview()
                 if self.gamepads == nil {
                     let gamepads = GamepadBridge(session: session, controls: self.displayView.controls)
+                    self.displayView.controls.playPad = { [weak gamepads] report in gamepads?.replay(report) }
                     gamepads.onEditPress = { [weak self] code in self?.overlay.padPressed(code) ?? false }
                     self.gamepads = gamepads
                 }

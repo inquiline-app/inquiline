@@ -31,6 +31,8 @@ final class ControlsOverlay: NSView {
         var fingers: [Int64: (step: Int, down: Date, moved: Date)] = [:]
         /// Keys down now, that go to the app: their step and when they were pressed.
         var keys: [Int: (step: Int, down: Date)] = [:]
+        /// The last step was a controller's state, which a newer one close behind replaces.
+        var lastWasPad = false
     }
     private var live: Live?
     /// Lets the display view tell this overlay of the touches going to the app, or stop; the
@@ -182,6 +184,7 @@ final class ControlsOverlay: NSView {
                 set.controls[current.index].y = y
             }
             current.lastDown = now
+            current.lastWasPad = false
             current.fingers[finger] = (count - 1, now, now)
         case .move:
             // A point every 10 ms is a smooth slide, and keeps a long one small.
@@ -216,11 +219,28 @@ final class ControlsOverlay: NSView {
             let delay = current.lastDown.map { min(Int(now.timeIntervalSince($0) * 1000), 10_000) } ?? 0
             set.controls[current.index].steps?.append(KeyControl.Step(x: 0, y: 0, delay: delay, key: stroke))
             current.lastDown = now
+            current.lastWasPad = false
             current.keys[stroke.code] = ((set.controls[current.index].steps?.count ?? 1) - 1, now)
         } else {
             guard let held = current.keys.removeValue(forKey: stroke.code) else { return }
             set.controls[current.index].steps?[held.step].hold = Int(now.timeIntervalSince(held.down) * 1000)
         }
+        live = current
+    }
+
+    /// A controller's state that went to a game taking controllers, while recording. States a
+    /// few milliseconds apart, as a stick moving, are kept as the latest.
+    func recordPad(_ report: [UInt8]) {
+        guard var current = live, current.index < set.controls.count else { return }
+        let now = Date()
+        let since = current.lastDown.map { Int(now.timeIntervalSince($0) * 1000) }
+        if let since, since < 10, current.lastWasPad, let last = set.controls[current.index].steps?.indices.last {
+            set.controls[current.index].steps?[last].pad = report
+        } else {
+            set.controls[current.index].steps?.append(KeyControl.Step(x: 0, y: 0, delay: min(since ?? 0, 10_000), pad: report))
+            current.lastDown = now
+        }
+        current.lastWasPad = true
         live = current
     }
 

@@ -32,8 +32,11 @@ struct KeyControl: Codable, Equatable {
         /// A key pressed to the app instead of a touch, as arrow keys in a game that takes the
         /// keyboard: held for `hold`. Its x and y mean nothing.
         var key: KeyStroke?
+        /// A controller's whole state (an Xbox 360 report) sent to a game that takes
+        /// controllers, instead of a touch. Its x and y mean nothing.
+        var pad: [UInt8]?
 
-        var isTouch: Bool { key == nil }
+        var isTouch: Bool { key == nil && pad == nil }
 
         func moved(dx: Double, dy: Double) -> Step {
             var step = self
@@ -293,10 +296,28 @@ final class KeyControlPlayer {
         guard let steps = macro.steps, !steps.isEmpty else { return }
         let speed = max(min(macro.speed ?? 1, 8), 0.1)
         func later(_ ms: Double) -> DispatchTime { .now() + .milliseconds(Int(ms / speed)) }
-        var at = 0.0, end = 0.0
+        var at = 0.0, end = 0.0, usesPad = false
+        defer {
+            // The controller is put back as it is once the macro's last state has played.
+            if usesPad, again == nil {
+                DispatchQueue.main.asyncAfter(deadline: later(end + 20)) { [weak self] in
+                    guard let self, rounds[key] == round else { return }
+                    playPad?(nil)
+                }
+            }
+        }
         for (index, step) in steps.enumerated() {
             if index > 0 { at += Double(macro.interval ?? step.delay) }
             let start = at
+            if let report = step.pad {
+                DispatchQueue.main.asyncAfter(deadline: later(start)) { [weak self] in
+                    guard let self, rounds[key] == round else { return }
+                    playPad?(report)
+                }
+                end = max(end, start)
+                usesPad = true
+                continue
+            }
             if let stroke = step.key {
                 let up = start + max(Double(step.hold ?? 0), 40 * speed)
                 end = max(end, up)
@@ -336,11 +357,20 @@ final class KeyControlPlayer {
         guard let again else { return }
         // The next round once this one is done, after the same pause as between its touches.
         let pause = max(Double(macro.interval ?? steps.last?.delay ?? 100), 50)
+        let restore = usesPad
         DispatchQueue.main.asyncAfter(deadline: later(end + pause)) { [weak self] in
-            guard let self, rounds[key] == round, again() else { return }
+            guard let self, rounds[key] == round else { return }
+            guard again() else {
+                if restore { playPad?(nil) }
+                return
+            }
             play(macro, round: round, key: key, again: again)
         }
     }
+
+    /// Plays a recorded controller state on the plugged controllers (GamepadBridge), nil to put
+    /// back their own.
+    var playPad: (([UInt8]?) -> Void)?
 
     /// Plays a macro once from its settings, to try it while editing.
     func preview(_ macro: KeyControl) {
