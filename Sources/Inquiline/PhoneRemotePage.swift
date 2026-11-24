@@ -132,6 +132,15 @@ enum PhoneRemotePage {
     white-space: nowrap; pointer-events: none; opacity: 0; transition: opacity .4s; z-index: 1; }
   #hint.on { opacity: 1; }
   #screen #waiting { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: var(--dim); }
+  /* The phone's own keyboard, typing into the app: its text field sits above the keyboard. */
+  #typeKey { position: absolute; right: 30px; bottom: 14px; width: 44px; height: 44px; z-index: 2; }
+  #typing { position: fixed; left: 0; right: 0; bottom: 0; z-index: 8; display: none; padding: 10px 12px calc(10px + env(safe-area-inset-bottom));
+    background: rgba(28,28,30,.97); border-top: 1px solid var(--edge); gap: 10px; align-items: center; }
+  #typing.on { display: flex; }
+  #typing, #typing * { -webkit-user-select: text; user-select: text; touch-action: auto; }
+  #typed { flex: 1; min-width: 0; height: 40px; border-radius: 20px; border: 1px solid var(--edge); background: #000; color: var(--text);
+    font: 16px -apple-system, system-ui, sans-serif; padding: 9px 14px; resize: none; outline: none; }
+  #typing button { border: 0; background: none; color: #0a84ff; font: 600 16px -apple-system, system-ui, sans-serif; padding: 8px 4px; }
   #gone { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.88); align-items: center; justify-content: center;
     text-align: center; padding: 24px; z-index: 9; }
   #gone.on { display: flex; }
@@ -177,7 +186,8 @@ enum PhoneRemotePage {
       <div class="at stick" data-s="r" style="--x:63;--y:74;--d:34"><div class="knob"></div></div>
     </div>
   </section>
-  <section id="touch"><div id="surface">Touch as on the app's screen</div></section>
+  <section id="touch"><div id="surface">Touch as on the app's screen</div>
+    <button class="round" id="typeKey" aria-label="Type"><svg viewBox="0 0 24 24"><rect x="2.5" y="6" width="19" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 14h10"/></svg></button></section>
 </main>
 <footer>
   <button class="round" data-k="mute" aria-label="Sound"><svg viewBox="0 0 24 24"><path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"/><path class="waves" d="M15.5 9a4 4 0 0 1 0 6M18 6.5a7.5 7.5 0 0 1 0 11"/><path class="cross" style="display:none" d="M16 9.5l5 5M21 9.5l-5 5"/></svg></button>
@@ -186,6 +196,7 @@ enum PhoneRemotePage {
 </footer>
 <div id="screen"><div id="waiting">Connecting to the window…</div><video id="video" autoplay playsinline></video>
   <div id="hint">Swipe up with three fingers to go back</div></div>
+<div id="typing"><textarea id="typed" rows="1" placeholder="Type or paste" autocapitalize="sentences" enterkeyhint="send"></textarea><button id="typedDone">Done</button></div>
 <div id="apps"><div id="sheet"><div id="grab"></div><div id="grid"></div></div></div>
 <div id="gone"><div><div id="goneText">Not connected to your Mac.</div><button onclick="location.reload()">Try Again</button></div></div>
 <script>
@@ -327,6 +338,42 @@ enum PhoneRemotePage {
       grid.appendChild(item);
     });
   }
+
+  // The phone's keyboard: what changes in the field goes to the app as it's typed, as a
+  // hardware keyboard would type it; a paste is pasted; Return is Enter, and starts afresh.
+  // Autocorrect, which replaces a word, is the deletes and the new word.
+  const typing = document.getElementById("typing"), typed = document.getElementById("typed");
+  let typedBefore = "";
+  document.getElementById("typeKey").onclick = () => {
+    buzz();
+    typing.classList.add("on");
+    typed.value = ""; typedBefore = "";
+    typed.focus();
+  };
+  document.getElementById("typedDone").onclick = () => { typed.blur(); typing.classList.remove("on"); };
+  // Above the keyboard, which iOS lays over the page rather than making it shorter.
+  if (window.visualViewport) {
+    const lift = () => {
+      const covered = window.innerHeight - visualViewport.height - visualViewport.offsetTop;
+      typing.style.bottom = Math.max(covered, 0) + "px";
+    };
+    visualViewport.addEventListener("resize", lift);
+    visualViewport.addEventListener("scroll", lift);
+  }
+  typed.addEventListener("input", () => {
+    const now = typed.value;
+    const before = Array.from(typedBefore), after = Array.from(now);
+    let same = 0;
+    while (same < before.length && same < after.length && before[same] === after[same]) same++;
+    for (let i = same; i < before.length; i++) message({ t: "key", k: "delete" });
+    const added = after.slice(same).join("");
+    const lines = added.split("\n");
+    lines.forEach((line, index) => {
+      if (index > 0) message({ t: "key", k: "enter" });
+      if (line) message({ t: "text", s: line });
+    });
+    if (lines.length > 1) { typed.value = ""; typedBefore = ""; } else typedBefore = now;
+  });
 
   // Controller: GamepadBridge's report bits and hat.
   const bits = { a: 0x0001, b: 0x0002, x: 0x0008, y: 0x0010, lb: 0x0040, rb: 0x0080, back: 0x0400, start: 0x0800 };

@@ -21,8 +21,10 @@ final class PhoneRemote {
                  leftTrigger: Double, rightTrigger: Double, buttons: UInt16, hat: UInt8, player: Int)
         /// A finger on the touchpad, at a point from 0 to 1 across the app's screen.
         case touch(ScrcpySession.TouchAction, x: Double, y: Double, finger: Int)
-        /// A remote's key, pressed and let go: Back or Play/Pause.
+        /// A remote's key, pressed and let go: Back, Play/Pause, or the phone keyboard's Delete and Enter.
         case key(Int32)
+        /// Text typed or pasted on the phone's own keyboard.
+        case text(String)
         /// The window's own mute, which works for any app, switched.
         case mute
         case assistant
@@ -405,9 +407,12 @@ final class PhoneRemote {
         case "key":
             if message["k"] as? String == "mute" { input = .mute; break }
             // Android's keycodes for the remote's keys: Back, Play/Pause.
-            let keys: [String: Int32] = ["back": 4, "playpause": 85]
+            let keys: [String: Int32] = ["back": 4, "playpause": 85, "delete": 67, "enter": 66]
             guard let code = keys[message["k"] as? String ?? ""] else { return }
             input = .key(code)
+        case "text":
+            guard let text = message["s"] as? String, !text.isEmpty else { return }
+            input = .text(String(text.prefix(2000)))
         case "assistant":
             input = .assistant
         default:
@@ -590,6 +595,14 @@ final class PhoneInput {
         case let .key(code):
             session.sendKey(.down, keycode: code)
             session.sendKey(.up, keycode: code)
+        case let .text(text):
+            // Typed as keys where Android's keyboard map has them; other letters (ğ, ş, emoji)
+            // and pasted text go as a paste, as scrcpy does.
+            if text.unicodeScalars.allSatisfy({ $0.isASCII && $0.value >= 32 }) {
+                session.sendText(text)
+            } else {
+                session.sendPaste(text)
+            }
         case .mute:
             DispatchQueue.main.async { self.onMute?() }
         case .assistant:
