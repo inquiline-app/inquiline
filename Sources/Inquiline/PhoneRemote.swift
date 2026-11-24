@@ -227,6 +227,10 @@ final class PhoneRemote {
             screenPeers[key]?.add(candidate: candidate, mid: message["mid"] as? String)
         case "screen-stop":
             dropScreen(key)
+        case "screen-fit":
+            let width = (message["w"] as? NSNumber)?.doubleValue ?? 0, height = (message["h"] as? NSNumber)?.doubleValue ?? 0
+            guard width > 0, height > 0 else { return }
+            DispatchQueue.main.async { self.onScreenFit?(width / height) }
         default:
             process(message, key: key)
         }
@@ -256,6 +260,10 @@ final class PhoneRemote {
     var screenDevice: MTLDevice?
     /// The window's frames go to the encoder, or stop (nil); called on the main queue.
     var onScreen: ((PhoneScreen?) -> Void)?
+    /// Whether the window takes the phone's shape (a flexible app), so the phone turns freely.
+    var windowFits = false
+    /// The shape (width over height) of a phone showing the window; called on the main queue.
+    var onScreenFit: ((Double) -> Void)?
     private var screenPeers: [ObjectIdentifier: PhoneScreenPeer] = [:]
     private var screen: PhoneScreen?
 
@@ -611,7 +619,8 @@ private final class PhoneScreenPeer {
         rtcSetLocalDescriptionCallback(pc) { _, sdp, type, user in
             guard let user, let sdp, let type else { return }
             let peer = Unmanaged<PhoneScreenPeer>.fromOpaque(user).takeUnretainedValue()
-            peer.remote?.signal(["t": "screen-offer", "sdp": String(cString: sdp), "type": String(cString: type)], key: peer.key)
+            peer.remote?.signal(["t": "screen-offer", "sdp": String(cString: sdp), "type": String(cString: type),
+                                 "fits": peer.remote?.windowFits ?? false], key: peer.key)
         }
         rtcSetLocalCandidateCallback(pc) { _, candidate, mid, user in
             guard let user, let candidate else { return }

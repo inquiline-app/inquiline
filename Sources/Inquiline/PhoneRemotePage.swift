@@ -394,7 +394,15 @@ enum PhoneRemotePage {
   // own (PhoneRemote's screen), which plays here; touches on it are the app's, where they land.
   const screenView = document.getElementById("screen"), video = document.getElementById("video");
   const waiting = document.getElementById("waiting");
-  let showing = false, screenPc = null;
+  let showing = false, screenPc = null, windowFits = false;
+  // A window that takes the phone's shape (a flexible app) is told it, upright or turned; one that
+  // doesn't keeps the phone turned to the picture's shape, as a video does.
+  function tellShape() {
+    if (showing && windowFits && ready && app && app.readyState === 1)
+      app.send(JSON.stringify({ t: "screen-fit", w: window.innerWidth, h: window.innerHeight }));
+  }
+  let shapeTimer = 0;
+  window.addEventListener("resize", () => { clearTimeout(shapeTimer); shapeTimer = setTimeout(tellShape, 150); });
   function askScreen() {
     endScreen();
     waiting.style.display = "";
@@ -407,6 +415,8 @@ enum PhoneRemotePage {
   function screenSignal(m, socket) {
     if (m.t === "screen-offer") {
       endScreen();
+      windowFits = !!m.fits;
+      tellShape();
       const pc = new RTCPeerConnection({ iceServers: [] });
       screenPc = pc;
       pc.ontrack = e => {
@@ -433,7 +443,7 @@ enum PhoneRemotePage {
     askScreen();
     // Sideways for a sideways app, as a phone turns for a video.
     const lock = () => {
-      if (!screen.orientation || !screen.orientation.lock || !video.videoWidth) return;
+      if (windowFits || !screen.orientation || !screen.orientation.lock || !video.videoWidth) return;
       screen.orientation.lock(video.videoWidth > video.videoHeight ? "landscape" : "portrait").catch(() => {});
     };
     video.onresize = lock;

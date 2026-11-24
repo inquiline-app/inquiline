@@ -474,6 +474,46 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate, 
         session.sendResize(width: screen.width, height: screen.height)
     }
 
+    // MARK: - Shown on a phone
+
+    /// The window's frame before a phone showed it, to go back to.
+    private var frameBeforePhone: NSRect?
+
+    /// A flexible app's window takes the shape of the phone showing it, the phone upright or
+    /// turned, about as large as it was, so the app lays out for the phone and fills its screen.
+    /// The window goes back to its own size when the phone stops showing it.
+    private func fit(phoneShape shape: Double) {
+        guard isFlexible, !isFullScreen, shape > 0.2, shape < 5 else { return }
+        if frameBeforePhone == nil { frameBeforePhone = window.frame }
+        let current = window.contentLayoutRect.size
+        let area = Double(current.width * current.height)
+        var size = NSSize(width: (area * shape).squareRoot(), height: (area / shape).squareRoot())
+        // Within the Mac's screen, as large as fits in the phone's shape.
+        if let visible = window.screen?.visibleFrame.size {
+            let titleBar = window.frame.height - current.height
+            let fitScale = min(1, Double(visible.width) / Double(size.width), Double(visible.height - titleBar) / Double(size.height))
+            size = NSSize(width: size.width * fitScale, height: size.height * fitScale)
+        }
+        size.width = max(size.width, Self.smallestFlexible.width)
+        size.height = max(size.height, Self.smallestFlexible.height)
+        guard abs(size.width - current.width) > 2 || abs(size.height - current.height) > 2 else { return }
+        // About its middle, as the phone turns about its own.
+        var frame = window.frameRect(forContentRect: NSRect(origin: .zero, size: size))
+        frame.origin = NSPoint(x: window.frame.midX - frame.width / 2, y: window.frame.midY - frame.height / 2)
+        if let visible = window.screen?.visibleFrame {
+            frame.origin.x = min(max(frame.origin.x, visible.minX), visible.maxX - frame.width)
+            frame.origin.y = min(max(frame.origin.y, visible.minY), visible.maxY - frame.height)
+        }
+        window.setFrame(frame, display: true, animate: true)
+    }
+
+    private func unfitFromPhone() {
+        guard let frame = frameBeforePhone else { return }
+        frameBeforePhone = nil
+        guard !isFullScreen else { return }
+        window.setFrame(frame, display: true, animate: true)
+    }
+
     /// A phone's size, in the screen's shape: the smallest a window gets.
     static func smallest(landscape: Bool) -> NSSize {
         let short = (720 / ScrcpySession.screenShape).rounded()
@@ -1048,7 +1088,12 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate, 
         remote.onInput = { input.handle($0) }
         // The window's picture on a phone that asks for it.
         remote.screenDevice = displayView.renderer?.device
-        remote.onScreen = { [weak self] screen in self?.displayView.renderer?.mirror(to: screen) }
+        remote.onScreen = { [weak self] screen in
+            self?.displayView.renderer?.mirror(to: screen)
+            if screen == nil { self?.unfitFromPhone() }
+        }
+        remote.windowFits = isFlexible
+        remote.onScreenFit = { [weak self] shape in self?.fit(phoneShape: shape) }
         remote.onPhones = { [weak self] count in
             guard let self else { return }
             self.phoneStatus?.stringValue = Self.phoneStatusText(count)
