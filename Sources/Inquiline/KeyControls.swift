@@ -1,4 +1,5 @@
 import AppKit
+import Carbon
 
 /// Keyboard, mouse and controller controls for a game made for touch, as Apple's Touch
 /// Alternatives are for iPhone games on a Mac: each control stands for a button or stick on the
@@ -404,8 +405,41 @@ final class KeyControlPlayer {
 
     // MARK: - Aiming with the mouse
 
+    /// The key that starts and stops aiming, as Android emulators have one (BlueStacks' F1,
+    /// Gameloop's ~): the aim control's own, or the key left of 1 (§ on ISO keyboards, ` on
+    /// ANSI ones), which games rarely use. Not aiming, the mouse works the game's menus.
+    var aimKey: Int {
+        self.set.controls.first { $0.kind == .aim }?.key ?? Self.keyLeftOfOne
+    }
+
+    static var keyLeftOfOne: Int {
+        KBGetLayoutType(Int16(LMGetKbdType())) == kKeyboardISO ? kVK_ISO_Section : kVK_ANSI_Grave
+    }
+
+    func toggleAim() {
+        freed = false
+        if isCaught { releasePointer() } else { catchPointer() }
+    }
+
+    /// Option held while aiming frees the pointer for a moment, for a button on the game's
+    /// screen, as Alt does in PC shooters; let go, aiming goes on.
+    private var freed = false
+
+    func freePointer(_ held: Bool) {
+        if held, isCaught {
+            freed = true
+            releasePointer()
+        } else if !held, freed {
+            freed = false
+            catchPointer()
+        }
+    }
+
+    /// Whether Option frees the pointer now, so it isn't a key for the game.
+    var isFreeingPointer: Bool { isCaught || freed }
+
     /// The pointer is caught, as Mac games do, so the mouse turns the camera without leaving
-    /// the window. Esc or switching away lets it go.
+    /// the window. The aim key, Esc or switching away lets it go.
     func catchPointer() {
         guard set.isActive, set.hasAim, !isCaught else { return }
         isCaught = true
@@ -496,6 +530,7 @@ final class KeyControlPlayer {
 
     /// Lets go of everything, as when the window goes to the back.
     func releaseAll() {
+        freed = false
         padAimVector = .zero
         padStick(x: 0, y: 0)
         looping.removeAll()

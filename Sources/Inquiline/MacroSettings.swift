@@ -75,6 +75,7 @@ final class MacroSettings: NSViewController, NSPopoverDelegate {
             return field
         }
         let grid = NSGridView(views: isAim ? [
+            [label("Aim Key:"), keyButton],
             [label("Sensitivity:"), NSStackView(views: [speed, speedLabel])],
         ] : [
             [label("Key:"), keyButton],
@@ -115,14 +116,14 @@ final class MacroSettings: NSViewController, NSPopoverDelegate {
     }
 
     private func update() {
-        keyButton.title = macro.key == nil ? "Choose a Key…" : (macro.label ?? "Key")
+        keyButton.title = macro.key == nil ? (isAim ? "Key Left of 1" : "Choose a Key…") : (macro.label ?? "Key")
         plays.selectItem(at: Self.modes.firstIndex { $0.1 == (macro.repeats ?? .once) } ?? 0)
         let current = macro.speed ?? 1
         let stop = stops.indices.min { abs(stops[$0] - current) < abs(stops[$1] - current) } ?? 2
         speed.doubleValue = Double(stop)
         speedLabel.stringValue = Self.format(stops[stop])
         if isAim {
-            summary.stringValue = "Click the game to catch the pointer; Esc lets it go"
+            summary.stringValue = "The aim key starts and stops aiming; hold ⌥ for the pointer"
             return
         }
         let steps = macro.steps ?? []

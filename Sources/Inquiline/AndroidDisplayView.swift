@@ -177,8 +177,7 @@ final class AndroidDisplayView: NSView {
 
     override func mouseDown(with event: NSEvent) {
         if controls.isCaught { _ = controls.key(KeyControl.leftClick, down: true); return }
-        // With a mouse-aim control, a click catches the pointer, as a Mac game does.
-        if controls.set.isActive && controls.set.hasAim { controls.catchPointer(); return }
+        // Not aiming, a click touches the game, as its menus want; the aim key starts aiming.
         sendTouch(.down, event)
     }
 
@@ -189,7 +188,6 @@ final class AndroidDisplayView: NSView {
 
     override func mouseUp(with event: NSEvent) {
         if controls.isCaught { _ = controls.key(KeyControl.leftClick, down: false); return }
-        guard !(controls.set.isActive && controls.set.hasAim) else { return }
         sendTouch(.up, event)
     }
 
@@ -346,6 +344,11 @@ final class AndroidDisplayView: NSView {
     override func keyDown(with event: NSEvent) {
         // Esc lets go of a caught pointer, as in Mac games, instead of going back.
         if controls.isCaught && event.keyCode == 53 { controls.releasePointer(); return }
+        // The aim key starts and stops aiming with the mouse.
+        if controls.set.isActive, controls.set.hasAim, Int(event.keyCode) == controls.aimKey, touchObserver == nil {
+            if !event.isARepeat { controls.toggleAim() }
+            return
+        }
         if touchObserver != nil && event.keyCode == 53 { onEscapeWhileRecording?(); return }
         if controls.key(Int(event.keyCode), down: true) { return }
         keyObserver?(Self.stroke(event), true)
@@ -391,6 +394,7 @@ final class AndroidDisplayView: NSView {
     }
 
     override func keyUp(with event: NSEvent) {
+        if controls.set.isActive, controls.set.hasAim, Int(event.keyCode) == controls.aimKey, touchObserver == nil { return }
         if controls.key(Int(event.keyCode), down: false) { return }
         keyObserver?(Self.stroke(event), false)
         sendKeyUp(event)
@@ -412,7 +416,13 @@ final class AndroidDisplayView: NSView {
         switch event.keyCode {
         case 56, 60: flag = .shift
         case 59, 62: flag = .control
-        case 58, 61: flag = .option
+        case 58, 61:
+            // Option held while aiming frees the pointer for the game's buttons.
+            if controls.set.isActive, controls.set.hasAim, controls.isFreeingPointer {
+                controls.freePointer(event.modifierFlags.contains(.option))
+                return
+            }
+            flag = .option
         case 57:
             keyboard?.modifiersChanged(event)
             return

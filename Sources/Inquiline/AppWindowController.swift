@@ -174,7 +174,7 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate, 
             window.makeFirstResponder(displayView)
         }
         displayView.onCaught = { [unowned self] caught in
-            note(caught ? "Press Esc to use the pointer again" : "")
+            note(caught ? "Aiming: hold ⌥ for the pointer, Esc to stop" : "")
         }
     }
 
@@ -185,7 +185,7 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate, 
             let alert = NSAlert()
             alert.messageText = "Keyboard controls"
             alert.informativeText = "Click a button in the game, then press the key that should press it. "
-                + "Add a stick for W, A, S and D, Mouse Aim to look around with the mouse (click the game to aim, Esc to stop), "
+                + "Add a stick for W, A, S and D, Mouse Aim to look around with the mouse (the key left of 1 starts and stops aiming; hold ⌥ for the pointer meanwhile), "
                 + "and macros: record taps, holds and swipes once by playing, then play them with one key.\n\n"
                 + "Online games such as shooters may not allow playing with a keyboard, a mouse or macros against touch players, "
                 + "and can ban accounts that do. Use controls in those at your own risk."
