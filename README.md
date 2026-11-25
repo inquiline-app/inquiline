@@ -17,83 +17,82 @@
 
 <p align="center"><img src="docs/images/windows.jpg" alt="Wikipedia, the game Mindustry and a clock app, each in its own Mac window"></p>
 
-An app you add to Inquiline doesn't open inside a phone-shaped box. It gets a window of its own, an icon in the Dock and Launchpad, a place in Spotlight and Finder, and its notifications arrive in Notification Center. Behind it runs real Android 15, on your Mac's own chip. Inquiline is free and open source, with no account and nothing to sign up for.
+Android apps on your Mac don't have to live inside a phone-shaped box. With Inquiline, each one gets a window of its own, an icon in the Dock and Launchpad, a place in Spotlight and Finder, and notifications in Notification Center. Behind them runs real Android 15, on your Mac's own chip. Free, open source, no account.
 
-## Double-click an APK
+## Double-click an APK. That's it.
 
 <p align="center"><img src="docs/images/install.gif" width="720" alt="Double-clicking Wikipedia.apk in Finder installs it, and Wikipedia opens in its own window"></p>
 
-Open an `.apk` file, or an app bundle such as `.xapk`, `.apkm` or `.apks`, and a few seconds later the app is in the Inquiline Apps folder in Applications. Games that download their data on first launch do so as on a phone. With Google Play added, apps come from the Play Store instead.
+Open an `.apk`, or a bundle such as `.xapk`, `.apkm` or `.apks`, and a few seconds later the app is in your Applications folder, ready like any Mac app. Add Google Play, and apps come straight from the Play Store.
 
-## All your Android apps in the Dock
+## Your phone is the remote
 
-<p align="center"><img src="docs/images/dock-stack.gif" width="560" alt="Clicking the Inquiline Apps stack in the Dock opens a grid of every Android app: games, Gmail, Instagram, YouTube and more"></p>
+<p align="center"><img src="docs/images/phone-remote.png" width="560" alt="Two phones: one shows the remote, with the app's name at the top, a large touch surface and round keys for Back, Play/Pause and Mute; the other shows the list of Inquiline apps, from Asphalt to YouTube"></p>
 
-Your Android apps live together in Applications › Inquiline Apps, the way your Mac keeps its Utilities, and Spotlight and Launchpad list them with the rest. If you like, choose **Show Android Apps in Dock** from Inquiline in the menu bar to keep them all in one stack in the Dock, which opens as a grid.
+Scan the QR code under the phone button and your phone becomes a remote, as Apple's TV Remote is for an Apple TV. Touch the app as if it were on the phone, type with the phone's keyboard, use it as a trackpad, take a screenshot, or open any of your apps from the list. A second phone joins as player two.
 
-## Windows that fit
+**Then take the window with you.** One key moves the app's window onto your phone, full screen and with its sound, and you keep playing there by touch. Swipe up with three fingers and it's back on your Mac. Nothing to install: the remote is a web page from your Mac.
 
-<p align="center"><img src="docs/images/resize.gif" width="560" alt="Wikipedia's window is made narrow and Wikipedia switches to its phone layout, then widened back to its tablet layout"></p>
+## Games, with keys and a mouse
 
-Make a window wider and the app lays itself out again for the new size, with its tablet layout if it has one, rather than stretching a phone screen. Games keep their shape and scale up to the window, up to full screen.
-
-## Notifications in Notification Center
-
-<p align="center"><img src="docs/images/notifications.gif" width="400" alt="A timer runs out while another app is in front, its notification appears at the top of the screen, and clicking it brings the clock app forward"></p>
-
-Apps notify you while you work in something else, even with no window open. Clicking a notification opens the app on what it's about, such as the chat that got a message, and chats can be answered right from the notification. With **Open at Login**, they arrive as soon as your Mac starts.
+Games run on your Mac's GPU, with Vulkan 1.3 and OpenGL ES 3.2, at up to 60 frames a second, and macOS gives them Game Mode. Touch-only games become keyboard games: put keys on buttons, a W A S D stick on the joystick, and aim with the mouse in shooters. Record a combo once by playing it, and replay it with one key. Xbox, PlayStation and MFi controllers work too.
 
 ## Gemini, over any app
 
 <p align="center"><img src="docs/images/assistant.gif" width="640" alt="In Wikipedia's window, the sparkle button opens Gemini at the bottom; asked to summarize this page in two sentences, it reads the article on screen and answers"></p>
 
-The ✨ button in an app's window opens Gemini over that app, as holding a phone's power button does. Gemini sees what the app shows, so you can ask about the page, the chat or the game in front of you. With **Share screen with Live** you can talk to it and it follows along as you use the app, through your Mac's microphone. Gemini needs Google Play and the Google and Gemini apps from it.
+Press ✨ and ask about whatever the app shows: the article, the chat, the level you're stuck on. With **Share screen with Live** you just talk, and Gemini follows along as you use the app. Gemini needs Google Play and the Google and Gemini apps from it.
+
+## No ads, app by app
+
+<p align="center"><img src="docs/images/app-settings.png" width="400" alt="An app window's gear menu: Ad Blocking set to Light, with 66 ads blocked so far, and Data with the app's sizes and buttons to show it in Finder or clear its cache or data"></p>
+
+Pick an app, move the slider, and its ads are gone: banners, videos between levels, and the ads that apps fetch through Google Play services. Apps you leave alone stay exactly as they are. It uses the lists of uBlock Origin and AdGuard, updated every day, and it counts what it blocked.
+
+## All your Android apps in the Dock
+
+<p align="center"><img src="docs/images/dock-stack.gif" width="560" alt="Clicking the Inquiline Apps stack in the Dock opens a grid of every Android app: games, Gmail, Instagram, YouTube and more"></p>
+
+Your Android apps live together in Applications › Inquiline Apps, and Spotlight and Launchpad list them with the rest. Choose **Show Android Apps in Dock** from Inquiline in the menu bar to keep them all one click away, in a grid.
+
+## Windows that fit
+
+<p align="center"><img src="docs/images/resize.gif" width="560" alt="Wikipedia's window is made narrow and Wikipedia switches to its phone layout, then widened back to its tablet layout"></p>
+
+Widen a window and the app redraws itself for the new size, with its tablet layout if it has one, instead of stretching a phone screen. Games keep their shape and scale up to full screen.
+
+## Notifications in Notification Center
+
+<p align="center"><img src="docs/images/notifications.gif" width="400" alt="A timer runs out while another app is in front, its notification appears at the top of the screen, and clicking it brings the clock app forward"></p>
+
+Apps reach you while you work in something else, even with no window open. Click a notification to land right on the chat that got the message, or reply without opening anything.
+
+## Android's files are just a folder
+
+<p align="center"><img src="docs/images/android-files.png" width="560" alt="The Android folder in Finder, with Android's DCIM, Download, Documents, Music, Pictures and other folders"></p>
+
+Photos, downloads and documents are real files in the **Android** folder in your home folder. Drop a photo in and Android's apps see it in seconds; what an app saves shows up in Finder at once. Nothing to mount, nothing to sync.
 
 ## Widgets on your desktop
 
 <p align="center"><img src="docs/images/widgets.gif" width="480" alt="The clock app's gear menu lists its widgets; choosing the analog clock opens its setup in the app's window, and after Done the clock widget sits on the desktop beside the window"></p>
 
-An app's widgets, from its settings, go on your desktop as Android draws them, kept up to date. Tap and scroll them, drag them anywhere, and right-click to open the app or remove the widget. A widget that needs setting up opens its setup in the app's window first, as on a phone's home screen.
+An app's widgets go on your desktop, live, as Android draws them. Tap them, scroll them, and drag them anywhere.
 
-## Each app's own settings
+## And more
 
-<p align="center"><img src="docs/images/app-settings.png" width="360" alt="The gear menu of an app window: Permissions, Ad Blocking with a slider set to Balanced, and Data with the app's sizes and buttons to show it in Finder or clear its cache or data"></p>
-
-The gear in each window holds what Android's Settings would for that app:
-
-- **Permissions** the app asks for, each with a switch, notifications included.
-- **Ad Blocking** with four levels, from Off to Strong. It uses the same lists as uBlock Origin, AdGuard's list for ads in apps and games, and the list for your Mac's language, and they update on their own every day. It works in the app and in the web pages it shows, and counts what it blocked.
-- **Widgets** the app offers, to put on your desktop.
-- **Data:** how much space the app takes, its folder in Finder, and Clear Cache or Clear Data.
-- **Performance:** frames per second over the last half minute, and how much of the Mac's CPU and GPU and of Android's memory are in use. Clicking the frame rate in the toolbar opens it.
+- **Performance at a glance:** click the frame rate in the toolbar for frames per second over the last half minute, and the CPU, GPU and memory in use.
+- **Sound per app:** Android's volume, Mute This App, an equalizer and loudness, under the speaker button. Sound stays in step with the picture, and follows your Mac to headphones or a display.
+- **Screenshots and recordings** of the app's screen alone, at full resolution and with sound, saved where your Mac saves its own.
+- **Each app's settings** in the gear: permissions, widgets, data, ad blocking and performance.
 
 <p align="center"><img src="docs/images/performance.gif" width="640" alt="Clicking the frame rate in a game's toolbar opens its settings at Performance: 60 FPS with a green graph, and CPU, GPU and memory bars that move as the game runs"></p>
 
-The settings stay open while you use the app, until you click the gear again.
-
-<p align="center"><img src="docs/images/sound.png" width="300" alt="The sound popover: a volume slider, Mute This App, an equalizer set to Custom with five bands, and Loudness"></p>
-
-The speaker button holds Android's volume, a switch to mute just this app, so a game can be quiet while music plays, an equalizer with presets or five bands of your own, and loudness.
-
-## Games
-
-Games run on your Mac's GPU, with Vulkan 1.3 and OpenGL ES 3.2, at up to 60 frames a second, and macOS gives them Game Mode. Touch-only games can be played with the keyboard and mouse: put keys on buttons, a W A S D stick on the joystick, look around with the mouse, and play several taps with one key. Xbox, PlayStation and MFi controllers work in games that support them, and can also drive the on-screen controls of games that don't.
-
-## Your phone as a controller
-
-<p align="center"><img src="docs/images/phone-remote.png" width="720" alt="A game's window shows a QR code under its phone button; in front of it, a phone shows an Xbox-style controller with sticks, a d-pad, A B X Y, bumpers, triggers and a Gemini button"></p>
-
-The phone button in an app's window shows a QR code. Scan it with your phone's camera and the phone becomes an Xbox-style controller, a touchpad for the app's screen with all its fingers, and a ✨ Gemini button, for whichever app is in front. There's nothing to install on the phone: it's a web page from your Mac, which you can keep on your Home Screen. Your phone needs to be on the same Wi-Fi as your Mac, and its touches travel over WebRTC, so they stay smooth.
-
-## Screenshots and screen recordings
-
-<p align="center"><img src="docs/images/screen-capture.gif" width="640" alt="The camera button in a game's toolbar opens a menu; Take Screenshot flashes the game's screen as the picture is saved"></p>
-
-The camera button takes a screenshot of the app's screen alone, without its window, at Android's full resolution, or records it with its sound. They're saved where your Mac saves its own screenshots.
+<p align="center"><img src="docs/images/screen-capture.gif" width="440" alt="The camera button in a game's toolbar opens a menu; Take Screenshot flashes the game's screen as the picture is saved"> <img src="docs/images/sound.png" width="200" alt="The sound popover: a volume slider, Mute This App, an equalizer set to Custom with five bands, and Loudness"></p>
 
 ## Your data stays on your Mac
 
-Nothing about what you do in Android leaves your Mac through Inquiline. Inquiline itself only asks GitHub once a day whether there's a new version, and the ad blocker fetches its lists from their publishers. Other apps can't connect to Android, its disk in Finder opens only with a password Inquiline makes for your Mac, and Inquiline's folder is closed to other user accounts.
+Nothing about what you do in Android leaves your Mac through Inquiline. Inquiline itself only asks GitHub once a day whether there's a new version, and the ad blocker fetches its lists from their publishers. Other apps can't connect to Android, and Inquiline's folder is closed to other user accounts.
 
 ## Not an emulator
 
@@ -149,10 +148,10 @@ Each app you add appears in your Applications folder and in Launchpad; you can m
 | Cmd+K | Keyboard controls for games |
 | Ctrl+Cmd+F | Full screen |
 
-- **The toolbar** shows the frame rate and has buttons for Gemini, keyboard controls, sound, turning between portrait and landscape, and the app's settings. **View > Customize Toolbar** changes it.
+- **The toolbar** shows the frame rate and has buttons for Gemini, screenshots and recordings, the phone remote, keyboard controls, sound, turning between portrait and landscape, and the app's settings. **View > Customize Toolbar** changes it.
 - **Windows** open where and as large as you left them, and an app closed in full screen opens in full screen.
 - **Closing a window quits the app**, as swiping it away on a phone does. Apps keep running while their window is in the back or minimized.
-- **Files:** choose **Show Files in Finder** from the menu bar, or **Show in Finder** in an app's settings. Android's storage and each app's own folders appear as the **Android** disk.
+- **Files:** Android's storage is the **Android** folder in your home folder. **Show Files in Finder** in the menu bar opens it, and **Show in Finder** in an app's settings opens that app's own files.
 - **Android rests** when no app needs it, as a phone does, and wakes for notifications and alarms. When your Mac needs memory, Android closes apps in the background.
 - **Android follows your Mac:** its language, dark mode, time zone and 24-hour clock are your Mac's, and its storage is your Mac's free space. Apps that listen or ask where you are use your Mac's microphone and location, after macOS asks you once.
 
@@ -176,8 +175,8 @@ App data lives in `~/Library/Application Support/Inquiline`. Deleting that folde
 - A Linux virtual machine, run by QEMU on Apple's Hypervisor framework, runs Android 15 ([Redroid](https://github.com/remote-android/redroid-doc)).
 - Android's Vulkan reaches the Mac's GPU through [gfxstream](https://android.googlesource.com/platform/hardware/google/gfxstream) and [MoltenVK](https://github.com/KhronosGroup/MoltenVK); its OpenGL ES is ANGLE on that Vulkan.
 - Each app runs on its own Android display. Its frames are copied once on the GPU into memory its window shares with the VM.
-- Sound goes through a virtual sound card to CoreAudio, controllers through virtual USB devices, and files to Finder through a local network disk that only Inquiline can open.
-- Ad blocking is a small VPN and filtering proxy inside Android, for the apps you choose, using uBlock Origin's lists and rules.
+- Sound goes through a virtual sound card to CoreAudio, controllers through virtual USB devices, and Android's shared storage is a folder on the Mac.
+- Ad blocking is a small VPN and filtering proxy inside Android, for the apps you choose, using Brave's engine with uBlock Origin's lists and rules.
 
 More detail is in [Research/linux-gpu](Research/linux-gpu/README.md).
 
@@ -195,6 +194,6 @@ This writes `build/Inquiline.app` and the release disk image. `Scripts/make-appc
 
 Inquiline is licensed under the [Apache License 2.0](LICENSE). It includes open source software under other licenses, among them the GPL; see [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) for the full list and where to get the source code.
 
-The apps shown above are [Wikipedia](https://github.com/wikimedia/apps-android-wikipedia), [Mindustry](https://github.com/Anuken/Mindustry) and [Fossify Clock](https://github.com/FossifyOrg/Clock), all open source, installed from [F-Droid](https://f-droid.org).
+The apps shown above are [Wikipedia](https://github.com/wikimedia/apps-android-wikipedia), [Mindustry](https://github.com/Anuken/Mindustry) and [Fossify Clock](https://github.com/FossifyOrg/Clock), all open source, installed from [F-Droid](https://f-droid.org). Other apps and games shown are their owners' trademarks.
 
 Android is a trademark of Google LLC. Mac, macOS and Apple Silicon are trademarks of Apple Inc. Inquiline isn't affiliated with or endorsed by Google or Apple.
