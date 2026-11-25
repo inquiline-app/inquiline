@@ -27,6 +27,13 @@ For the parts licensed under the GPL or LGPL, the complete corresponding source 
 | [libslirp](https://gitlab.freedesktop.org/slirp/libslirp) | 4.9.7 | BSD-3-Clause | <https://gitlab.freedesktop.org/slirp/libslirp> | none |
 | [Sparkle](https://sparkle-project.org) | 2.10.1 | MIT, with parts under other permissive licenses (see its LICENSE) | <https://github.com/sparkle-project/Sparkle> (tag 2.10.1) | none; updates |
 | [scrcpy](https://github.com/Genymobile/scrcpy) server | 5.0.1 | Apache-2.0 | <https://github.com/Genymobile/scrcpy> (tag v5.0.1) | `Vendor/scrcpy-server.patch`; runs inside Android |
+| [libdatachannel](https://github.com/paullouisageneau/libdatachannel) | 0.24.6 | MPL-2.0 | <https://github.com/paullouisageneau/libdatachannel> (tag v0.24.6) | none; the phone remote's WebRTC, built by `Scripts/build-webrtc.sh` |
+| [libjuice](https://github.com/paullouisageneau/libjuice), inside libdatachannel | b89c792 | MPL-2.0 | <https://github.com/paullouisageneau/libjuice> | none |
+| [usrsctp](https://github.com/sctplab/usrsctp), inside libdatachannel | fec583d | BSD-3-Clause | <https://github.com/sctplab/usrsctp> | none |
+| [libSRTP](https://github.com/cisco/libsrtp), inside libdatachannel | 24b3bf8 | BSD-3-Clause | <https://github.com/cisco/libsrtp> | none |
+| [plog](https://github.com/SergiusTheBest/plog), inside libdatachannel | 94899e0 | MIT | <https://github.com/SergiusTheBest/plog> | none |
+| [JSON for Modern C++](https://github.com/nlohmann/json), inside libdatachannel | 55f9368 | MIT | <https://github.com/nlohmann/json> | none |
+| [Mbed TLS](https://github.com/Mbed-TLS/mbedtls) | 3.6.8 | Apache-2.0 OR GPL-2.0-or-later | <https://github.com/Mbed-TLS/mbedtls> (tag v3.6.8) | none |
 | [KDE Connect](https://kdeconnect.kde.org) for Android | 1.37.3 | GPL-2.0-only or GPL-3.0-only | <https://invent.kde.org/network/kdeconnect-android> (tag v1.37.3); the app as F-Droid builds it, <https://f-droid.org/packages/org.kde.kdeconnect_tp/> | none; a separate app installed inside Android, which brings its notifications to the Mac |
 
 GLib, with what it takes in, is a separate dynamic library in `Inquiline.app/Contents/Frameworks`, which you can replace with your own build. `Scripts/vm/build-qemu.sh` builds all of these from the sources above.
@@ -246,3 +253,15 @@ The helper inside Android (Vendor/inquiline-notifications.apk) contains libinqui
 | zerovec | 0.11.9 | Unicode-3.0 |
 | zerovec-derive | 0.11.7 | Unicode-3.0 |
 | zmij | 1.0.23 | MIT |
+
+## AdGuard DNS filter
+
+The helper fetches AdGuard DNS filter (https://github.com/AdguardTeam/AdGuardSDNSFilter), by AdGuard and contributors, under the GNU General Public License version 3, and uses it unchanged, as data, for apps whose ads are blocked.
+
+## Brave's procedural cosmetic filters
+
+Scripts/vm/notifications-agent/assets/procedural.js is Brave's code for uBlock Origin's procedural cosmetic filters, from brave-core (https://github.com/brave/brave-core: components/cosmetic_filters/resources/data/procedural_filters.ts and content_cosmetic.ts), Copyright (c) The Brave Authors, under the Mozilla Public License 2.0 (https://mozilla.org/MPL/2.0/). It is unchanged but for TypeScript's types removed; that file is its source.
+
+## Methods taken from other projects
+
+The phone remote's trackpad follows libinput's touchpad acceleration (https://gitlab.freedesktop.org/libinput/libinput, src/filter-touchpad.c, MIT License, Copyright © 2006-2009 Simon Thum, © 2008-2012 Kristian Høgsberg, © 2010-2012 Intel Corporation, © 2013-2015 Red Hat, Inc.). Mouse aiming in games follows QtScrcpy's mouse look (https://github.com/barry-ran/QtScrcpy, Apache License 2.0). Both are written anew in Inquiline's own code.
