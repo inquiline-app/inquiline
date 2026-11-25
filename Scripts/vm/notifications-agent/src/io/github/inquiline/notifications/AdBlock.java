@@ -45,6 +45,9 @@ public final class AdBlock extends VpnService {
     private static final String ADDRESS = "10.111.222.2";
 
     private static Set<String> blocked;
+    static final String GMS = "com.google.android.gms";
+    /** Where Google Play services asks for an app's ads. */
+    static final Set<String> GMS_AD_HOSTS = Set.of("googleads.g.doubleclick.net", "pagead2.googlesyndication.com");
     private ParcelFileDescriptor tun;
     private Thread reader;
     private final ExecutorService lookups = Executors.newFixedThreadPool(8);
@@ -135,6 +138,12 @@ public final class AdBlock extends VpnService {
             }
         }
         if (allowed == 0) return;
+        // Google Play services, which fetches ads for the apps that show Google's (AdMob): its
+        // connections pass unopened, but for those ad requests, which name the app they're for.
+        try {
+            builder.addAllowedApplication(GMS);
+        } catch (PackageManager.NameNotFoundException ignored) {
+        }
         try {
             tun = builder.establish();
         } catch (RuntimeException e) {
@@ -222,6 +231,7 @@ public final class AdBlock extends VpnService {
 
             @Override
             public Proxy.Answer decide(String url, String host, String headers, Proxy.Owner owner) {
+                if (owner.pkg.equals(GMS)) return forApp(url);
                 // uBlock's lists alone: the address list, for apps' own name lookups, would also cut
                 // services uBlock leaves alone on purpose, as sites' cookie consent.
                 Request request = request(url, host, headers);
@@ -300,6 +310,23 @@ public final class AdBlock extends VpnService {
         }
     }
 
+    /**
+     * Google Play services' ad request for an app (AdMob's), stopped when that app's ads are
+     * blocked: the request names the app in "msid", which apps can't change. Anything else of
+     * Google Play services passes.
+     */
+    private static Proxy.Answer forApp(String url) {
+        int query = url.indexOf('?');
+        if (query < 0) return null;
+        for (String pair : url.substring(query + 1).split("&")) {
+            if (!pair.startsWith("msid=") && !pair.startsWith("_package_name=")) continue;
+            String pkg = java.net.URLDecoder.decode(pair.substring(pair.indexOf('=') + 1), StandardCharsets.UTF_8);
+            Integer mask = masks.get(pkg);
+            return mask != null && (mask & Lists.ADS) != 0 ? Proxy.Answer.EMPTY : null;
+        }
+        return null;
+    }
+
     /** A blocked request's stand-in, which the engine gives as a data: address. */
     private static Proxy.Answer dataAnswer(String data) {
         int comma = data.indexOf(',');
@@ -327,6 +354,9 @@ public final class AdBlock extends VpnService {
                 for (String pkg : packages) {
                     Integer mask = masks.get(pkg);
                     if (mask != null && mask != 0) return new Proxy.Owner(pkg, mask);
+                }
+                for (String pkg : packages) {
+                    if (pkg.equals(GMS)) return new Proxy.Owner(GMS, 0);
                 }
             }
         } catch (Exception ignored) {
@@ -425,6 +455,21 @@ public final class AdBlock extends VpnService {
         }
     }
 
+    /** Whether a lookup is Google Play services': its names are never blocked, as it serves every app. */
+    private boolean fromGms(byte[] packet, int ip) {
+        try {
+            java.net.InetSocketAddress from = new java.net.InetSocketAddress(
+                    InetAddress.getByAddress(java.util.Arrays.copyOfRange(packet, 12, 16)), port(packet, ip));
+            java.net.InetSocketAddress to = new java.net.InetSocketAddress(
+                    InetAddress.getByAddress(java.util.Arrays.copyOfRange(packet, 16, 20)), port(packet, ip + 2));
+            int uid = getSystemService(ConnectivityManager.class).getConnectionOwnerUid(android.system.OsConstants.IPPROTO_UDP, from, to);
+            String[] packages = getPackageManager().getPackagesForUid(uid);
+            return packages != null && java.util.Arrays.asList(packages).contains(GMS);
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
     /** Whether the name, or a domain it is under, is on the list. */
     private static boolean isBlocked(String name) {
         Set<String> names = blocked;
@@ -457,7 +502,7 @@ public final class AdBlock extends VpnService {
             if (length < ip + 8 + 12 || port(packet, ip + 2) != 53) continue;
             byte[] query = java.util.Arrays.copyOfRange(packet, ip + 8, length);
             String name = questionName(query);
-            if (name != null && isBlocked(name)) {
+            if (name != null && isBlocked(name) && !fromGms(packet, ip)) {
                 write(out, answer(packet, ip, noSuchName(query)));
                 continue;
             }

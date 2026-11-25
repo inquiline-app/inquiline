@@ -85,59 +85,6 @@ final class Lists {
         new List("ublock-annoyances.txt", UASSETS + "annoyances-others.txt", true, ANNOYANCES),
     };
 
-    /**
-     * Hosts lists, as AdAway uses them on rooted phones: ad and tracking servers by name, which
-     * Inquiline lays over Android's hosts file, so no app or service reaches them, whichever way it
-     * asks (Google Play services fetching an app's AdMob ads included). Built into one file with the
-     * names of AdGuard's DNS filter ("||name^"): blocked, a name has no address (0.0.0.0).
-     */
-    static final List[] HOSTS = {
-        new List("adaway.txt", "https://adaway.org/hosts.txt", false, ADS),
-        new List("stevenblack.txt", "https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts", false, ADS),
-    };
-    static final String BLOCKED_HOSTS = "hosts-block";
-
-    /** Rebuilds the blocked hosts from the hosts lists and AdGuard's DNS filter. */
-    static void buildHosts(Context context) {
-        File dir = new File(context.getFilesDir(), "lists");
-        java.util.TreeSet<String> names = new java.util.TreeSet<>();
-        java.util.regex.Pattern name = java.util.regex.Pattern.compile("^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$");
-        for (List list : HOSTS) {
-            File file = new File(dir, list.file);
-            if (!file.exists()) continue;
-            try (java.io.BufferedReader in = new java.io.BufferedReader(new java.io.FileReader(file))) {
-                for (String line; (line = in.readLine()) != null; ) {
-                    String[] parts = line.trim().split("\\s+");
-                    if (parts.length < 2 || !(parts[0].equals("0.0.0.0") || parts[0].equals("127.0.0.1"))) continue;
-                    String host = parts[1].toLowerCase(java.util.Locale.ROOT);
-                    if (name.matcher(host).matches() && !host.equals("localhost")) names.add(host);
-                }
-            } catch (java.io.IOException e) {
-                // That list is left out until it's fetched again.
-            }
-        }
-        File dns = new File(dir, "adguard-dns.txt");
-        if (dns.exists()) {
-            try (java.io.BufferedReader in = new java.io.BufferedReader(new java.io.FileReader(dns))) {
-                for (String line; (line = in.readLine()) != null; ) {
-                    if (!line.startsWith("||") || !line.endsWith("^")) continue;
-                    String host = line.substring(2, line.length() - 1).toLowerCase(java.util.Locale.ROOT);
-                    if (name.matcher(host).matches()) names.add(host);
-                }
-            } catch (java.io.IOException e) {
-                // Left out until it's fetched again.
-            }
-        }
-        File part = new File(context.getFilesDir(), BLOCKED_HOSTS + ".part");
-        try (java.io.Writer out = new java.io.BufferedWriter(new java.io.FileWriter(part))) {
-            for (String host : names) out.write("0.0.0.0 " + host + "\n");
-        } catch (java.io.IOException e) {
-            part.delete();
-            return;
-        }
-        part.renameTo(new File(context.getFilesDir(), BLOCKED_HOSTS));
-    }
-
     /** The lists in use: uBlock's default ones and the regional ones for Android's languages. */
     static java.util.List<List> active(Context context) {
         java.util.List<List> lists = new java.util.ArrayList<>(java.util.Arrays.asList(ALL));
@@ -186,8 +133,7 @@ final class Lists {
         File dir = new File(context.getFilesDir(), "lists");
         dir.mkdirs();
         boolean changed = false;
-        java.util.List<List> lists = new java.util.ArrayList<>(active(context));
-        lists.addAll(java.util.Arrays.asList(HOSTS));
+        java.util.List<List> lists = active(context);
         java.util.Set<String> kept = new java.util.HashSet<>();
         for (List list : lists) kept.add(list.file);
         File[] present = dir.listFiles();
@@ -212,8 +158,7 @@ final class Lists {
                 // A list is text with rules; anything else (an error page) is not taken.
                 String start = new String(java.nio.file.Files.readAllBytes(part.toPath()), 0,
                         (int) Math.min(part.length(), 200), StandardCharsets.UTF_8);
-                boolean hosts = java.util.Arrays.asList(HOSTS).contains(list);
-                if (part.length() > 1000 && (start.startsWith("!") || start.startsWith("[") || (hosts && start.contains("#")))) {
+                if (part.length() > 1000 && (start.startsWith("!") || start.startsWith("["))) {
                     changed |= part.renameTo(target);
                 } else {
                     part.delete();
@@ -222,7 +167,6 @@ final class Lists {
                 part.delete();
             }
         }
-        if (changed || !new File(context.getFilesDir(), BLOCKED_HOSTS).exists()) buildHosts(context);
         return changed;
     }
 }

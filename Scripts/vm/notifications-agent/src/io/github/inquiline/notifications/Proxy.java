@@ -168,7 +168,9 @@ final class Proxy {
                     return;
                 }
                 c.getOutputStream().write("HTTP/1.1 200 Connection Established\r\n\r\n".getBytes(StandardCharsets.ISO_8859_1));
-                if (port != 443 || pinned.contains(host)) {
+                // Google Play services' connections pass unopened, but for its ad requests.
+                boolean onBehalf = owner.pkg.equals(AdBlock.GMS);
+                if (port != 443 || pinned.contains(host) || (onBehalf && !AdBlock.GMS_AD_HOSTS.contains(host))) {
                     tunnel(c, host, port);
                 } else {
                     open(c, host, port, owner);
