@@ -3,6 +3,18 @@
     <channel>
         <title>Inquiline</title>
         <item>
+            <title>Inquiline 0.9.0</title>
+            <pubDate>Wed, 25 Nov 2026 18:22:56 +0000</pubDate>
+            <sparkle:version>21</sparkle:version>
+            <sparkle:shortVersionString>0.9.0</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <sparkle:releaseNotesLink>https://github.com/inquiline-app/inquiline/releases/tag/v0.9.0</sparkle:releaseNotesLink>
+            <enclosure url="https://github.com/inquiline-app/inquiline/releases/download/v0.9.0/Inquiline-0.9.0-arm64.dmg" sparkle:edSignature="0hImM/zRq+E1pZRR5frGuyezFUtp7CpTKgaUE86kWw/16YMSqgpjXtgsKmOTcxWJy2bIZUW4WNJxjCjo078RCw==" length="548432475" type="application/octet-stream"/>
+            <sparkle:deltas>
+                <enclosure url="https://github.com/inquiline-app/inquiline/releases/download/v0.9.0/Inquiline21-20.delta" sparkle:deltaFrom="20" sparkle:edSignature="m0WFXYoAx5X1U3MV/fNVrU3LsewrrfaMgHPjpyIVgvVrjxkny/l2Qg9JEak9fN3r1y3Sjjz/ZTW3t3zs4/LkCQ==" length="673926" type="application/octet-stream"/>
+            </sparkle:deltas>
+        </item>
+        <item>
             <title>Inquiline 0.8.0</title>
             <pubDate>Sat, 21 Nov 2026 09:18:29 +0000</pubDate>
             <sparkle:version>20</sparkle:version>
