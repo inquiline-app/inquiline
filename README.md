@@ -31,7 +31,11 @@ Open an `.apk`, or a bundle such as `.xapk`, `.apkm` or `.apks`, and a few secon
 
 Scan the QR code under the phone button and your phone becomes a remote, as Apple's TV Remote is for an Apple TV. Touch the app as if it were on the phone, type with the phone's keyboard, use it as a trackpad, take a screenshot, or open any of your apps from the list. A second phone joins as player two.
 
-**Then take the window with you.** One key moves the app's window onto your phone, full screen and with its sound, and you keep playing there by touch. Swipe up with three fingers and it's back on your Mac. Nothing to install: the remote is a web page from your Mac.
+### Then take the window with you
+
+<p align="center"><img src="docs/images/window-on-phone.gif" width="720" alt="Asphalt runs in its Mac window; in front, a phone shows the same game full screen, and a tap on the phone opens the Special Events tab in both at once"></p>
+
+One key puts the app's window on your phone, full screen. It isn't a picture: touch it and you're playing, with every finger, and the sound moves to the phone too, so the Mac goes quiet. Swipe up with three fingers and it's back on your Mac. Nothing to install: the remote is a web page from your Mac.
 
 ## Games, with keys and a mouse
 
