@@ -3,6 +3,15 @@
     <channel>
         <title>Inquiline</title>
         <item>
+            <title>Inquiline 0.9.1</title>
+            <pubDate>Thu, 26 Nov 2026 08:58:46 +0000</pubDate>
+            <sparkle:version>22</sparkle:version>
+            <sparkle:shortVersionString>0.9.1</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <sparkle:releaseNotesLink>https://github.com/inquiline-app/inquiline/releases/tag/v0.9.1</sparkle:releaseNotesLink>
+            <enclosure url="https://github.com/inquiline-app/inquiline/releases/download/v0.9.1/Inquiline-0.9.1-arm64.dmg" sparkle:edSignature="F5jq+ByoE/wyppC6HLJaYgx89OHiT1UjGRSpP5t5MhTaoJ8EswbeiLw4xhcUqenz9YLXTQYtc5TYJxNwoo44Ag==" length="548699875" type="application/octet-stream"/>
+        </item>
+        <item>
             <title>Inquiline 0.9.0</title>
             <pubDate>Wed, 25 Nov 2026 18:22:56 +0000</pubDate>
             <sparkle:version>21</sparkle:version>
