@@ -110,6 +110,7 @@ struct stub_stream_out {
     struct sink *sink;
     unsigned ring_buffers, card_periods;
     uint64_t frames_before; /* frames played by earlier sinks, as Android counts from the start */
+    uint64_t last_position; /* the last presentation position told, which never goes back */
     uint32_t sample_rate;
     audio_channel_mask_t channel_mask;
     audio_format_t format;
@@ -463,8 +464,10 @@ static int64_t lead_frames(uint32_t rate)
     int64_t now = now_ns();
     if (now - read_ns > 1000000000LL) {
         read_ns = now;
-        unsigned ms = audio_property("vendor.inquiline.audio.lead_ms", 0);
-        lead_ms = ms > MAX_LEAD_MS ? MAX_LEAD_MS : ms;
+        /* Below zero when the sound reaches the speakers later than the picture the screen. */
+        char value[PROP_VALUE_MAX] = "";
+        long ms = __system_property_get("vendor.inquiline.audio.lead_ms", value) > 0 ? strtol(value, NULL, 10) : 0;
+        lead_ms = ms > MAX_LEAD_MS ? MAX_LEAD_MS : ms < -MAX_LEAD_MS ? -MAX_LEAD_MS : ms;
     }
     int64_t frames = lead_ms * rate / 1000;
     pthread_mutex_unlock(&lock);
@@ -480,9 +483,18 @@ static int out_get_presentation_position(const struct audio_stream_out *stream,
     /* Never past what was written: a player takes that for sound it never gave. */
     pthread_mutex_lock(&out->sink->lock);
     uint64_t written = out->sink->received;
+    double lag = out->sink->lag;
     pthread_mutex_unlock(&out->sink->lock);
     if (*frames > written) *frames = written;
+    /* Sound later than its picture even with nothing held back (sink_write): the position is
+     * what is really heard, that much behind, so players show their pictures that much later,
+     * as Android asks of a sound driver (its presentation position is when the sound is heard). */
+    double behind = lag - (double)lead_frames(out->sample_rate);
+    if (behind > 0) *frames = *frames > (uint64_t)behind ? *frames - (uint64_t)behind : 0;
     *frames += out->frames_before;
+    struct stub_stream_out *told = (struct stub_stream_out *)out;
+    if (*frames < told->last_position) *frames = told->last_position;
+    else told->last_position = *frames;
     return 0;
 }
 

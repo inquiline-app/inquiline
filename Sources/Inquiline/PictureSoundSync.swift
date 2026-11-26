@@ -41,7 +41,8 @@ final class PictureSoundSync {
         let engine = EngineControl.soundDelay ?? 0
         let speakers = Self.soundLatency()
         let lead = Int(((picture - speakers - engine) * 1000).rounded())
-        let ms = min(max(lead, 0), 200)
+        // Below zero, the sound is the later: the driver then has players show pictures later.
+        let ms = min(max(lead, -200), 200)
         lock.lock()
         let changed = lastSet.map { abs($0 - ms) >= 3 } ?? true
         if changed { lastSet = ms }

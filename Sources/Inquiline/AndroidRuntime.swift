@@ -731,7 +731,9 @@ final class AndroidRuntime {
     /// for its picture: before, it could only say so within its ring, which was too little.
     /// 41: the driver measures how far behind its clock the sound leaving Android is, and holds
     /// it back to what Inquiline asks (the picture's way, less the engine's and speakers').
-    private static let diskRevision = 41
+    /// 42: sound later than its picture: the driver tells players the sound as really heard, so
+    /// they show their pictures later, as Android asks of a sound driver.
+    private static let diskRevision = 42
 
     private var builtInScreen: ScrcpySession.Screen { ScrcpySession.Resolution.forThisMac.screen(landscape: false) }
     /// The VM's memory map fits the 36-bit (64 GB) address space Apple's M1 and M2 give a VM:
@@ -1202,7 +1204,7 @@ final class AndroidRuntime {
     /// How far the sound leads the picture on the Mac, for Android's sound driver to make up
     /// (PictureSoundSync).
     func setSoundLead(ms: Int) {
-        _ = try? shell("su 0 setprop vendor.inquiline.audio.lead_ms \(min(max(ms, 0), 200))")
+        _ = try? shell("su 0 setprop vendor.inquiline.audio.lead_ms \(min(max(ms, -200), 200))")
     }
 
     /// Mutes one app as Android itself does, by taking away its permission to play sound
