@@ -92,6 +92,12 @@ final class ScrcpySession {
     var beforeLaunch: (() -> Void)?
     /// Called on a background thread when Android's clipboard changes.
     var onClipboard: ((String) -> Void)?
+    /// Called on a background thread with what Android's driver sends a HID device: an output
+    /// report (rumble, lights), for a device handed over whole (RawGamepads).
+    var onHIDOutput: ((_ id: UInt16, _ report: [UInt8]) -> Void)?
+    /// Called on a background thread when Android's kernel asks a whole device for a report
+    /// (kind 0) or sets one (kind 1); answer with sendHIDReportReply.
+    var onHIDReportRequest: ((_ id: UInt16, _ kind: UInt8, _ request: UInt32, _ number: UInt8, _ type: UInt8, _ data: [UInt8]) -> Void)?
 
     /// `restartsApp` stops the app first, so it starts again on this session's screen.
     /// Android's screen takes the window's size when it changes (sendResize), as on a desktop
@@ -201,7 +207,14 @@ final class ScrcpySession {
                 _ = try readExactly(8, from: controlFD)
             case 2: // HID output: id, then a sized payload
                 let header = try readExactly(4, from: controlFD)
-                _ = try readExactly(Int(header[2]) << 8 | Int(header[3]), from: controlFD)
+                let report = try readExactly(Int(header[2]) << 8 | Int(header[3]), from: controlFD)
+                onHIDOutput?(UInt16(header[0]) << 8 | UInt16(header[1]), [UInt8](report))
+            case 100: // Inquiline: a report request for a whole device (UhidManager)
+                let header = try readExactly(11, from: controlFD)
+                let size = Int(header[9]) << 8 | Int(header[10])
+                let data = size > 0 ? [UInt8](try readExactly(size, from: controlFD)) : []
+                let request = UInt32(header[3]) << 24 | UInt32(header[4]) << 16 | UInt32(header[5]) << 8 | UInt32(header[6])
+                onHIDReportRequest?(UInt16(header[0]) << 8 | UInt16(header[1]), header[2], request, header[7], header[8], data)
             default:
                 return
             }
@@ -352,7 +365,9 @@ final class ScrcpySession {
 
     /// Plugs a HID device into Android, on this app's display only.
     /// `country` is the HID country code a keyboard reports its layout with (0: none).
-    func sendHIDOpen(id: UInt16, vendor: UInt16, product: UInt16, name: String, descriptor: [UInt8], country: UInt8 = 0) {
+    /// `bus` is Linux's bus of a controller handed over whole (3 USB, 5 Bluetooth), which its
+    /// driver matches; 0 for a device made up here.
+    func sendHIDOpen(id: UInt16, vendor: UInt16, product: UInt16, name: String, descriptor: [UInt8], country: UInt8 = 0, bus: UInt8 = 0) {
         let nameBytes = Data(name.utf8.prefix(127))
         var message = Data([12])
         message.appendBigEndian(id)
@@ -363,6 +378,20 @@ final class ScrcpySession {
         message.appendBigEndian(UInt16(descriptor.count))
         message.append(contentsOf: descriptor)
         message.append(country)
+        message.append(bus)
+        send(message)
+    }
+
+    /// A whole device's answer to Android's report request (onHIDReportRequest): `error` is an
+    /// errno, 0 when it worked.
+    func sendHIDReportReply(id: UInt16, kind: UInt8, request: UInt32, error: UInt16, data: [UInt8]) {
+        var message = Data([101])
+        message.appendBigEndian(id)
+        message.append(kind)
+        message.appendBigEndian(request)
+        message.appendBigEndian(error)
+        message.appendBigEndian(UInt16(data.count))
+        message.append(contentsOf: data)
         send(message)
     }
 
