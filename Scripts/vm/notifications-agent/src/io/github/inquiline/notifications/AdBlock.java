@@ -232,8 +232,13 @@ public final class AdBlock extends VpnService {
             @Override
             public Proxy.Answer decide(String url, String host, String headers, Proxy.Owner owner) {
                 if (owner.pkg.equals(GMS)) return forApp(url);
-                // uBlock's lists alone: the address list, for apps' own name lookups, would also cut
-                // services uBlock leaves alone on purpose, as sites' cookie consent.
+                // The proxy looks the site up for the app, so the app's lookup is filtered here as the
+                // VPN's DNS would filter it: the same address list, for the apps whose ads are blocked.
+                if ((owner.mask & Lists.ADS) != 0 && isBlocked(host)) {
+                    Counts.add(AdBlock.this, owner.pkg, Lists.ADS);
+                    return Proxy.Answer.EMPTY;
+                }
+                // Each request inside a connection: uBlock's lists, which know the page asking.
                 Request request = request(url, host, headers);
                 String page = Proxy.header(headers, "referer");
                 if (page.isEmpty()) page = Proxy.header(headers, "origin");

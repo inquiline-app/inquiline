@@ -257,6 +257,9 @@ final class Proxy {
                 continue;
             }
             Answer blocked = filter.decide(origin + line[1], host, head, owner);
+            // A request blocked outright fails, as in a browser's own blocker: the connection ends
+            // with no answer. One with a stand-in (a harmless script in its place) gets that.
+            if (blocked == Answer.EMPTY) return;
             if (blocked != null) {
                 skipBody(fromApp, head, true, method);
                 toApp.write(answerHead(blocked).getBytes(StandardCharsets.ISO_8859_1));
@@ -322,6 +325,7 @@ final class Proxy {
         int port = colon > 0 ? Integer.parseInt(hostPort.substring(colon + 1)) : 80;
         OutputStream toApp = client.getOutputStream();
         Answer blocked = filter.decide(url, host, head, owner);
+        if (blocked == Answer.EMPTY) return;
         if (blocked != null) {
             skipBody(client.getInputStream(), head, true, line[0]);
             toApp.write(answerHead(blocked).getBytes(StandardCharsets.ISO_8859_1));
