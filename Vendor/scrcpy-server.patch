@@ -129,25 +129,22 @@ index d7d1a76..9b5e1ed 100644
                  if (controller != null) {
                      controller.setSurfaceCapture(surfaceCapture);
 diff --git a/server/src/main/java/com/genymobile/scrcpy/control/ControlMessage.java b/server/src/main/java/com/genymobile/scrcpy/control/ControlMessage.java
-index 777873b..a32a153 100644
+index 777873b..9dd836c 100644
 --- a/server/src/main/java/com/genymobile/scrcpy/control/ControlMessage.java
 +++ b/server/src/main/java/com/genymobile/scrcpy/control/ControlMessage.java
-@@ -30,6 +30,8 @@ public final class ControlMessage {
+@@ -30,6 +30,7 @@ public final class ControlMessage {
      public static final int TYPE_CAMERA_ZOOM_OUT = 20;
      public static final int TYPE_RESIZE_DISPLAY = 21;
      public static final int TYPE_SCAN_FILE = 22;
 +    public static final int TYPE_RELEASE_FRAME = 100; // Inquiline, see FrameStreamer
-+    public static final int TYPE_UHID_REPORT_REPLY = 101; // Inquiline: a device's answer to a GET or SET report
  
      public static final long SEQUENCE_INVALID = 0;
  
-@@ -58,9 +60,14 @@ public final class ControlMessage {
+@@ -58,9 +59,12 @@ public final class ControlMessage {
      private boolean on;
      private int vendorId;
      private int productId;
 +    private int country;
-+    private int bus; // Inquiline: the HID bus a whole device came on (BUS_USB, BUS_BLUETOOTH), 0 for virtual
-+    private int error; // Inquiline: a report reply's errno, 0 when it worked
      private int width;
      private int height;
  
@@ -156,7 +153,7 @@ index 777873b..a32a153 100644
      private ControlMessage() {
      }
  
-@@ -134,20 +141,53 @@ public final class ControlMessage {
+@@ -134,13 +138,20 @@ public final class ControlMessage {
          return msg;
      }
  
@@ -174,44 +171,26 @@ index 777873b..a32a153 100644
      }
  
 -    public static ControlMessage createUhidCreate(int id, int vendorId, int productId, String name, byte[] reportDesc) {
-+    public static ControlMessage createUhidCreate(int id, int vendorId, int productId, String name, byte[] reportDesc, int country, int bus) {
++    public static ControlMessage createUhidCreate(int id, int vendorId, int productId, String name, byte[] reportDesc, int country) {
          ControlMessage msg = new ControlMessage();
-+        msg.bus = bus;
          msg.type = TYPE_UHID_CREATE;
          msg.id = id;
-         msg.vendorId = vendorId;
+@@ -148,9 +159,14 @@ public final class ControlMessage {
          msg.productId = productId;
          msg.text = name;
          msg.data = reportDesc;
 +        msg.country = country;
-+        return msg;
-+    }
-+
+         return msg;
+     }
+ 
 +    public int getCountry() {
 +        return country;
 +    }
 +
-+    public int getBus() {
-+        return bus;
-+    }
-+
-+    public int getError() {
-+        return error;
-+    }
-+
-+    /** Inquiline: a device's answer to a report request (DeviceMessage.TYPE_UHID_REPORT_REQUEST). */
-+    public static ControlMessage createUhidReportReply(int id, int kind, long request, int error, byte[] data) {
-+        ControlMessage msg = new ControlMessage();
-+        msg.type = TYPE_UHID_REPORT_REPLY;
-+        msg.id = id;
-+        msg.action = kind;
-+        msg.sequence = request;
-+        msg.error = error;
-+        msg.data = data;
-         return msg;
-     }
- 
-@@ -195,6 +235,10 @@ public final class ControlMessage {
+     public static ControlMessage createUhidInput(int id, byte[] data) {
+         ControlMessage msg = new ControlMessage();
+         msg.type = TYPE_UHID_INPUT;
+@@ -195,6 +211,10 @@ public final class ControlMessage {
          return msg;
      }
  
@@ -223,44 +202,31 @@ index 777873b..a32a153 100644
          return type;
      }
 diff --git a/server/src/main/java/com/genymobile/scrcpy/control/ControlMessageReader.java b/server/src/main/java/com/genymobile/scrcpy/control/ControlMessageReader.java
-index b2591d6..b9a4de0 100644
+index b2591d6..8dae088 100644
 --- a/server/src/main/java/com/genymobile/scrcpy/control/ControlMessageReader.java
 +++ b/server/src/main/java/com/genymobile/scrcpy/control/ControlMessageReader.java
-@@ -64,6 +64,10 @@ public class ControlMessageReader {
+@@ -64,6 +64,8 @@ public class ControlMessageReader {
                  return parseResizeDisplay();
              case ControlMessage.TYPE_SCAN_FILE:
                  return parseScanFile();
 +            case ControlMessage.TYPE_RELEASE_FRAME:
 +                return ControlMessage.createReleaseFrame(dis.readInt());
-+            case ControlMessage.TYPE_UHID_REPORT_REPLY:
-+                return parseUhidReportReply();
              default:
                  throw new ControlProtocolException("Unknown event type: " + type);
          }
-@@ -155,7 +159,20 @@ public class ControlMessageReader {
+@@ -155,7 +157,9 @@ public class ControlMessageReader {
          int productId = dis.readUnsignedShort();
          String name = parseString(1);
          byte[] data = parseByteArray(2);
 -        return ControlMessage.createUhidCreate(id, vendorId, productId, name, data);
 +        // Inquiline: the HID country code, as a real keyboard reports its layout.
 +        int country = dis.readUnsignedByte();
-+        // Inquiline: the bus of a controller handed over whole, so its kernel driver takes it.
-+        int bus = dis.readUnsignedByte();
-+        return ControlMessage.createUhidCreate(id, vendorId, productId, name, data, country, bus);
-+    }
-+
-+    private ControlMessage parseUhidReportReply() throws IOException {
-+        int id = dis.readUnsignedShort();
-+        int kind = dis.readUnsignedByte();
-+        long request = dis.readInt() & 0xFFFFFFFFL;
-+        int error = dis.readUnsignedShort();
-+        byte[] data = parseByteArray(2);
-+        return ControlMessage.createUhidReportReply(id, kind, request, error, data);
++        return ControlMessage.createUhidCreate(id, vendorId, productId, name, data, country);
      }
  
      private ControlMessage parseUhidInput() throws IOException {
 diff --git a/server/src/main/java/com/genymobile/scrcpy/control/Controller.java b/server/src/main/java/com/genymobile/scrcpy/control/Controller.java
-index 55d6e11..0309caf 100644
+index 55d6e11..01ff00a 100644
 --- a/server/src/main/java/com/genymobile/scrcpy/control/Controller.java
 +++ b/server/src/main/java/com/genymobile/scrcpy/control/Controller.java
 @@ -14,6 +14,7 @@ import com.genymobile.scrcpy.util.Ln;
@@ -302,20 +268,16 @@ index 55d6e11..0309caf 100644
              default:
                  // fall through
          }
-@@ -396,7 +407,11 @@ public class Controller implements AsyncProcessor, VirtualDisplayListener {
+@@ -396,7 +407,7 @@ public class Controller implements AsyncProcessor, VirtualDisplayListener {
                      }
                      return true;
                  case ControlMessage.TYPE_UHID_CREATE:
 -                    getUhidManager().open(msg.getId(), msg.getVendorId(), msg.getProductId(), msg.getText(), msg.getData());
-+                    getUhidManager().open(msg.getId(), msg.getVendorId(), msg.getProductId(), msg.getText(), msg.getData(), msg.getCountry(),
-+                            msg.getBus());
-+                    return true;
-+                case ControlMessage.TYPE_UHID_REPORT_REPLY:
-+                    getUhidManager().replyReport(msg.getId(), msg.getAction(), (int) msg.getSequence(), msg.getError(), msg.getData());
++                    getUhidManager().open(msg.getId(), msg.getVendorId(), msg.getProductId(), msg.getText(), msg.getData(), msg.getCountry());
                      return true;
                  case ControlMessage.TYPE_UHID_INPUT:
                      getUhidManager().writeInput(msg.getId(), msg.getData());
-@@ -855,6 +870,11 @@ public class Controller implements AsyncProcessor, VirtualDisplayListener {
+@@ -855,6 +866,11 @@ public class Controller implements AsyncProcessor, VirtualDisplayListener {
      }
  
      private void setDisplayPower(boolean on) {
@@ -327,187 +289,38 @@ index 55d6e11..0309caf 100644
          // Change the power of the main display when mirroring a virtual display
          int targetDisplayId = displayId != Device.DISPLAY_ID_NONE ? displayId : 0;
          boolean setDisplayPowerOk = Device.setDisplayPower(targetDisplayId, on);
-diff --git a/server/src/main/java/com/genymobile/scrcpy/control/DeviceMessage.java b/server/src/main/java/com/genymobile/scrcpy/control/DeviceMessage.java
-index 079a7a0..7006bb1 100644
---- a/server/src/main/java/com/genymobile/scrcpy/control/DeviceMessage.java
-+++ b/server/src/main/java/com/genymobile/scrcpy/control/DeviceMessage.java
-@@ -5,12 +5,17 @@ public final class DeviceMessage {
-     public static final int TYPE_CLIPBOARD = 0;
-     public static final int TYPE_ACK_CLIPBOARD = 1;
-     public static final int TYPE_UHID_OUTPUT = 2;
-+    public static final int TYPE_UHID_REPORT_REQUEST = 100; // Inquiline: the kernel asks a device for a report, or sets one
- 
-     private int type;
-     private String text;
-     private long sequence;
-     private int id;
-     private byte[] data;
-+    private int kind; // Inquiline: 0 GET report, 1 SET report
-+    private long request;
-+    private int number;
-+    private int reportType;
- 
-     private DeviceMessage() {
-     }
-@@ -37,6 +42,35 @@ public final class DeviceMessage {
-         return event;
-     }
- 
-+    /** Inquiline: the kernel's GET (kind 0) or SET (kind 1) report request, for the device on the Mac. */
-+    public static DeviceMessage createUhidReportRequest(int id, int kind, long request, int number, int reportType, byte[] data) {
-+        DeviceMessage event = new DeviceMessage();
-+        event.type = TYPE_UHID_REPORT_REQUEST;
-+        event.id = id;
-+        event.kind = kind;
-+        event.request = request;
-+        event.number = number;
-+        event.reportType = reportType;
-+        event.data = data;
-+        return event;
-+    }
-+
-+    public int getKind() {
-+        return kind;
-+    }
-+
-+    public long getRequest() {
-+        return request;
-+    }
-+
-+    public int getNumber() {
-+        return number;
-+    }
-+
-+    public int getReportType() {
-+        return reportType;
-+    }
-+
-     public int getType() {
-         return type;
-     }
-diff --git a/server/src/main/java/com/genymobile/scrcpy/control/DeviceMessageWriter.java b/server/src/main/java/com/genymobile/scrcpy/control/DeviceMessageWriter.java
-index a18a2e5..eb7b478 100644
---- a/server/src/main/java/com/genymobile/scrcpy/control/DeviceMessageWriter.java
-+++ b/server/src/main/java/com/genymobile/scrcpy/control/DeviceMessageWriter.java
-@@ -39,6 +39,16 @@ public class DeviceMessageWriter {
-                 dos.writeShort(data.length);
-                 dos.write(data);
-                 break;
-+            case DeviceMessage.TYPE_UHID_REPORT_REQUEST:
-+                dos.writeShort(msg.getId());
-+                dos.writeByte(msg.getKind());
-+                dos.writeInt((int) msg.getRequest());
-+                dos.writeByte(msg.getNumber());
-+                dos.writeByte(msg.getReportType());
-+                byte[] report = msg.getData();
-+                dos.writeShort(report.length);
-+                dos.write(report);
-+                break;
-             default:
-                 throw new ControlProtocolException("Unknown event type: " + type);
-         }
 diff --git a/server/src/main/java/com/genymobile/scrcpy/control/UhidManager.java b/server/src/main/java/com/genymobile/scrcpy/control/UhidManager.java
-index 20532c0..273a0ad 100644
+index 20532c0..6f20ac5 100644
 --- a/server/src/main/java/com/genymobile/scrcpy/control/UhidManager.java
 +++ b/server/src/main/java/com/genymobile/scrcpy/control/UhidManager.java
-@@ -24,6 +24,11 @@ public final class UhidManager {
- 
-     // Linux: include/uapi/linux/uhid.h
-     private static final int UHID_OUTPUT = 6;
-+    // Inquiline: a device handed over whole answers the kernel's report requests itself.
-+    private static final int UHID_GET_REPORT = 9;
-+    private static final int UHID_GET_REPORT_REPLY = 10;
-+    private static final int UHID_SET_REPORT = 13;
-+    private static final int UHID_SET_REPORT_REPLY = 14;
-     private static final int UHID_CREATE2 = 11;
-     private static final int UHID_INPUT2 = 12;
- 
-@@ -55,7 +60,7 @@ public final class UhidManager {
+@@ -55,7 +55,7 @@ public final class UhidManager {
          }
      }
  
 -    public void open(int id, int vendorId, int productId, String name, byte[] reportDesc) throws IOException {
-+    public void open(int id, int vendorId, int productId, String name, byte[] reportDesc, int country, int bus) throws IOException {
++    public void open(int id, int vendorId, int productId, String name, byte[] reportDesc, int country) throws IOException {
          try {
              FileDescriptor fd = Os.open("/dev/uhid", OsConstants.O_RDWR, 0);
              try {
-@@ -69,7 +74,7 @@ public final class UhidManager {
+@@ -69,7 +69,7 @@ public final class UhidManager {
                  }
  
                  String phys = mustUseInputPort() ? INPUT_PORT : null;
 -                byte[] req = buildUhidCreate2Req(vendorId, productId, name, reportDesc, phys);
-+                byte[] req = buildUhidCreate2Req(vendorId, productId, name, reportDesc, phys, country, bus);
++                byte[] req = buildUhidCreate2Req(vendorId, productId, name, reportDesc, phys, country);
                  Os.write(fd, req, 0, req.length);
  
                  if (firstDevice) {
-@@ -100,6 +105,21 @@ public final class UhidManager {
-                                 DeviceMessage msg = DeviceMessage.createUhidOutput(id, data);
-                                 sender.send(msg);
-                             }
-+                        } else if (type == UHID_GET_REPORT && buffer.remaining() >= 6) {
-+                            // struct uhid_get_report_req { __u32 id; __u8 rnum; __u8 rtype; }
-+                            long request = buffer.getInt() & 0xFFFFFFFFL;
-+                            int number = buffer.get() & 0xFF;
-+                            int reportType = buffer.get() & 0xFF;
-+                            sender.send(DeviceMessage.createUhidReportRequest(id, 0, request, number, reportType, new byte[0]));
-+                        } else if (type == UHID_SET_REPORT && buffer.remaining() >= 8) {
-+                            // struct uhid_set_report_req { __u32 id; __u8 rnum; __u8 rtype; __u16 size; __u8 data[4096]; }
-+                            long request = buffer.getInt() & 0xFFFFFFFFL;
-+                            int number = buffer.get() & 0xFF;
-+                            int reportType = buffer.get() & 0xFF;
-+                            int size = Math.min(buffer.getShort() & 0xFFFF, Math.min(4096, buffer.remaining()));
-+                            byte[] data = new byte[size];
-+                            buffer.get(data);
-+                            sender.send(DeviceMessage.createUhidReportRequest(id, 1, request, number, reportType, data));
-                         }
-                     }
-                 } catch (ErrnoException | InterruptedIOException e) {
-@@ -147,6 +167,30 @@ public final class UhidManager {
-         return data;
-     }
- 
-+    /** Inquiline: the device's answer to a GET (kind 0) or SET (kind 1) report request. */
-+    public void replyReport(int id, int kind, int request, int error, byte[] data) throws IOException {
-+        FileDescriptor fd = fds.get(id);
-+        if (fd == null) {
-+            return;
-+        }
-+        ByteBuffer buf;
-+        if (kind == 0) {
-+            // struct uhid_get_report_reply_req { __u32 id; __u16 err; __u16 size; __u8 data[4096]; }
-+            int size = Math.min(data.length, 4096);
-+            buf = ByteBuffer.allocate(4 + 8 + size).order(ByteOrder.nativeOrder());
-+            buf.putInt(UHID_GET_REPORT_REPLY).putInt(request).putShort((short) error).putShort((short) size).put(data, 0, size);
-+        } else {
-+            // struct uhid_set_report_reply_req { __u32 id; __u16 err; }
-+            buf = ByteBuffer.allocate(4 + 6).order(ByteOrder.nativeOrder());
-+            buf.putInt(UHID_SET_REPORT_REPLY).putInt(request).putShort((short) error);
-+        }
-+        try {
-+            Os.write(fd, buf.array(), 0, buf.position());
-+        } catch (ErrnoException e) {
-+            throw new IOException(e);
-+        }
-+    }
-+
-     public void writeInput(int id, byte[] data) throws IOException {
-         FileDescriptor fd = fds.get(id);
-         if (fd == null) {
-@@ -162,7 +206,7 @@ public final class UhidManager {
+@@ -162,7 +162,7 @@ public final class UhidManager {
          }
      }
  
 -    private static byte[] buildUhidCreate2Req(int vendorId, int productId, String name, byte[] reportDesc, String phys) {
-+    private static byte[] buildUhidCreate2Req(int vendorId, int productId, String name, byte[] reportDesc, String phys, int country, int bus) {
++    private static byte[] buildUhidCreate2Req(int vendorId, int productId, String name, byte[] reportDesc, String phys, int country) {
          /*
           * struct uhid_event {
           *     uint32_t type;
-@@ -202,11 +246,11 @@ public final class UhidManager {
- 
-         buf.position(4 + 256);
-         buf.putShort((short) reportDesc.length);
--        buf.putShort(BUS_VIRTUAL);
-+        buf.putShort(bus != 0 ? (short) bus : BUS_VIRTUAL);
+@@ -206,7 +206,7 @@ public final class UhidManager {
          buf.putInt(vendorId);
          buf.putInt(productId);
          buf.putInt(0); // version

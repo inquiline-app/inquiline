@@ -19,8 +19,6 @@ final class GamepadBridge {
     private var held: [ObjectIdentifier: Set<Int>] = [:]
     /// The HID id each controller has in Android. scrcpy keeps 1 and 2 for a keyboard and mouse.
     private var plugged: [ObjectIdentifier: UInt16] = [:]
-    /// Controllers handed to Android whole (RawGamepads), by their HID id there.
-    private var whole: [UInt16: RawGamepads.Device] = [:]
     private var observers: [NSObjectProtocol] = []
 
     init(session: ScrcpySession, controls: KeyControlPlayer) {
@@ -32,20 +30,7 @@ final class GamepadBridge {
             center.addObserver(forName: .GCControllerDidDisconnect, object: nil, queue: .main) { [weak self] _ in self?.update() },
             center.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in self?.update() },
             center.addObserver(forName: NSApplication.didResignActiveNotification, object: nil, queue: .main) { [weak self] _ in self?.update() },
-            center.addObserver(forName: RawGamepads.didChange, object: nil, queue: .main) { [weak self] _ in self?.update() },
         ]
-        // What Android's drivers send a whole controller goes back to it.
-        session.onHIDOutput = { [weak self] id, report in
-            DispatchQueue.main.async { self?.whole[id]?.output(report) }
-        }
-        session.onHIDReportRequest = { [weak self] id, kind, request, number, type, data in
-            DispatchQueue.main.async {
-                guard let self else { return }
-                let (error, answer) = self.whole[id]?.report(kind: Int(kind), number: number, type: type, data: data) ?? (ENODEV, [])
-                self.session.sendHIDReportReply(id: id, kind: kind, request: request, error: UInt16(error), data: answer)
-            }
-        }
-        RawGamepads.shared.start()
         update()
     }
 
@@ -72,23 +57,14 @@ final class GamepadBridge {
     func stop() {
         for (_, id) in plugged { session.sendHIDClose(id: id) }
         plugged = [:]
-        for (id, device) in whole {
-            session.sendHIDClose(id: id)
-            device.onReport = nil
-        }
-        whole = [:]
         for key in held.keys { release(key) }
         GCController.controllers().forEach { $0.extendedGamepad?.valueChangedHandler = nil }
     }
 
     /// Called again when the controls change, as they decide who gets the controller.
     func update() {
+        let wanted = GCController.controllers().filter { $0.extendedGamepad != nil }
         let usesPad = controls?.set.usesPad == true
-        updateWhole(usesPad: usesPad)
-        // Those handed over whole aren't plugged in again as Xbox pads.
-        let wanted = GCController.controllers().filter {
-            $0.extendedGamepad != nil && (usesPad || RawGamepads.shared.device(named: $0.vendorName) == nil)
-        }
         let wantedKeys = Set(wanted.map(ObjectIdentifier.init))
         for (key, id) in plugged where !wantedKeys.contains(key) || usesPad {
             session.sendHIDClose(id: id)
@@ -98,7 +74,7 @@ final class GamepadBridge {
             let key = ObjectIdentifier(controller)
             guard let pad = controller.extendedGamepad else { continue }
             if !usesPad, plugged[key] == nil,
-               let id = (3...10).map(UInt16.init).first(where: { !plugged.values.contains($0) && whole[$0] == nil }) {
+               let id = (3...10).map(UInt16.init).first(where: { !plugged.values.contains($0) }) {
                 plugged[key] = id
                 session.sendHIDOpen(id: id, vendor: 0x045E, product: 0x028E, name: "Microsoft X-Box 360 Pad",
                                     descriptor: Self.descriptor)
@@ -110,34 +86,6 @@ final class GamepadBridge {
             // Going to the back lets go of everything held; coming to the front picks up the pad as it is.
             if let id = plugged[key] { session.sendHIDInput(id: id, report: NSApp.isActive ? Self.report(pad) : Self.atRest) }
             if !NSApp.isActive { release(key) }
-        }
-    }
-
-    /// Hands each controller Linux can drive to Android whole, while the app's controls don't
-    /// take the controller.
-    private func updateWhole(usesPad: Bool) {
-        let devices = usesPad ? [] : RawGamepads.shared.devices
-        for (id, device) in whole where !devices.contains(where: { $0 === device }) {
-            session.sendHIDClose(id: id)
-            device.onReport = nil
-            whole[id] = nil
-        }
-        for device in devices {
-            let id: UInt16
-            if let known = whole.first(where: { $0.value === device })?.key {
-                id = known
-            } else {
-                guard let free = (3...10).map(UInt16.init).first(where: { whole[$0] == nil && !plugged.values.contains($0) }) else { continue }
-                id = free
-                whole[id] = device
-                session.sendHIDOpen(id: id, vendor: device.vendor, product: device.product, name: device.name,
-                                    descriptor: device.descriptor, bus: device.bus)
-            }
-            // Every report goes, at the back too: they also carry the controller's answers to its
-            // driver (calibration, modes), which it can't do without.
-            device.onReport = { [weak self] report in
-                self?.session.sendHIDInput(id: id, report: report)
-            }
         }
     }
 

@@ -16,8 +16,7 @@ KERNEL=$(uname -r)
 MODULES="virtio_balloon nft_compat virtio_net virtio_gpu overlay loop dm_verity fuse veth bridge tun nf_tables nft_ct nft_fib_inet
 nft_fib_ipv4 nft_fib_ipv6 nft_masq nft_chain_nat nf_nat nf_conntrack ip_tables ip6_tables iptable_nat
 iptable_filter iptable_mangle ip6table_nat ip6table_filter xt_MASQUERADE xt_nat xt_comment xt_addrtype
-xt_conntrack xt_mark xt_multiport xt_tcpudp erofs squashfs uhid virtio_snd 9p 9pnet_virtio
-hid_playstation hid_nintendo hid_microsoft hid_sony hid_steam"
+xt_conntrack xt_mark xt_multiport xt_tcpudp erofs squashfs uhid virtio_snd 9p 9pnet_virtio"
 
 mkfs.ext4 -q -F -L inquiline "$TARGET"
 mkdir -p "$ROOT"
@@ -185,9 +184,6 @@ hostname inquiline
 modprobe loop max_loop=64
 for module in virtio_balloon dm_verity overlay virtio_gpu virtio_net veth bridge fuse tun nf_tables nft_compat nft_chain_nat nft_masq nft_ct \
     xt_MASQUERADE xt_nat xt_comment xt_addrtype xt_conntrack xt_tcpudp xt_mark xt_multiport uhid virtio_snd; do modprobe "$module"; done
-# Game controllers' own drivers, as on a phone: a controller the Mac hands Android whole
-# (its HID reports, through uhid) gets its rumble, lights and motion sensors from them.
-for module in hid_playstation hid_nintendo hid_microsoft hid_sony hid_steam; do modprobe "$module"; done
 # The sound card, which QEMU plays on the Mac, for Android's audio server (group audio, 1005).
 chgrp -R 1005 /dev/snd && chmod 660 /dev/snd/*
 # Game controllers on the Mac reach Android as HID devices that scrcpy's server, running
