@@ -139,6 +139,63 @@ final class Proxy {
         accept.start();
     }
 
+    /**
+     * Google Play services' ad servers, each at a local address of its own. Its ad requests take
+     * no proxy, so the VPN answers its lookups of these with the address (AdBlock), and the
+     * connection lands here, where the request is looked at as if it came through the proxy.
+     */
+    static final Map<String, String> AD_SERVERS = Map.of(
+            "googleads.g.doubleclick.net", "127.0.0.2",
+            "pagead2.googlesyndication.com", "127.0.0.3");
+
+    private final java.util.List<ServerSocket> adServers = new java.util.ArrayList<>();
+
+    /**
+     * Listens at each ad server's address, on its port (443, which Android lets apps use once
+     * Inquiline allows it). Returns false while it can't, and Google Play services then reaches
+     * the servers themselves.
+     */
+    synchronized boolean startAdServers() {
+        if (!adServers.isEmpty()) return true;
+        try {
+            for (Map.Entry<String, String> entry : AD_SERVERS.entrySet()) {
+                ServerSocket listener = new ServerSocket();
+                listener.setReuseAddress(true);
+                adServers.add(listener);
+                listener.bind(new InetSocketAddress(java.net.InetAddress.getByName(entry.getValue()), 443));
+                String host = entry.getKey();
+                Thread accept = new Thread(() -> {
+                    while (!listener.isClosed()) {
+                        try {
+                            Socket client = listener.accept();
+                            connections.execute(() -> {
+                                try (Socket c = client) {
+                                    // One that won't take this installation's authority passes unopened.
+                                    if (pinned.contains(host)) tunnel(c, host, 443);
+                                    else open(c, host, 443, new Owner(AdBlock.GMS, 0));
+                                } catch (Exception ignored) {
+                                }
+                            });
+                        } catch (IOException e) {
+                            return;
+                        }
+                    }
+                }, "adblock-ads");
+                accept.start();
+            }
+            return true;
+        } catch (IOException e) {
+            for (ServerSocket listener : adServers) {
+                try {
+                    listener.close();
+                } catch (IOException ignored) {
+                }
+            }
+            adServers.clear();
+            return false;
+        }
+    }
+
     private void handle(Socket client) {
         try (Socket c = client) {
             Owner owner = filter.ownerOf(c);
@@ -256,12 +313,24 @@ final class Proxy {
                 toApp.flush();
                 continue;
             }
-            Answer blocked = filter.decide(origin + line[1], host, head, owner);
+            // Google Play services names the app an ad request is for in the request's form, not
+            // its address: the form, read whole, is looked at with the address.
+            String asked = origin + line[1];
+            byte[] form = null;
+            String length = header(head, "content-length");
+            if (owner.pkg.equals(AdBlock.GMS) && method.equals("POST") && !length.isEmpty()
+                    && header(head, "transfer-encoding").isEmpty() && Long.parseLong(length) <= MAX_FORM) {
+                ByteArrayOutputStream raw = new ByteArrayOutputStream();
+                copyExactly(fromApp, raw, Long.parseLong(length));
+                form = raw.toByteArray();
+                asked += (asked.indexOf('?') < 0 ? "?" : "&") + formText(form, header(head, "content-encoding"));
+            }
+            Answer blocked = filter.decide(asked, host, head, owner);
             // A request blocked outright fails, as in a browser's own blocker: the connection ends
             // with no answer. One with a stand-in (a harmless script in its place) gets that.
             if (blocked == Answer.EMPTY) return;
             if (blocked != null) {
-                skipBody(fromApp, head, true, method);
+                if (form == null) skipBody(fromApp, head, true, method);
                 toApp.write(answerHead(blocked).getBytes(StandardCharsets.ISO_8859_1));
                 toApp.write(blocked.body);
                 toApp.flush();
@@ -271,7 +340,8 @@ final class Proxy {
             boolean page = isPage(head);
             if (page) request = withHeader(head, "Accept-Encoding", "gzip, deflate").getBytes(StandardCharsets.ISO_8859_1);
             toSite.write(request);
-            copyBody(fromApp, toSite, head, true, method);
+            if (form != null) toSite.write(form);
+            else copyBody(fromApp, toSite, head, true, method);
             toSite.flush();
             byte[] response;
             String answer;
@@ -599,6 +669,22 @@ final class Proxy {
             }
             line.write(b);
             previous = b;
+        }
+    }
+
+    /** The most of a request's form read before it goes on: an ad request's is some 30 KB. */
+    private static final long MAX_FORM = 1 << 20;
+
+    /** A form as text, its encoding undone; what can't be read is left out. */
+    private static String formText(byte[] form, String encoding) {
+        try {
+            java.io.InputStream in = new java.io.ByteArrayInputStream(form);
+            if (encoding.toLowerCase(Locale.ROOT).contains("gzip")) in = new java.util.zip.GZIPInputStream(in);
+            else if (encoding.toLowerCase(Locale.ROOT).contains("deflate")) in = new java.util.zip.InflaterInputStream(in);
+            else if (!encoding.isEmpty()) return "";
+            return new String(in.readAllBytes(), StandardCharsets.ISO_8859_1);
+        } catch (IOException e) {
+            return "";
         }
     }
 

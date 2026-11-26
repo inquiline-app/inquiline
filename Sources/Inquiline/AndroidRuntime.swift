@@ -1140,7 +1140,10 @@ final class AndroidRuntime {
      * Makes Android trust the ad blocker's authority, which the helper made for this installation
      * alone: in the system store, which apps trust, and in the user's, which is the one Chrome
      * trusts beside its own roots. The system store is read-only, so a copy with it is laid over
-     * it, for Android and its app launcher (zygote), each start. Returns false while there is none.
+     * it, for Android and its app launcher (zygote), each start, and for the apps already running
+     * (Google Play services starts before it, and would refuse the proxy that looks at its ad
+     * requests). Apps may also listen on port 443, where the proxy takes Google Play services' ad
+     * connections (Proxy.AD_SERVERS). Returns false while there is none.
      */
     @discardableResult
     func trustAdBlockAuthority() -> Bool {
@@ -1152,6 +1155,9 @@ final class AndroidRuntime {
             [ -f \(store)/$N ] || mount --bind \(copy) \(store); \
             Z=$(pidof zygote64 zygote); NEW=; \
             for p in $Z; do nsenter --mount=/proc/$p/ns/mnt -- sh -c "[ -f \(store)/$N ]" || { NEW=1; nsenter --mount=/proc/$p/ns/mnt -- mount --bind \(copy) \(store); }; done; \
+            for p in $(ps -A -o PID=,PPID= | while read a b; do case " $Z " in *" $b "*) echo $a;; esac; done); do \
+            nsenter -t $p -m -- sh -c "[ -f \(store)/$N ]" || nsenter -t $p -m -- mount --bind \(copy) \(store); done; \
+            echo 443 > /proc/sys/net/ipv4/ip_unprivileged_port_start; \
             U=/data/misc/user/0/cacerts-added; mkdir -p $U && cp \(files)/ca.pem $U/$N && chown system:system $U $U/$N && chmod 644 $U/$N; \
             if [ -n "$NEW" ]; then for a in $(cut -d" " -f1 \(files)/adblock 2>/dev/null); do P=$(pidof $a) && mkdir -p \(Self.restartMarks) && touch \(Self.restartMarks)/$a && kill -9 $P; done; fi; \
             setprop \(Self.authorityReady) 1; echo trusted

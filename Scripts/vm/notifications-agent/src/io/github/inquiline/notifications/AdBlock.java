@@ -507,6 +507,11 @@ public final class AdBlock extends VpnService {
             if (length < ip + 8 + 12 || port(packet, ip + 2) != 53) continue;
             byte[] query = java.util.Arrays.copyOfRange(packet, ip + 8, length);
             String name = questionName(query);
+            String server = name == null ? null : Proxy.AD_SERVERS.get(name.toLowerCase(java.util.Locale.ROOT));
+            if (server != null && fromGms(packet, ip) && adServers()) {
+                write(out, answer(packet, ip, address(query, server)));
+                continue;
+            }
             if (name != null && isBlocked(name) && !fromGms(packet, ip)) {
                 write(out, answer(packet, ip, noSuchName(query)));
                 continue;
@@ -549,6 +554,43 @@ public final class AdBlock extends VpnService {
             at += 1 + label;
         }
         return null;
+    }
+
+    private long adServersTried;
+
+    /** Whether the proxy listens at the ad servers' addresses; tried again at most twice a minute. */
+    private boolean adServers() {
+        Proxy current = proxy;
+        if (current == null) return false;
+        long now = android.os.SystemClock.elapsedRealtime();
+        if (now - adServersTried < 30_000 && adServersTried != 0 && !adServersOn) return false;
+        adServersTried = now;
+        adServersOn = current.startAdServers();
+        return adServersOn;
+    }
+
+    private volatile boolean adServersOn;
+
+    /** The answer to a lookup: the IPv4 address given, and no IPv6 one, so the asker uses it. */
+    private static byte[] address(byte[] query, String server) {
+        int at = 12;
+        while (at < query.length && query[at] != 0) at += 1 + (query[at] & 0xFF);
+        int end = at + 5; // the name's last byte, then its type and class
+        boolean ipv4 = query[at + 1] == 0 && query[at + 2] == 1;
+        byte[] reply = new byte[end + (ipv4 ? 16 : 0)];
+        System.arraycopy(query, 0, reply, 0, end);
+        reply[2] = (byte) (0x80 | (query[2] & 0x01)); // a response; recursion desired, as asked
+        reply[3] = (byte) 0x80;                       // recursion available; no error
+        reply[6] = 0;
+        reply[7] = (byte) (ipv4 ? 1 : 0);             // one answer, or none
+        reply[8] = reply[9] = reply[10] = reply[11] = 0;
+        if (ipv4) {
+            byte[] record = {(byte) 0xC0, 12, 0, 1, 0, 1, 0, 0, 0, 60, 0, 4};
+            System.arraycopy(record, 0, reply, end, record.length);
+            String[] parts = server.split("\\.");
+            for (int i = 0; i < 4; i++) reply[end + 12 + i] = (byte) Integer.parseInt(parts[i]);
+        }
+        return reply;
     }
 
     /** The query sent back as the answer "no such name". */
