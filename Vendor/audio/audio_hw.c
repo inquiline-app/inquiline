@@ -423,10 +423,17 @@ static char * out_get_parameters(const struct audio_stream *stream, const char *
     return strdup("");
 }
 
+/* How long from Android's writing a sound to its being heard, as told by the presentation
+ * position (out_get_presentation_position), the last time a sound played. */
+static uint32_t heard_after_ms;
+
 static uint32_t out_get_latency(const struct audio_stream_out *stream)
 {
     const struct stub_stream_out *out = (const struct stub_stream_out *)stream;
-    /* The ring and the card, as goldfish reports it. */
+    /* What it really is, as a phone tells a Bluetooth headset's: players that time their
+     * pictures by it, not by the presentation position, then keep in step too. Before any sound
+     * has played: the ring and the card, as goldfish reports it. */
+    if (heard_after_ms > 0) return heard_after_ms;
     return (uint32_t)(out->frame_count * (out->ring_buffers + 1) * 1000 / out->sample_rate);
 }
 
@@ -491,6 +498,7 @@ static int out_get_presentation_position(const struct audio_stream_out *stream,
      * as Android asks of a sound driver (its presentation position is when the sound is heard). */
     double behind = lag - (double)lead_frames(out->sample_rate);
     if (behind > 0) *frames = *frames > (uint64_t)behind ? *frames - (uint64_t)behind : 0;
+    if (written > *frames) heard_after_ms = (uint32_t)((written - *frames) * 1000 / out->sample_rate);
     *frames += out->frames_before;
     struct stub_stream_out *told = (struct stub_stream_out *)out;
     if (*frames < told->last_position) *frames = told->last_position;

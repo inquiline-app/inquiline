@@ -733,7 +733,8 @@ final class AndroidRuntime {
     /// it back to what Inquiline asks (the picture's way, less the engine's and speakers').
     /// 42: sound later than its picture: the driver tells players the sound as really heard, so
     /// they show their pictures later, as Android asks of a sound driver.
-    private static let diskRevision = 42
+    /// 43: its latency is what it really is too, for players that time pictures by that.
+    private static let diskRevision = 43
 
     private var builtInScreen: ScrcpySession.Screen { ScrcpySession.Resolution.forThisMac.screen(landscape: false) }
     /// The VM's memory map fits the 36-bit (64 GB) address space Apple's M1 and M2 give a VM:
