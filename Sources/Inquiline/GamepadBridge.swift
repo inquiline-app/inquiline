@@ -35,6 +35,16 @@ final class GamepadBridge {
             guard let self, NSApp.isActive else { return }
             self.changed(state, id: id)
         }
+        // A controller's motion moves the phone Android thinks it is, while the app is in front:
+        // games steer and aim by tilting, about 100 times a second.
+        var lastMotion = 0.0
+        pads.onMotion = { [weak self] _, acceleration, rotation in
+            guard let self, NSApp.isActive else { return }
+            let now = ProcessInfo.processInfo.systemUptime
+            guard now - lastMotion >= 0.009 else { return }
+            lastMotion = now
+            self.session.sendMotion(acceleration: acceleration, rotation: rotation)
+        }
         pads.start()
         update()
     }
@@ -61,6 +71,7 @@ final class GamepadBridge {
         plugged = [:]
         for id in held.keys { release(id) }
         pads.onState = nil
+        pads.onMotion = nil
     }
 
     /// Called again when the controls change, as they decide who gets the controller.

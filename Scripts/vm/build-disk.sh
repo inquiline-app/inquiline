@@ -3,7 +3,7 @@
 # that built it. Run as root in a Fedora guest with the same kernel, the guest GPU
 # libraries in $1 (libdrm.so from Mesa, vulkan.gfxstream.so from build-guest-vulkan.sh and
 # audio.primary.redroid.so from build-guest-audio.sh, android.hardware.gnss-service.inquiline from
-# build-guest-gnss.sh, inquiline-c2 from build-guest-c2.sh, services.jar and oat-arm64 from build-services.sh, and Vendor/inquiline-framework-overlay.apk
+# build-guest-gnss.sh, inquiline-c2 from build-guest-c2.sh, inquiline-sensors from build-guest-sensors.sh, services.jar and oat-arm64 from build-services.sh, and Vendor/inquiline-framework-overlay.apk
 # from build-framework-overlay.sh), the Redroid image in podman, and the empty target disk at $2.
 set -eu
 
@@ -257,6 +257,7 @@ exec podman run --rm $EXTRA --name redroid --ip 10.88.0.2 --privileged --pull=ne
   -v $A/android.hardware.gnss-service.inquiline:/vendor/bin/hw/android.hardware.gnss-service.inquiline:ro \
   -v $A/gnss.xml:/vendor/etc/vintf/manifest/gnss-inquiline.xml:ro \
   -v $A/inquiline-c2:/system/bin/inquiline-c2:ro -v $A/inquiline-c2.xml:/vendor/etc/vintf/manifest/inquiline-c2.xml:ro \
+  -v $A/inquiline-sensors:/system/bin/inquiline-sensors:ro -v $A/inquiline-sensors.xml:/vendor/etc/vintf/manifest/inquiline-sensors.xml:ro \
   -v $A/media_codecs.xml:/vendor/etc/media_codecs.xml:ro \
   -v $A/gps.xml:/vendor/etc/permissions/android.hardware.location.gps.xml:ro \
   -v $A/vulkan-version.xml:/vendor/etc/permissions/android.hardware.vulkan.version-1_1.xml:ro \
@@ -297,10 +298,30 @@ service vendor.c2-inquiline /system/bin/inquiline-c2
     user mediacodec
     group camera mediadrm drmrpc graphics inet
     setenv LD_LIBRARY_PATH /system/lib64:/apex/com.android.media.swcodec/lib64
+
+# Android's accelerometer and gyroscope, which a game controller's or a phone's motion moves,
+# from the Mac (Vendor/sensors).
+service vendor.sensors-inquiline /system/bin/inquiline-sensors
+    class hal
+    user system
+    group system
+    rlimit rtprio 10 10
 EOF
 # Inquiline's video decoders (build-guest-c2.sh), registered as a phone maker's are, and their
 # limits in Android's codec list. Inquiline tells them which kinds the Mac decodes.
 cp "$LIBS/inquiline-c2" "$ROOT/var/inquiline/"
+# Android's sensors (build-guest-sensors.sh), registered as a phone maker's are.
+cp "$LIBS/inquiline-sensors" "$ROOT/var/inquiline/"
+chmod 755 "$ROOT/var/inquiline/inquiline-sensors"
+cat > "$ROOT/var/inquiline/inquiline-sensors.xml" <<'EOF'
+<manifest version="1.0" type="device">
+    <hal format="aidl">
+        <name>android.hardware.sensors</name>
+        <version>2</version>
+        <fqname>ISensors/default</fqname>
+    </hal>
+</manifest>
+EOF
 chmod 755 "$ROOT/var/inquiline/inquiline-c2"
 cat > "$ROOT/var/inquiline/inquiline-c2.xml" <<'EOF'
 <manifest version="1.0" type="device">

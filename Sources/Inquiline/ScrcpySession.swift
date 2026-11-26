@@ -366,6 +366,14 @@ final class ScrcpySession {
         send(message)
     }
 
+    /// A controller's or phone's motion for Android's sensors (Vendor/sensors): acceleration in
+    /// m/s² with gravity, then rotation in rad/s, in Android's axes.
+    func sendMotion(acceleration: [Float], rotation: [Float]) {
+        var message = Data([102])
+        for value in acceleration + rotation { message.appendBigEndian(value.bitPattern) }
+        send(message)
+    }
+
     func sendHIDInput(id: UInt16, report: [UInt8]) {
         var message = Data([13])
         message.appendBigEndian(id)

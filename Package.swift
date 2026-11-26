@@ -21,7 +21,8 @@ let package = Package(
         .target(
             name: "CSDL",
             path: "Sources/CSDL",
-            cSettings: [.headerSearchPath("../../.build/sdl/include")]
+            cSettings: [.headerSearchPath("../../.build/sdl/include")],
+            cxxSettings: [.headerSearchPath("../../Vendor/gamepad-motion")]
         ),
         .executableTarget(
             name: "Inquiline",
@@ -42,5 +43,7 @@ let package = Package(
                              .linkedFramework("GameController"), .linkedFramework("CoreHaptics"), .linkedFramework("Carbon"),
                              .linkedFramework("CoreMedia"), .linkedFramework("CoreVideo"), .linkedFramework("UniformTypeIdentifiers")]
         )
-    ]
+    ],
+    // GamepadMotionHelpers (Sources/CSDL/Motion.cpp) takes C++17.
+    cxxLanguageStandard: .cxx17
 )

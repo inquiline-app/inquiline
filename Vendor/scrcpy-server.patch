@@ -129,22 +129,24 @@ index d7d1a76..9b5e1ed 100644
                  if (controller != null) {
                      controller.setSurfaceCapture(surfaceCapture);
 diff --git a/server/src/main/java/com/genymobile/scrcpy/control/ControlMessage.java b/server/src/main/java/com/genymobile/scrcpy/control/ControlMessage.java
-index 777873b..9dd836c 100644
+index 777873b..e5ab125 100644
 --- a/server/src/main/java/com/genymobile/scrcpy/control/ControlMessage.java
 +++ b/server/src/main/java/com/genymobile/scrcpy/control/ControlMessage.java
-@@ -30,6 +30,7 @@ public final class ControlMessage {
+@@ -30,6 +30,8 @@ public final class ControlMessage {
      public static final int TYPE_CAMERA_ZOOM_OUT = 20;
      public static final int TYPE_RESIZE_DISPLAY = 21;
      public static final int TYPE_SCAN_FILE = 22;
 +    public static final int TYPE_RELEASE_FRAME = 100; // Inquiline, see FrameStreamer
++    public static final int TYPE_MOTION = 102; // Inquiline: a controller's or phone's motion, for Android's sensors
  
      public static final long SEQUENCE_INVALID = 0;
  
-@@ -58,9 +59,12 @@ public final class ControlMessage {
+@@ -58,9 +60,13 @@ public final class ControlMessage {
      private boolean on;
      private int vendorId;
      private int productId;
 +    private int country;
++    private float[] motion; // Inquiline: acceleration (m/s²) then rotation (rad/s)
      private int width;
      private int height;
  
@@ -153,7 +155,7 @@ index 777873b..9dd836c 100644
      private ControlMessage() {
      }
  
-@@ -134,13 +138,20 @@ public final class ControlMessage {
+@@ -134,13 +140,20 @@ public final class ControlMessage {
          return msg;
      }
  
@@ -175,7 +177,7 @@ index 777873b..9dd836c 100644
          ControlMessage msg = new ControlMessage();
          msg.type = TYPE_UHID_CREATE;
          msg.id = id;
-@@ -148,9 +159,14 @@ public final class ControlMessage {
+@@ -148,9 +161,25 @@ public final class ControlMessage {
          msg.productId = productId;
          msg.text = name;
          msg.data = reportDesc;
@@ -183,6 +185,17 @@ index 777873b..9dd836c 100644
          return msg;
      }
  
++    public float[] getMotion() {
++        return motion;
++    }
++
++    public static ControlMessage createMotion(float[] motion) {
++        ControlMessage msg = new ControlMessage();
++        msg.type = TYPE_MOTION;
++        msg.motion = motion;
++        return msg;
++    }
++
 +    public int getCountry() {
 +        return country;
 +    }
@@ -190,7 +203,7 @@ index 777873b..9dd836c 100644
      public static ControlMessage createUhidInput(int id, byte[] data) {
          ControlMessage msg = new ControlMessage();
          msg.type = TYPE_UHID_INPUT;
-@@ -195,6 +211,10 @@ public final class ControlMessage {
+@@ -195,6 +224,10 @@ public final class ControlMessage {
          return msg;
      }
  
@@ -202,19 +215,25 @@ index 777873b..9dd836c 100644
          return type;
      }
 diff --git a/server/src/main/java/com/genymobile/scrcpy/control/ControlMessageReader.java b/server/src/main/java/com/genymobile/scrcpy/control/ControlMessageReader.java
-index b2591d6..8dae088 100644
+index b2591d6..bc058cf 100644
 --- a/server/src/main/java/com/genymobile/scrcpy/control/ControlMessageReader.java
 +++ b/server/src/main/java/com/genymobile/scrcpy/control/ControlMessageReader.java
-@@ -64,6 +64,8 @@ public class ControlMessageReader {
+@@ -64,6 +64,14 @@ public class ControlMessageReader {
                  return parseResizeDisplay();
              case ControlMessage.TYPE_SCAN_FILE:
                  return parseScanFile();
++            case ControlMessage.TYPE_MOTION:
++                float[] motion = new float[6];
++                for (int i = 0; i < 6; i++) {
++                    motion[i] = dis.readFloat();
++                }
++                return ControlMessage.createMotion(motion);
 +            case ControlMessage.TYPE_RELEASE_FRAME:
 +                return ControlMessage.createReleaseFrame(dis.readInt());
              default:
                  throw new ControlProtocolException("Unknown event type: " + type);
          }
-@@ -155,7 +157,9 @@ public class ControlMessageReader {
+@@ -155,7 +163,9 @@ public class ControlMessageReader {
          int productId = dis.readUnsignedShort();
          String name = parseString(1);
          byte[] data = parseByteArray(2);
@@ -226,7 +245,7 @@ index b2591d6..8dae088 100644
  
      private ControlMessage parseUhidInput() throws IOException {
 diff --git a/server/src/main/java/com/genymobile/scrcpy/control/Controller.java b/server/src/main/java/com/genymobile/scrcpy/control/Controller.java
-index 55d6e11..01ff00a 100644
+index 55d6e11..b81ff92 100644
 --- a/server/src/main/java/com/genymobile/scrcpy/control/Controller.java
 +++ b/server/src/main/java/com/genymobile/scrcpy/control/Controller.java
 @@ -14,6 +14,7 @@ import com.genymobile.scrcpy.util.Ln;
@@ -268,16 +287,19 @@ index 55d6e11..01ff00a 100644
              default:
                  // fall through
          }
-@@ -396,7 +407,7 @@ public class Controller implements AsyncProcessor, VirtualDisplayListener {
+@@ -396,7 +407,10 @@ public class Controller implements AsyncProcessor, VirtualDisplayListener {
                      }
                      return true;
                  case ControlMessage.TYPE_UHID_CREATE:
 -                    getUhidManager().open(msg.getId(), msg.getVendorId(), msg.getProductId(), msg.getText(), msg.getData());
 +                    getUhidManager().open(msg.getId(), msg.getVendorId(), msg.getProductId(), msg.getText(), msg.getData(), msg.getCountry());
++                    return true;
++                case ControlMessage.TYPE_MOTION:
++                    InquilineSensors.send(msg.getMotion());
                      return true;
                  case ControlMessage.TYPE_UHID_INPUT:
                      getUhidManager().writeInput(msg.getId(), msg.getData());
-@@ -855,6 +866,11 @@ public class Controller implements AsyncProcessor, VirtualDisplayListener {
+@@ -855,6 +869,11 @@ public class Controller implements AsyncProcessor, VirtualDisplayListener {
      }
  
      private void setDisplayPower(boolean on) {
@@ -289,6 +311,61 @@ index 55d6e11..01ff00a 100644
          // Change the power of the main display when mirroring a virtual display
          int targetDisplayId = displayId != Device.DISPLAY_ID_NONE ? displayId : 0;
          boolean setDisplayPowerOk = Device.setDisplayPower(targetDisplayId, on);
+diff --git a/server/src/main/java/com/genymobile/scrcpy/control/InquilineSensors.java b/server/src/main/java/com/genymobile/scrcpy/control/InquilineSensors.java
+new file mode 100644
+index 0000000..131cd57
+--- /dev/null
++++ b/server/src/main/java/com/genymobile/scrcpy/control/InquilineSensors.java
+@@ -0,0 +1,49 @@
++package com.genymobile.scrcpy.control;
++
++import android.net.LocalSocket;
++import android.net.LocalSocketAddress;
++
++import java.io.IOException;
++import java.io.OutputStream;
++import java.nio.ByteBuffer;
++import java.nio.ByteOrder;
++
++/**
++ * Inquiline: hands the Mac's motion (a game controller's or a phone's) to Android's sensors
++ * (Vendor/sensors), on their abstract socket, one packet of six little-endian floats each.
++ */
++final class InquilineSensors {
++    private static LocalSocket socket;
++    private static OutputStream out;
++    private static final ByteBuffer packet = ByteBuffer.allocate(24).order(ByteOrder.LITTLE_ENDIAN);
++
++    private InquilineSensors() {
++    }
++
++    static synchronized void send(float[] motion) {
++        try {
++            if (socket == null) {
++                LocalSocket made = new LocalSocket(LocalSocket.SOCKET_SEQPACKET);
++                made.connect(new LocalSocketAddress("inquiline-sensors", LocalSocketAddress.Namespace.ABSTRACT));
++                socket = made;
++                out = made.getOutputStream();
++            }
++            packet.clear();
++            for (float value : motion) {
++                packet.putFloat(value);
++            }
++            out.write(packet.array(), 0, 24);
++        } catch (IOException e) {
++            // No sensors yet, or they started again: the next motion connects anew.
++            try {
++                if (socket != null) {
++                    socket.close();
++                }
++            } catch (IOException ignored) {
++                // Already gone.
++            }
++            socket = null;
++            out = null;
++        }
++    }
++}
 diff --git a/server/src/main/java/com/genymobile/scrcpy/control/UhidManager.java b/server/src/main/java/com/genymobile/scrcpy/control/UhidManager.java
 index 20532c0..6f20ac5 100644
 --- a/server/src/main/java/com/genymobile/scrcpy/control/UhidManager.java

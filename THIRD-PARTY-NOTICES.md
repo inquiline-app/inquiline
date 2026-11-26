@@ -28,6 +28,7 @@ For the parts licensed under the GPL or LGPL, the complete corresponding source 
 | [Sparkle](https://sparkle-project.org) | 2.10.1 | MIT, with parts under other permissive licenses (see its LICENSE) | <https://github.com/sparkle-project/Sparkle> (tag 2.10.1) | none; updates |
 | [scrcpy](https://github.com/Genymobile/scrcpy) server | 5.0.1 | Apache-2.0 | <https://github.com/Genymobile/scrcpy> (tag v5.0.1) | `Vendor/scrcpy-server.patch`; runs inside Android |
 | [SDL](https://github.com/libsdl-org/SDL) | 3.4.20 | Zlib (`Resources/Licenses/SDL-LICENSE.txt`) | <https://github.com/libsdl-org/SDL> (tag release-3.4.20) | none; only its game controller parts, built by `Scripts/build-sdl.sh` |
+| [GamepadMotionHelpers](https://github.com/JibbSmart/GamepadMotionHelpers) | f1a7600 | MIT (`Resources/Licenses/GamepadMotionHelpers-LICENSE`) | <https://github.com/JibbSmart/GamepadMotionHelpers> (commit f1a7600) | none; `Vendor/gamepad-motion/GamepadMotion.hpp`, a controller's gyro calibration and tilt |
 | [libdatachannel](https://github.com/paullouisageneau/libdatachannel) | 0.24.6 | MPL-2.0 | <https://github.com/paullouisageneau/libdatachannel> (tag v0.24.6) | none; the phone remote's WebRTC, built by `Scripts/build-webrtc.sh` |
 | [libjuice](https://github.com/paullouisageneau/libjuice), inside libdatachannel | b89c792 | MPL-2.0 | <https://github.com/paullouisageneau/libjuice> | none |
 | [usrsctp](https://github.com/sctplab/usrsctp), inside libdatachannel | fec583d | BSD-3-Clause | <https://github.com/sctplab/usrsctp> | none |
@@ -50,6 +51,7 @@ The disk (`android-disk.xz` in the app, unpacked to `~/Library/Application Suppo
 | [Mesa](https://mesa3d.org) gfxstream Vulkan driver | 26.2.5 | MIT | <https://gitlab.freedesktop.org/mesa/mesa> (tag mesa-26.2.5) | `Scripts/vm/patches/mesa`, `Scripts/vm/guest-headers` |
 | [libdrm](https://gitlab.freedesktop.org/mesa/drm) | as Mesa 26.2.5 fetches it | MIT | <https://gitlab.freedesktop.org/mesa/drm> | none |
 | Android audio HAL (AOSP stub) | Android 15 | Apache-2.0 | <https://android.googlesource.com> | rewritten for virtio-sound: `Vendor/audio` |
+| Android sensors HAL (AOSP example, AIDL v2) | Android 15 | Apache-2.0 | <https://android.googlesource.com> | accelerometer and gyroscope fed by the Mac: `Vendor/sensors` |
 | [tinyalsa](https://github.com/tinyalsa/tinyalsa) | as in AOSP | BSD-3-Clause | <https://android.googlesource.com/platform/external/tinyalsa> | none; in `Vendor/audio/tinyalsa` |
 | [Alpine Linux](https://alpinelinux.org) | 3.24.3 | see the packages below | <https://gitlab.alpinelinux.org/alpine/aports> (branch 3.24-stable), <https://distfiles.alpinelinux.org/distfiles/v3.24/> | none |
 

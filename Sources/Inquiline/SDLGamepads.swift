@@ -23,6 +23,18 @@ final class SDLGamepads {
 
     /// Called on the main thread with a controller whose state changed.
     var onState: ((_ id: UInt32, _ state: State) -> Void)?
+    /// Called on the main thread with a controller's motion, as Android's sensors report it:
+    /// acceleration in m/s² with gravity, and rotation in rad/s with its gyro's bias taken
+    /// away (GamepadMotionHelpers), in SDL's axes, which are Android's for a device held up.
+    var onMotion: ((_ id: UInt32, _ acceleration: [Float], _ rotation: [Float]) -> Void)?
+    /// Each controller with motion sensors: its calibration, latest acceleration and last time.
+    private var motion: [UInt32: (calibration: OpaquePointer, acceleration: [Float], time: UInt64)] = [:]
+    /// Each controller's turn like a steering wheel, -1 to 1, added to its left stick, as Steam
+    /// Input's gyro to joystick does: a game in controller mode steers by it with every button
+    /// still there. Its gyro switch (or none moving) lets the stick go.
+    private var tilt: [UInt32: (value: Double, seen: TimeInterval)] = [:]
+    /// Full lock at this many degrees, nothing under the first.
+    private static let tiltLock = 35.0, tiltDead = 2.0
     private(set) var states: [UInt32: State] = [:]
     private var pads: [UInt32: OpaquePointer] = [:]
     private var timer: Timer?
@@ -58,12 +70,21 @@ final class SDLGamepads {
                     changed.insert(id)
                     plugged = true
                     if let name = SDL_GetGamepadName(pad) { AppLog.write("Game controller: \(String(cString: name))") }
+                    // Its motion, when it has a gyro: Android gets it as the phone's own sensors.
+                    if SDL_GamepadHasSensor(pad, SDL_SENSOR_GYRO), SDL_SetGamepadSensorEnabled(pad, SDL_SENSOR_GYRO, true) {
+                        if SDL_GamepadHasSensor(pad, SDL_SENSOR_ACCEL) { SDL_SetGamepadSensorEnabled(pad, SDL_SENSOR_ACCEL, true) }
+                        motion[id] = (inquiline_motion_create()!, [0, 9.80665, 0], 0)
+                    }
                 }
             case SDL_EVENT_GAMEPAD_REMOVED:
                 let id = event.gdevice.which
                 if let pad = pads.removeValue(forKey: id) { SDL_CloseGamepad(pad) }
+                if let known = motion.removeValue(forKey: id) { inquiline_motion_destroy(known.calibration) }
+                tilt[id] = nil
                 states[id] = nil
                 plugged = true
+            case SDL_EVENT_GAMEPAD_SENSOR_UPDATE:
+                sensed(event.gsensor)
             case SDL_EVENT_GAMEPAD_AXIS_MOTION, SDL_EVENT_GAMEPAD_BUTTON_DOWN, SDL_EVENT_GAMEPAD_BUTTON_UP:
                 changed.insert(event.gdevice.which)
             default:
@@ -71,13 +92,63 @@ final class SDLGamepads {
             }
         }
         if plugged { NotificationCenter.default.post(name: Self.didChange, object: nil) }
+        // A gyro switched off stops its samples: the stick goes back to the thumb alone.
+        let now = ProcessInfo.processInfo.systemUptime
+        for (id, known) in tilt where known.value != 0 && now - known.seen > 0.15 {
+            tilt[id] = (0, known.seen)
+            changed.insert(id)
+        }
         for id in changed {
             guard let pad = pads[id] else { continue }
-            let state = Self.read(pad)
+            var state = Self.read(pad)
+            if let turn = tilt[id]?.value, turn != 0 { state.leftX = min(max(state.leftX + turn, -1), 1) }
             guard state != states[id] else { continue }
             states[id] = state
             onState?(id, state)
         }
+    }
+
+    /// A motion sample: acceleration is kept for the next rotation, which is calibrated and told.
+    private func sensed(_ sample: SDL_GamepadSensorEvent) {
+        guard var known = motion[sample.which] else { return }
+        let values = [sample.data.0, sample.data.1, sample.data.2]
+        if sample.sensor == SDL_SENSOR_ACCEL.rawValue {
+            known.acceleration = values
+            motion[sample.which] = known
+            return
+        }
+        guard sample.sensor == SDL_SENSOR_GYRO.rawValue else { return }
+        let seconds = known.time == 0 ? 0.005 : Float(min(sample.sensor_timestamp &- known.time, 100_000_000)) / 1e9
+        known.time = sample.sensor_timestamp
+        motion[sample.which] = known
+        var calibrated: [Float] = [0, 0, 0]
+        values.withUnsafeBufferPointer { rotation in
+            known.acceleration.withUnsafeBufferPointer { acceleration in
+                inquiline_motion_process(known.calibration, rotation.baseAddress, acceleration.baseAddress,
+                                         seconds, &calibrated)
+            }
+        }
+        onMotion?(sample.which, known.acceleration, calibrated)
+        steer(sample.which, calibration: known.calibration, still: values == [0, 0, 0])
+    }
+
+    /// The controller's turn, as its left stick: a gyro reading exactly nothing is switched off.
+    private func steer(_ id: UInt32, calibration: OpaquePointer, still: Bool) {
+        let now = ProcessInfo.processInfo.systemUptime
+        var turn = 0.0
+        if !still {
+            let degrees = Double(inquiline_motion_roll(calibration)) * 180 / .pi
+            let past = max(abs(degrees) - Self.tiltDead, 0) / (Self.tiltLock - Self.tiltDead)
+            turn = min(past, 1) * (degrees < 0 ? -1 : 1)
+        }
+        let before = tilt[id]?.value ?? 0
+        tilt[id] = (turn, still ? tilt[id]?.seen ?? now : now)
+        guard abs(turn - before) > 0.004 || (turn == 0) != (before == 0), let pad = pads[id] else { return }
+        var state = Self.read(pad)
+        if turn != 0 { state.leftX = min(max(state.leftX + turn, -1), 1) }
+        guard state != states[id] else { return }
+        states[id] = state
+        onState?(id, state)
     }
 
     private static func read(_ pad: OpaquePointer) -> State {
