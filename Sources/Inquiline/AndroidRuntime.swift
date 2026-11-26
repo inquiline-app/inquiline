@@ -729,7 +729,9 @@ final class AndroidRuntime {
     /// (vendor.inquiline.audio.lead_ms, PictureSoundSync), so players keep the two together.
     /// 40: the sound driver holds the sound back by that much, to the millisecond, as a TV does
     /// for its picture: before, it could only say so within its ring, which was too little.
-    private static let diskRevision = 40
+    /// 41: the driver measures how far behind its clock the sound leaving Android is, and holds
+    /// it back to what Inquiline asks (the picture's way, less the engine's and speakers').
+    private static let diskRevision = 41
 
     private var builtInScreen: ScrcpySession.Screen { ScrcpySession.Resolution.forThisMac.screen(landscape: false) }
     /// The VM's memory map fits the 36-bit (64 GB) address space Apple's M1 and M2 give a VM:
@@ -815,7 +817,7 @@ final class AndroidRuntime {
             "-device", "virtio-gpu-rutabaga-pci,gfxstream-vulkan=on,x-gfxstream-gles=on,x-gfxstream-composer=on,"
                 + "hostmem=2G,x-gfxstream-features=GuestVulkanOnly:enabled;GuestVulkanMaxApiVersion:1.3",
             // Android's sound card: its audio HAL plays into it, and QEMU plays it on the Mac.
-            "-audiodev", "coreaudio,id=sound", "-device", "virtio-sound-pci,audiodev=sound",
+            "-audiodev", "coreaudio,id=sound", "-device", "virtio-sound-pci,audiodev=sound,id=sound",
             // Memory is taken as Android needs it, and this reports what it frees to QEMU,
             // which gives it back to the Mac through memory-release.c.
             "-device", "virtio-balloon-pci,free-page-reporting=on",

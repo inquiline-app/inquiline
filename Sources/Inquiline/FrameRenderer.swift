@@ -132,7 +132,7 @@ final class FrameRenderer {
 
     /// Called on the session's receive thread for each frame. Returns once the frame is in
     /// this process's memory, so Android can have its buffer back.
-    func draw(resource: UInt32) {
+    func draw(resource: UInt32, composed: Double) {
         guard textures.count == Self.slots else { return }
         freeSlots.wait()
         let slot = nextSlot
@@ -176,10 +176,9 @@ final class FrameRenderer {
             encoder.endEncoding()
         }
         // When the frame is actually on the screen, for keeping the sound with it (PictureSoundSync).
-        let committed = CACurrentMediaTime()
         drawable.addPresentedHandler { shown in
             guard shown.presentedTime > 0 else { return }
-            PictureSoundSync.shared.framePresented(after: shown.presentedTime - committed)
+            PictureSoundSync.shared.framePresented(after: shown.presentedTime - composed)
         }
         commands.present(drawable)
         commands.addCompletedHandler { [freeSlots] _ in freeSlots.signal() }

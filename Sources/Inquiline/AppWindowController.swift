@@ -273,8 +273,8 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate, 
         let renderer = displayView.renderer
         let frames = frameCount
         var shown = false
-        session.onFrame = { [weak self] resource in
-            renderer?.draw(resource: resource)
+        session.onFrame = { [weak self] resource, composed in
+            renderer?.draw(resource: resource, composed: composed)
             frames.add()
             guard !shown else { return }
             shown = true

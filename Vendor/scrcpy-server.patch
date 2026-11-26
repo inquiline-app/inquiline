@@ -346,10 +346,10 @@ index 0b961c6..471d068 100644
          void trigger(Size size);
 diff --git a/server/src/main/java/com/genymobile/scrcpy/video/FrameStreamer.java b/server/src/main/java/com/genymobile/scrcpy/video/FrameStreamer.java
 new file mode 100644
-index 0000000..e587dc7
+index 0000000..6a11616
 --- /dev/null
 +++ b/server/src/main/java/com/genymobile/scrcpy/video/FrameStreamer.java
-@@ -0,0 +1,242 @@
+@@ -0,0 +1,244 @@
 +package com.genymobile.scrcpy.video;
 +
 +import com.genymobile.scrcpy.AsyncProcessor;
@@ -383,8 +383,8 @@ index 0000000..e587dc7
 + * memory, then returns the frame (control message TYPE_RELEASE_FRAME) for Android to reuse.
 + *
 + * The video socket carries the usual codec header, then for each size a session packet
-+ * (int with its top bit set, width, height), and for each frame two ints: resource id and
-+ * frame number.
++ * (int with its top bit set, width, height), and for each frame three ints: resource id, frame
++ * number, and how long ago Android composed it, in microseconds (for keeping sound with it).
 + */
 +@SuppressLint("NewApi")
 +public class FrameStreamer implements AsyncProcessor {
@@ -499,7 +499,7 @@ index 0000000..e587dc7
 +    }
 +
 +    private void sendFrames() throws IOException {
-+        ByteBuffer frame = ByteBuffer.allocate(8);
++        ByteBuffer frame = ByteBuffer.allocate(12);
 +        while (!stopped.get() && !captureControl.isResetRequested() && !capture.isClosed()) {
 +            Image image;
 +            try {
@@ -540,7 +540,9 @@ index 0000000..e587dc7
 +                sent.put(number, image);
 +            }
 +            frame.clear();
-+            frame.putInt(resource).putInt(number).flip();
++            // The image's time is when Android composed it (CLOCK_MONOTONIC, as System.nanoTime).
++            long age = (System.nanoTime() - image.getTimestamp()) / 1000;
++            frame.putInt(resource).putInt(number).putInt((int) Math.max(0, Math.min(age, 1_000_000))).flip();
 +            IO.writeFully(fd, frame);
 +        }
 +    }

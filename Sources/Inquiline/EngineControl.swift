@@ -50,14 +50,25 @@ enum EngineControl {
         run("query-status")?.contains("\"status\": \"paused\"") == true
     }
 
+    /// How long the sound the engine has just been given waits before the Mac's sound device plays
+    /// it, in seconds (its virtio-sound's "output-delay-us", QEMU patch 0108); nil while unknown.
+    static var soundDelay: Double? {
+        guard let line = run("qom-get", arguments: "{\"path\":\"/machine/peripheral/sound/virtio-backend\",\"property\":\"output-delay-us\"}"),
+              let range = line.range(of: #""return": *(-?[0-9]+)"#, options: .regularExpression),
+              let micro = Double(line[range].split(separator: ":").last!.trimmingCharacters(in: .whitespaces)),
+              micro > 0
+        else { return nil }
+        return micro / 1_000_000
+    }
+
     /// Sends one command and returns its reply, or nil when the engine can't be reached.
-    private static func run(_ command: String) -> String? {
+    private static func run(_ command: String, arguments: String? = nil) -> String? {
         guard let fd = connect(to: socket) else { return nil }
         defer { close(fd) }
         var reader = LineReader(fd: fd)
         guard reader.next()?.contains("QMP") == true,
               send("{\"execute\":\"qmp_capabilities\"}", to: fd), reply(&reader) != nil,
-              send("{\"execute\":\"\(command)\"}", to: fd)
+              send(arguments.map { "{\"execute\":\"\(command)\",\"arguments\":\($0)}" } ?? "{\"execute\":\"\(command)\"}", to: fd)
         else { return nil }
         return reply(&reader)
     }

@@ -84,7 +84,9 @@ final class ScrcpySession {
     var onSessionSize: ((_ width: Int, _ height: Int) -> Void)?
     /// Called on the receive thread with each frame's GPU resource. Android gets the frame's
     /// buffer back once it returns, so the frame must be copied by then.
-    var onFrame: ((_ resource: UInt32) -> Void)?
+    /// A frame's resource, and when Android composed it: seconds before it was received, and
+    /// the time it was received (CACurrentMediaTime's clock).
+    var onFrame: ((_ resource: UInt32, _ composed: Double) -> Void)?
     var onEnd: ((Error?) -> Void)?
     /// Called on a background thread once Android is ready, before the app starts.
     var beforeLaunch: (() -> Void)?
@@ -227,10 +229,12 @@ final class ScrcpySession {
                 continue
             }
             let number = ScrcpyServer.readUInt32(try readExactly(4), at: 0)
+            let age = Double(ScrcpyServer.readUInt32(try readExactly(4), at: 0)) / 1_000_000
+            let composed = CACurrentMediaTime() - age
             stateLock.lock()
             pictures += 1
             stateLock.unlock()
-            onFrame?(first)
+            onFrame?(first, composed)
             var release = Data([100])
             release.appendBigEndian(number)
             send(release)

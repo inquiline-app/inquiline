@@ -95,6 +95,10 @@ struct sink {
     uint64_t received;  /* frames Android wrote */
     uint64_t played;    /* frames handed to the card */
     uint64_t missed;    /* frames the clock passed while nothing was there to play */
+    uint64_t in_card;   /* frames the card held at the last write to it */
+    double lag;         /* how far the sound leaving Android is behind the clock, in frames (smoothed) */
+    double hold;        /* frames held back beyond the ring's buffers, to make lag what Inquiline asks */
+    unsigned writes;    /* writes since the sink opened */
 };
 
 struct stub_audio_device {
@@ -173,13 +177,21 @@ static void *sink_play(void *arg)
             }
             pcm_writei(sink->pcm, sink->ring + at * sink->frame_size, frames);
         }
+        unsigned int avail = 0;
+        struct timespec stamp;
+        unsigned int size = sink->pcm ? pcm_get_buffer_size(sink->pcm) : 0;
+        bool known = size > 0 && pcm_get_htimestamp(sink->pcm, &avail, &stamp) == 0 && avail <= size;
         pthread_mutex_lock(&sink->lock);
         sink->played += frames;
+        if (known) sink->in_card = size - avail;
         pthread_cond_broadcast(&sink->changed);
     }
     pthread_mutex_unlock(&sink->lock);
     return NULL;
 }
+
+/* The hold the last sound ended with: the next starts from it, already in step. */
+static double last_hold;
 
 static struct sink *sink_open(struct stub_stream_out *out)
 {
@@ -191,6 +203,7 @@ static struct sink *sink_open(struct stub_stream_out *out)
     sink->period_frames = out->frame_count / out->card_periods;
     sink->ring_frames = out->frame_count * out->ring_buffers;
     sink->capacity = sink->ring_frames + (size_t)out->sample_rate * MAX_LEAD_MS / 1000;
+    sink->hold = last_hold;
     struct pcm_config config = {
         .channels = channels,
         .rate = out->sample_rate,
@@ -232,21 +245,38 @@ static uint64_t sink_clock_frames(const struct sink *sink, int64_t now)
 
 static int64_t lead_frames(uint32_t rate);
 
-/* Android writes up to the ring's buffers ahead of the clock, and as much more as the picture
- * reaches the Mac's screen later than the sound reaches its speakers (lead_frames): that sound
- * waits in the ring, so it's heard with its picture, as a TV holds its sound back for its
- * picture (lip sync). Video players time pictures by the clock, so they keep in step too. */
+/* Android writes up to the ring's buffers ahead of the clock, and as much more as it takes for
+ * the sound leaving Android to be as far behind the clock as Inquiline asks (lead_frames): the
+ * picture's way to the Mac's screen, less the sound's way from Android to the speakers. That
+ * sound waits in the ring, so it's heard with its picture, as a TV holds its sound back for its
+ * picture (lip sync); video players time pictures by the clock, so they keep in step too. How
+ * far behind it is, is measured here: the clock, against what the card has played (what was
+ * handed to it, less what it still holds). */
 static void sink_write(struct sink *sink, const uint8_t *data, size_t frames)
 {
-    uint64_t lead = (uint64_t)lead_frames(sink->rate);
+    double target = (double)lead_frames(sink->rate);
     pthread_mutex_lock(&sink->lock);
+    {
+        uint64_t clock = sink_clock_frames(sink, now_ns());
+        double out = (double)sink->played - (double)sink->in_card;
+        double lag = (double)clock - (double)sink->missed - out;
+        /* The first half second finds it quickly, while the sound is starting; then slowly, so a
+         * hiccup doesn't make the sound jump. */
+        bool starting = sink->writes < 50;
+        sink->writes++;
+        sink->lag = sink->lag == 0 ? lag : sink->lag + (lag - sink->lag) / (starting ? 4 : 32);
+        sink->hold += (target - sink->lag) / (starting ? 4 : 64);
+        double most = (double)(sink->capacity - sink->ring_frames);
+        if (sink->hold < 0) sink->hold = 0;
+        if (sink->hold > most) sink->hold = most;
+    }
     while (frames > 0 && sink->running) {
         int64_t now = now_ns();
         uint64_t clock = sink_clock_frames(sink, now);
         /* Nothing was there to play: those frames are gone, as on goldfish. */
         if (sink->received + sink->missed < clock) sink->missed = clock - sink->received;
         uint64_t pending = sink->received + sink->missed - clock;
-        uint64_t ahead = sink->ring_frames + lead;
+        uint64_t ahead = sink->ring_frames + (uint64_t)sink->hold;
         size_t room = pending < ahead ? (size_t)(ahead - pending) : 0;
         size_t space = sink->capacity - (size_t)(sink->received - sink->played);
         if (room == 0 || space == 0) {
@@ -298,6 +328,7 @@ static uint64_t sink_close(struct sink *sink)
     struct timespec when;
     sink_position(sink, &frames, &when);
     pthread_mutex_lock(&sink->lock);
+    last_hold = sink->hold;
     sink->running = false;
     pthread_cond_broadcast(&sink->changed);
     pthread_mutex_unlock(&sink->lock);
@@ -420,9 +451,9 @@ static ssize_t out_write(struct audio_stream_out *stream, const void* buffer,
     return bytes;
 }
 
-/* How far the Mac shows a picture after it plays the sound that goes with it, in ms, as
- * Inquiline measures it (the picture's way to the Mac's screen, less the sound's to its
- * speakers): the sound is held back that much (sink_write), as goldfish tells Android the
+/* How far behind the clock the sound leaving Android should be, in ms, as Inquiline measures it:
+ * the picture's way from Android to the Mac's screen, less the sound's from the engine to the
+ * speakers (sink_write holds the sound back to make it so), much as goldfish tells Android the
  * host's sound latency (ro.hardware.audio.tinyalsa.host_latency_ms). Read again each second. */
 static int64_t lead_frames(uint32_t rate)
 {

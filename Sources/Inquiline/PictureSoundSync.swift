@@ -13,10 +13,6 @@ import Foundation
 final class PictureSoundSync {
     static let shared = PictureSoundSync()
 
-    /// How much later a picture reaches the Mac's window than its sound leaves the engine, in
-    /// seconds: Android's composition and the GPU's way to the Mac, measured with a flash-and-beep
-    /// video (2026-11-24: 29 ms on an M4).
-    private static let pictureWay = 0.029
 
     private let lock = NSLock()
     private var shown = 0.0
@@ -24,9 +20,9 @@ final class PictureSoundSync {
     private var lastSet: Int?
     private var lastCheck = 0.0
 
-    /// A frame committed at `committed` was on the screen at `presented` (CACurrentMediaTime's clock).
+    /// A frame was on the Mac's screen this long after Android composed it.
     func framePresented(after seconds: Double) {
-        guard seconds > 0, seconds < 0.25 else { return }
+        guard seconds > 0, seconds < 0.5 else { return }
         lock.lock()
         // A moving average over about a second of frames.
         shown = samples == 0 ? seconds : shown * 0.95 + seconds * 0.05
@@ -40,7 +36,11 @@ final class PictureSoundSync {
     }
 
     private func update(picture: Double) {
-        let lead = Int(((Self.pictureWay + picture - Self.soundLatency()) * 1000).rounded())
+        // The sound's way from the engine to the speakers: the engine's own wait, measured by
+        // the engine, and the device's; its way inside Android, the sound driver measures itself.
+        let engine = EngineControl.soundDelay ?? 0
+        let speakers = Self.soundLatency()
+        let lead = Int(((picture - speakers - engine) * 1000).rounded())
         let ms = min(max(lead, 0), 200)
         lock.lock()
         let changed = lastSet.map { abs($0 - ms) >= 3 } ?? true
@@ -48,7 +48,7 @@ final class PictureSoundSync {
         lock.unlock()
         guard changed else { return }
         AndroidRuntime.shared.setSoundLead(ms: ms)
-        AppLog.write("Picture and sound: the sound leads by \(ms) ms")
+        AppLog.write(String(format: "Picture and sound: the sound waits %d ms (picture %.0f ms, engine %.0f ms, speakers %.0f ms)", ms, picture * 1000, engine * 1000, speakers * 1000))
     }
 
     /// The default output device's latency, in seconds: the device's, its stream's, its safety
