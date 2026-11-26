@@ -727,7 +727,9 @@ final class AndroidRuntime {
     /// 38: the video decoders and system services as in 33.
     /// 39: the sound driver says the sound is as far along as it leads the picture on the Mac
     /// (vendor.inquiline.audio.lead_ms, PictureSoundSync), so players keep the two together.
-    private static let diskRevision = 39
+    /// 40: the sound driver holds the sound back by that much, to the millisecond, as a TV does
+    /// for its picture: before, it could only say so within its ring, which was too little.
+    private static let diskRevision = 40
 
     private var builtInScreen: ScrcpySession.Screen { ScrcpySession.Resolution.forThisMac.screen(landscape: false) }
     /// The VM's memory map fits the 36-bit (64 GB) address space Apple's M1 and M2 give a VM:

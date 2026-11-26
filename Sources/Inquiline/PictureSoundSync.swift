@@ -5,9 +5,9 @@ import Foundation
 /// players time each picture by where its sound driver says the sound is (AudioTrack's
 /// timestamps), as on a phone, but here a picture travels further than its sound before it's
 /// seen: from Android to the Mac's window, then to the screen. So the driver is told how much
-/// sooner the sound is heard than the picture is seen, and says the sound is that far along
-/// (Vendor/audio, vendor.inquiline.audio.lead_ms), as goldfish tells Android the host's sound
-/// latency. The picture's last stretch comes from Metal (when each frame was actually shown),
+/// sooner the sound is heard than the picture is seen, and holds the sound back that much
+/// (Vendor/audio, vendor.inquiline.audio.lead_ms), as a TV does for its picture; players, which
+/// time pictures by the driver's clock, and games alike are then heard with what they show. The picture's last stretch comes from Metal (when each frame was actually shown),
 /// the sound's from Core Audio (the output device's latency, as Chromium's Mac audio reads it),
 /// so a new display or speakers are followed by themselves.
 final class PictureSoundSync {

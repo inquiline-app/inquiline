@@ -61,6 +61,7 @@
 #define CARD_DEVICE 0
 /* Capture keeps the card's own pacing. */
 #define PERIOD_COUNT 10
+#define MAX_LEAD_MS 200
 #define STUB_OUTPUT_DEFAULT_CHANNEL_MASK AUDIO_CHANNEL_OUT_STEREO
 
 static unsigned audio_property(const char *name, unsigned fallback)
@@ -88,6 +89,7 @@ struct sink {
     struct pcm_config config;
     uint8_t *ring;
     size_t ring_frames, frame_size, period_frames;
+    size_t capacity;    /* the ring's room: its buffers and the most the sound may be held back */
     uint32_t rate;
     int64_t start_ns;
     uint64_t received;  /* frames Android wrote */
@@ -150,10 +152,10 @@ static void *sink_play(void *arg)
             pthread_cond_wait(&sink->changed, &sink->lock);
             continue;
         }
-        size_t at = sink->played % sink->ring_frames;
+        size_t at = sink->played % sink->capacity;
         size_t frames = sink->received - sink->played;
         if (frames > sink->period_frames) frames = sink->period_frames;
-        if (frames > sink->ring_frames - at) frames = sink->ring_frames - at;
+        if (frames > sink->capacity - at) frames = sink->capacity - at;
         pthread_mutex_unlock(&sink->lock);
         /* The card takes it at the Mac's own pace. A card that has just started can refuse a
          * write once, and then refuses to be prepared again: it's opened anew, as before. */
@@ -188,6 +190,7 @@ static struct sink *sink_open(struct stub_stream_out *out)
     sink->frame_size = audio_stream_out_frame_size(&out->stream);
     sink->period_frames = out->frame_count / out->card_periods;
     sink->ring_frames = out->frame_count * out->ring_buffers;
+    sink->capacity = sink->ring_frames + (size_t)out->sample_rate * MAX_LEAD_MS / 1000;
     struct pcm_config config = {
         .channels = channels,
         .rate = out->sample_rate,
@@ -200,7 +203,7 @@ static struct sink *sink_open(struct stub_stream_out *out)
     };
     sink->config = config;
     sink->pcm = pcm_open(CARD, CARD_DEVICE, PCM_OUT, &config);
-    sink->ring = malloc(sink->ring_frames * sink->frame_size);
+    sink->ring = malloc(sink->capacity * sink->frame_size);
     if (!sink->pcm || !pcm_is_ready(sink->pcm) || !sink->ring) {
         ALOGE("Sound card: %s", sink->pcm ? pcm_get_error(sink->pcm) : "no memory");
         if (sink->pcm) pcm_close(sink->pcm);
@@ -227,8 +230,15 @@ static uint64_t sink_clock_frames(const struct sink *sink, int64_t now)
     return (uint64_t)((now - sink->start_ns) / 1000) * sink->rate / 1000000;
 }
 
+static int64_t lead_frames(uint32_t rate);
+
+/* Android writes up to the ring's buffers ahead of the clock, and as much more as the picture
+ * reaches the Mac's screen later than the sound reaches its speakers (lead_frames): that sound
+ * waits in the ring, so it's heard with its picture, as a TV holds its sound back for its
+ * picture (lip sync). Video players time pictures by the clock, so they keep in step too. */
 static void sink_write(struct sink *sink, const uint8_t *data, size_t frames)
 {
+    uint64_t lead = (uint64_t)lead_frames(sink->rate);
     pthread_mutex_lock(&sink->lock);
     while (frames > 0 && sink->running) {
         int64_t now = now_ns();
@@ -236,8 +246,9 @@ static void sink_write(struct sink *sink, const uint8_t *data, size_t frames)
         /* Nothing was there to play: those frames are gone, as on goldfish. */
         if (sink->received + sink->missed < clock) sink->missed = clock - sink->received;
         uint64_t pending = sink->received + sink->missed - clock;
-        size_t room = pending < sink->ring_frames ? sink->ring_frames - pending : 0;
-        size_t space = sink->ring_frames - (size_t)(sink->received - sink->played);
+        uint64_t ahead = sink->ring_frames + lead;
+        size_t room = pending < ahead ? (size_t)(ahead - pending) : 0;
+        size_t space = sink->capacity - (size_t)(sink->received - sink->played);
         if (room == 0 || space == 0) {
             if (space == 0) {
                 /* The card is behind the clock: wait for it. */
@@ -252,8 +263,8 @@ static void sink_write(struct sink *sink, const uint8_t *data, size_t frames)
         size_t n = frames;
         if (n > room) n = room;
         if (n > space) n = space;
-        size_t at = sink->received % sink->ring_frames;
-        if (n > sink->ring_frames - at) n = sink->ring_frames - at;
+        size_t at = sink->received % sink->capacity;
+        if (n > sink->capacity - at) n = sink->capacity - at;
         memcpy(sink->ring + at * sink->frame_size, data, n * sink->frame_size);
         sink->received += n;
         data += n * sink->frame_size;
@@ -411,9 +422,8 @@ static ssize_t out_write(struct audio_stream_out *stream, const void* buffer,
 
 /* How far the Mac shows a picture after it plays the sound that goes with it, in ms, as
  * Inquiline measures it (the picture's way to the Mac's screen, less the sound's to its
- * speakers): the sound is said to be that far along, so players, which time their pictures by
- * the sound, show them that much sooner, as goldfish tells Android the host's sound latency
- * (ro.hardware.audio.tinyalsa.host_latency_ms). Read again each second. */
+ * speakers): the sound is held back that much (sink_write), as goldfish tells Android the
+ * host's sound latency (ro.hardware.audio.tinyalsa.host_latency_ms). Read again each second. */
 static int64_t lead_frames(uint32_t rate)
 {
     static pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
@@ -423,7 +433,7 @@ static int64_t lead_frames(uint32_t rate)
     if (now - read_ns > 1000000000LL) {
         read_ns = now;
         unsigned ms = audio_property("vendor.inquiline.audio.lead_ms", 0);
-        lead_ms = ms > 200 ? 200 : ms;
+        lead_ms = ms > MAX_LEAD_MS ? MAX_LEAD_MS : ms;
     }
     int64_t frames = lead_ms * rate / 1000;
     pthread_mutex_unlock(&lock);
@@ -440,8 +450,7 @@ static int out_get_presentation_position(const struct audio_stream_out *stream,
     pthread_mutex_lock(&out->sink->lock);
     uint64_t written = out->sink->received;
     pthread_mutex_unlock(&out->sink->lock);
-    uint64_t ahead = *frames + (uint64_t)lead_frames(out->sample_rate);
-    *frames = ahead < written ? ahead : written;
+    if (*frames > written) *frames = written;
     *frames += out->frames_before;
     return 0;
 }
