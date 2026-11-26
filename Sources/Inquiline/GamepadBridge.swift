@@ -1,5 +1,4 @@
 import AppKit
-import GameController
 
 /// Game controllers connected to the Mac reach the Android app as Xbox 360 pads plugged
 /// into it, so games that support controllers use them as on a phone. As a keyboard does,
@@ -16,21 +15,27 @@ final class GamepadBridge {
     var onEditPress: ((Int) -> Bool)?
     /// Told of each state a plugged controller sends the app, while a macro records.
     var reportObserver: (([UInt8]) -> Void)?
-    private var held: [ObjectIdentifier: Set<Int>] = [:]
-    /// The HID id each controller has in Android. scrcpy keeps 1 and 2 for a keyboard and mouse.
-    private var plugged: [ObjectIdentifier: UInt16] = [:]
+    private var held: [UInt32: Set<Int>] = [:]
+    /// The HID id each controller has in Android, by its SDL id. scrcpy keeps 1 and 2 for a
+    /// keyboard and mouse.
+    private var plugged: [UInt32: UInt16] = [:]
     private var observers: [NSObjectProtocol] = []
+    private let pads = SDLGamepads.shared
 
     init(session: ScrcpySession, controls: KeyControlPlayer) {
         self.session = session
         self.controls = controls
         let center = NotificationCenter.default
         observers = [
-            center.addObserver(forName: .GCControllerDidConnect, object: nil, queue: .main) { [weak self] _ in self?.update() },
-            center.addObserver(forName: .GCControllerDidDisconnect, object: nil, queue: .main) { [weak self] _ in self?.update() },
+            center.addObserver(forName: SDLGamepads.didChange, object: nil, queue: .main) { [weak self] _ in self?.update() },
             center.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in self?.update() },
             center.addObserver(forName: NSApplication.didResignActiveNotification, object: nil, queue: .main) { [weak self] _ in self?.update() },
         ]
+        pads.onState = { [weak self] id, state in
+            guard let self, NSApp.isActive else { return }
+            self.changed(state, id: id)
+        }
+        pads.start()
         update()
     }
 
@@ -43,95 +48,86 @@ final class GamepadBridge {
     @discardableResult
     func replay(_ report: [UInt8]?) -> Bool {
         guard !plugged.isEmpty else { return false }
-        let pads = Dictionary(uniqueKeysWithValues: GCController.controllers().compactMap { controller in
-            controller.extendedGamepad.map { (ObjectIdentifier(controller), $0) }
-        })
-        for (key, id) in plugged {
-            let own = pads[key].map { NSApp.isActive ? Self.report($0) : Self.atRest } ?? Self.atRest
-            session.sendHIDInput(id: id, report: report ?? own)
+        for (id, hid) in plugged {
+            let own = pads.states[id].map { NSApp.isActive ? Self.report($0) : Self.atRest } ?? Self.atRest
+            session.sendHIDInput(id: hid, report: report ?? own)
         }
         return true
     }
 
     /// Unplugs every controller, as when the app's window closes.
     func stop() {
-        for (_, id) in plugged { session.sendHIDClose(id: id) }
+        for (_, hid) in plugged { session.sendHIDClose(id: hid) }
         plugged = [:]
-        for key in held.keys { release(key) }
-        GCController.controllers().forEach { $0.extendedGamepad?.valueChangedHandler = nil }
+        for id in held.keys { release(id) }
+        pads.onState = nil
     }
 
     /// Called again when the controls change, as they decide who gets the controller.
     func update() {
-        let wanted = GCController.controllers().filter { $0.extendedGamepad != nil }
+        let wanted = pads.ids
         let usesPad = controls?.set.usesPad == true
-        let wantedKeys = Set(wanted.map(ObjectIdentifier.init))
-        for (key, id) in plugged where !wantedKeys.contains(key) || usesPad {
-            session.sendHIDClose(id: id)
-            plugged[key] = nil
+        for (id, hid) in plugged where !wanted.contains(id) || usesPad {
+            session.sendHIDClose(id: hid)
+            plugged[id] = nil
         }
-        for controller in wanted {
-            let key = ObjectIdentifier(controller)
-            guard let pad = controller.extendedGamepad else { continue }
-            if !usesPad, plugged[key] == nil,
-               let id = (3...10).map(UInt16.init).first(where: { !plugged.values.contains($0) }) {
-                plugged[key] = id
-                session.sendHIDOpen(id: id, vendor: 0x045E, product: 0x028E, name: "Microsoft X-Box 360 Pad",
+        for id in wanted {
+            if !usesPad, plugged[id] == nil,
+               let hid = (3...10).map(UInt16.init).first(where: { !plugged.values.contains($0) }) {
+                plugged[id] = hid
+                session.sendHIDOpen(id: hid, vendor: 0x045E, product: 0x028E, name: "Microsoft X-Box 360 Pad",
                                     descriptor: Self.descriptor)
             }
-            pad.valueChangedHandler = { [weak self] pad, _ in
-                guard let self, NSApp.isActive else { return }
-                self.changed(pad, key: key)
-            }
             // Going to the back lets go of everything held; coming to the front picks up the pad as it is.
-            if let id = plugged[key] { session.sendHIDInput(id: id, report: NSApp.isActive ? Self.report(pad) : Self.atRest) }
-            if !NSApp.isActive { release(key) }
+            let state = pads.states[id] ?? SDLGamepads.State()
+            if let hid = plugged[id] { session.sendHIDInput(id: hid, report: NSApp.isActive ? Self.report(state) : Self.atRest) }
+            if !NSApp.isActive { release(id) }
         }
     }
 
-    private func changed(_ pad: GCExtendedGamepad, key: ObjectIdentifier) {
-        let pressed = Self.pressed(pad)
-        let before = held[key] ?? []
-        held[key] = pressed
+    private func changed(_ state: SDLGamepads.State, id: UInt32) {
+        let pressed = Self.pressed(state)
+        let before = held[id] ?? []
+        held[id] = pressed
         // A button pressed while the controls are edited is given to the chosen control.
         if let onEditPress {
             for code in pressed.subtracting(before) where onEditPress(code) { return }
         }
-        if let id = plugged[key] {
-            let report = Self.report(pad)
-            session.sendHIDInput(id: id, report: report)
+        if let hid = plugged[id] {
+            let report = Self.report(state)
+            session.sendHIDInput(id: hid, report: report)
             reportObserver?(report)
             return
         }
         guard let controls, controls.set.usesPad else { return }
         for code in pressed.subtracting(before) { _ = controls.key(code, down: true) }
         for code in before.subtracting(pressed) { _ = controls.key(code, down: false) }
-        controls.padStick(x: Double(pad.leftThumbstick.xAxis.value), y: Double(-pad.leftThumbstick.yAxis.value))
-        controls.padAim(x: Double(pad.rightThumbstick.xAxis.value), y: Double(-pad.rightThumbstick.yAxis.value))
+        controls.padStick(x: state.leftX, y: state.leftY)
+        controls.padAim(x: state.rightX, y: state.rightY)
     }
 
-    private func release(_ key: ObjectIdentifier) {
-        guard let controls, let before = held[key] else { return }
-        held[key] = []
+    private func release(_ id: UInt32) {
+        guard let controls, let before = held[id] else { return }
+        held[id] = []
         for code in before { _ = controls.key(code, down: false) }
         controls.padStick(x: 0, y: 0)
         controls.padAim(x: 0, y: 0)
     }
 
     /// The controller's buttons held now, as control codes. A trigger counts once it's half in.
-    private static func pressed(_ pad: GCExtendedGamepad) -> Set<Int> {
+    private static func pressed(_ state: SDLGamepads.State) -> Set<Int> {
         typealias Pad = KeyControl.Pad
         var codes = Set<Int>()
-        let buttons: [(GCControllerButtonInput?, Pad)] = [
-            (pad.buttonA, .a), (pad.buttonB, .b), (pad.buttonX, .x), (pad.buttonY, .y),
-            (pad.leftShoulder, .leftShoulder), (pad.rightShoulder, .rightShoulder),
-            (pad.leftThumbstickButton, .leftStickButton), (pad.rightThumbstickButton, .rightStickButton),
-            (pad.buttonMenu, .menu), (pad.buttonOptions, .options),
-            (pad.dpad.up, .up), (pad.dpad.down, .down), (pad.dpad.left, .left), (pad.dpad.right, .right),
+        let buttons: [(Bool, Pad)] = [
+            (state.south, .a), (state.east, .b), (state.west, .x), (state.north, .y),
+            (state.leftShoulder, .leftShoulder), (state.rightShoulder, .rightShoulder),
+            (state.leftStick, .leftStickButton), (state.rightStick, .rightStickButton),
+            (state.start, .menu), (state.back, .options),
+            (state.up, .up), (state.down, .down), (state.left, .left), (state.right, .right),
         ]
-        for (button, code) in buttons where button?.isPressed == true { codes.insert(code.rawValue) }
-        if pad.leftTrigger.value > 0.5 { codes.insert(Pad.leftTrigger.rawValue) }
-        if pad.rightTrigger.value > 0.5 { codes.insert(Pad.rightTrigger.rawValue) }
+        for (down, code) in buttons where down { codes.insert(code.rawValue) }
+        if state.leftTrigger > 0.5 { codes.insert(Pad.leftTrigger.rawValue) }
+        if state.rightTrigger > 0.5 { codes.insert(Pad.rightTrigger.rawValue) }
         return codes
     }
 
@@ -170,31 +166,19 @@ final class GamepadBridge {
         return report
     }
 
-    private static func report(_ pad: GCExtendedGamepad) -> [UInt8] {
-        // Sticks run from 0 to 65535 with the middle at 32768; down is positive, as in Android.
-        func stick(_ value: Float) -> UInt16 { UInt16(clamping: Int(32768 + Double(value) * 32767)) }
-        func trigger(_ value: Float) -> UInt16 { UInt16(clamping: Int(Double(value) * 32767)) }
+    private static func report(_ state: SDLGamepads.State) -> [UInt8] {
         var buttons: UInt16 = 0
-        let bits: [(GCControllerButtonInput?, UInt16)] = [
-            (pad.buttonA, 0x0001), (pad.buttonB, 0x0002), (pad.buttonX, 0x0008), (pad.buttonY, 0x0010),
-            (pad.leftShoulder, 0x0040), (pad.rightShoulder, 0x0080), (pad.buttonOptions, 0x0400),
-            (pad.buttonMenu, 0x0800), (pad.buttonHome, 0x1000),
-            (pad.leftThumbstickButton, 0x2000), (pad.rightThumbstickButton, 0x4000),
+        let bits: [(Bool, UInt16)] = [
+            (state.south, 0x0001), (state.east, 0x0002), (state.west, 0x0008), (state.north, 0x0010),
+            (state.leftShoulder, 0x0040), (state.rightShoulder, 0x0080), (state.back, 0x0400),
+            (state.start, 0x0800), (state.guide, 0x1000),
+            (state.leftStick, 0x2000), (state.rightStick, 0x4000),
         ]
-        for (button, bit) in bits where button?.isPressed == true { buttons |= bit }
-
+        for (down, bit) in bits where down { buttons |= bit }
         // The hat counts clockwise from 1 at the top; 0 is centered.
-        let dpad = pad.dpad
-        let up = dpad.up.isPressed, down = dpad.down.isPressed, left = dpad.left.isPressed, right = dpad.right.isPressed
-        let hat: UInt8 = up ? (right ? 2 : left ? 8 : 1) : down ? (right ? 4 : left ? 6 : 5) : right ? 3 : left ? 7 : 0
-
-        var report: [UInt8] = []
-        for value in [stick(pad.leftThumbstick.xAxis.value), stick(-pad.leftThumbstick.yAxis.value),
-                      stick(pad.rightThumbstick.xAxis.value), stick(-pad.rightThumbstick.yAxis.value),
-                      trigger(pad.leftTrigger.value), trigger(pad.rightTrigger.value), buttons] {
-            report += [UInt8(value & 0xFF), UInt8(value >> 8)]
-        }
-        report.append(hat)
-        return report
+        let hat: UInt8 = state.up ? (state.right ? 2 : state.left ? 8 : 1) : state.down ? (state.right ? 4 : state.left ? 6 : 5)
+            : state.right ? 3 : state.left ? 7 : 0
+        return report(leftX: state.leftX, leftY: state.leftY, rightX: state.rightX, rightY: state.rightY,
+                      leftTrigger: state.leftTrigger, rightTrigger: state.rightTrigger, buttons: buttons, hat: hat)
     }
 }

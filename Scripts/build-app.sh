@@ -16,6 +16,7 @@ VM=.build/vm
 # Without it the engine waits forever for a GPU while starting.
 [ -f "$VM/qemu/vulkan/MoltenVK_icd.json" ] || { echo "Missing MoltenVK: run Scripts/vm/build-moltenvk.sh." >&2; exit 1; }
 [ -f .build/webrtc/lib/libdatachannel.a ] || { echo "Missing WebRTC: run Scripts/build-webrtc.sh." >&2; exit 1; }
+[ -f .build/sdl/lib/libSDL3.a ] || { echo "Missing SDL: run Scripts/build-sdl.sh." >&2; exit 1; }
 
 mkdir -p "$CACHE"
 [ -f "$CACHE/LICENSE" ] || curl -fsSL -o "$CACHE/LICENSE" \

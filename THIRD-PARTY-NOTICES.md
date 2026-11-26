@@ -27,6 +27,7 @@ For the parts licensed under the GPL or LGPL, the complete corresponding source 
 | [libslirp](https://gitlab.freedesktop.org/slirp/libslirp) | 4.9.7 | BSD-3-Clause | <https://gitlab.freedesktop.org/slirp/libslirp> | none |
 | [Sparkle](https://sparkle-project.org) | 2.10.1 | MIT, with parts under other permissive licenses (see its LICENSE) | <https://github.com/sparkle-project/Sparkle> (tag 2.10.1) | none; updates |
 | [scrcpy](https://github.com/Genymobile/scrcpy) server | 5.0.1 | Apache-2.0 | <https://github.com/Genymobile/scrcpy> (tag v5.0.1) | `Vendor/scrcpy-server.patch`; runs inside Android |
+| [SDL](https://github.com/libsdl-org/SDL) | 3.4.20 | Zlib (`Resources/Licenses/SDL-LICENSE.txt`) | <https://github.com/libsdl-org/SDL> (tag release-3.4.20) | none; only its game controller parts, built by `Scripts/build-sdl.sh` |
 | [libdatachannel](https://github.com/paullouisageneau/libdatachannel) | 0.24.6 | MPL-2.0 | <https://github.com/paullouisageneau/libdatachannel> (tag v0.24.6) | none; the phone remote's WebRTC, built by `Scripts/build-webrtc.sh` |
 | [libjuice](https://github.com/paullouisageneau/libjuice), inside libdatachannel | b89c792 | MPL-2.0 | <https://github.com/paullouisageneau/libjuice> | none |
 | [usrsctp](https://github.com/sctplab/usrsctp), inside libdatachannel | fec583d | BSD-3-Clause | <https://github.com/sctplab/usrsctp> | none |
