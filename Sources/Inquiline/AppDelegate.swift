@@ -68,6 +68,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, SPUSta
         if offerToMoveToApplications() { return }
         watchForRemoval()
         AppLog.write("Started \(ProblemReport.version) on \(ProblemReport.mac), \(ProblemReport.macOS)")
+        // The game controllers, read here alone for every app's window.
+        SDLGamepads.shared.startHub()
         // A test copy (INQUILINE_HOME) never replaces itself.
         if AndroidRuntime.testHome == nil {
             updater = SPUStandardUpdaterController(startingUpdater: true, updaterDelegate: nil, userDriverDelegate: self)

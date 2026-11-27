@@ -385,6 +385,9 @@ final class AndroidRuntime {
     /// the game controller in the player's hands (GamepadBridge's rumble) instead.
     private func vibrateControllers() {
         _ = try? shell("[ \"$(settings get system vibrate_input_devices)\" = 1 ] || settings put system vibrate_input_devices 1")
+        // Its accelerometer is a game controller's, not the screen's: the screen doesn't turn with
+        // it, as a tablet's on a stand with rotation locked doesn't. Apps still get the side they ask for.
+        _ = try? shell("[ \"$(settings get system accelerometer_rotation)\" = 0 ] || settings put system accelerometer_rotation 0")
     }
 
     /// The name Android gives itself where a phone shows its own, set once from the old
