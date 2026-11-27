@@ -1,12 +1,14 @@
 diff --git a/server/src/main/java/com/genymobile/scrcpy/ClipboardReader.java b/server/src/main/java/com/genymobile/scrcpy/ClipboardReader.java
 new file mode 100644
-index 0000000..b6e1f58
+index 0000000..7bea627
 --- /dev/null
 +++ b/server/src/main/java/com/genymobile/scrcpy/ClipboardReader.java
-@@ -0,0 +1,47 @@
+@@ -0,0 +1,116 @@
 +package com.genymobile.scrcpy;
 +
 +import android.content.ClipData;
++import android.content.IOnPrimaryClipChangedListener;
++import android.os.Looper;
 +import android.os.IBinder;
 +import android.os.IInterface;
 +import android.util.Base64;
@@ -28,27 +30,94 @@ index 0000000..b6e1f58
 +        IBinder binder = (IBinder) serviceManager.getMethod("getService", String.class).invoke(null, "clipboard");
 +        Class<?> stub = Class.forName("android.content.IClipboard$Stub");
 +        IInterface clipboard = (IInterface) stub.getMethod("asInterface", IBinder.class).invoke(null, binder);
-+        ClipData clip = null;
-+        for (Method method : clipboard.getClass().getMethods()) {
-+            if (!method.getName().equals("getPrimaryClip")) {
-+                continue;
-+            }
-+            Class<?>[] types = method.getParameterTypes();
-+            Object[] values = new Object[types.length];
-+            int strings = 0;
-+            for (int i = 0; i < types.length; i++) {
-+                // (package, attribution tag, user, device): the shell's package, no tag, user 0,
-+                // the default device.
-+                values[i] = types[i] == String.class ? (strings++ == 0 ? "com.android.shell" : null) : 0;
-+            }
-+            clip = (ClipData) method.invoke(clipboard, values);
-+            break;
-+        }
-+        if (clip == null || clip.getItemCount() == 0 || clip.getItemAt(0).getText() == null) {
++        if (args.length > 0 && args[0].equals("watch")) {
++            watch(clipboard);
 +            return;
 +        }
++        String text = read(clipboard);
++        if (text != null) {
++            System.out.print(text);
++        }
++    }
++
++    /**
++     * Inquiline: prints the clipboard's text, a line each time something is copied, until the
++     * Mac stops listening: Android tells the shell of every copy (it may read in the background),
++     * not the server.
++     */
++    private static void watch(IInterface clipboard) throws Exception {
++        Looper.prepareMainLooper();
++        IOnPrimaryClipChangedListener listener = new IOnPrimaryClipChangedListener.Stub() {
++            @Override
++            public void dispatchPrimaryClipChanged() {
++                try {
++                    String text = read(clipboard);
++                    if (text != null) {
++                        System.out.println(text);
++                        if (System.out.checkError()) {
++                            System.exit(0);
++                        }
++                    }
++                } catch (Exception e) {
++                    // The next copy tries again.
++                }
++            }
++        };
++        for (Method method : clipboard.getClass().getMethods()) {
++            if (method.getName().equals("addPrimaryClipChangedListener")) {
++                method.invoke(clipboard, arguments(method, listener));
++                break;
++            }
++        }
++        // Ends when the Mac closes the stream.
++        Thread stdin = new Thread(() -> {
++            try {
++                while (System.in.read() >= 0) {
++                    // Nothing comes; the read ends at the end of the stream.
++                }
++            } catch (Exception e) {
++                // Ended.
++            }
++            System.exit(0);
++        });
++        stdin.setDaemon(true);
++        stdin.start();
++        Looper.loop();
++    }
++
++    /** The clipboard's text, base64, or null. */
++    private static String read(IInterface clipboard) throws Exception {
++        ClipData clip = null;
++        for (Method method : clipboard.getClass().getMethods()) {
++            if (method.getName().equals("getPrimaryClip")) {
++                clip = (ClipData) method.invoke(clipboard, arguments(method, null));
++                break;
++            }
++        }
++        if (clip == null || clip.getItemCount() == 0 || clip.getItemAt(0).getText() == null) {
++            return null;
++        }
 +        byte[] text = clip.getItemAt(0).getText().toString().getBytes(StandardCharsets.UTF_8);
-+        System.out.print(Base64.encodeToString(text, Base64.NO_WRAP));
++        return Base64.encodeToString(text, Base64.NO_WRAP);
++    }
++
++    /** (listener, package, attribution tag, user, device): the shell's package, no tag, user 0, the default device. */
++    private static Object[] arguments(Method method, Object listener) {
++        Class<?>[] types = method.getParameterTypes();
++        Object[] values = new Object[types.length];
++        int strings = 0;
++        for (int i = 0; i < types.length; i++) {
++            if (types[i] == String.class) {
++                values[i] = strings++ == 0 ? "com.android.shell" : null;
++            } else if (types[i] == int.class) {
++                values[i] = 0;
++            } else if (types[i] == boolean.class) {
++                values[i] = false;
++            } else {
++                values[i] = listener;
++            }
++        }
++        return values;
 +    }
 +}
 diff --git a/server/src/main/java/com/genymobile/scrcpy/FakeContext.java b/server/src/main/java/com/genymobile/scrcpy/FakeContext.java

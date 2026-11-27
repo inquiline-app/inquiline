@@ -41,6 +41,30 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate, 
     private var oldDisplays: Set<String> = []
     /// Plugged in once the session can take input, with the app's first picture.
     private var gamepads: GamepadBridge?
+    /// Android's copies, as they happen (ScrcpyServer.watchClipboard); closing it stops them.
+    private var clipboardWatch: Int32 = -1
+
+    /// What is copied in Android, by touch too, reaches the Mac as it is copied: from the app's
+    /// first picture, when Android is surely running, until the window closes.
+    private func followAndroidCopies() {
+        guard clipboardWatch < 0 else { return }
+        clipboardWatch = ScrcpyServer.watchClipboard({ [weak self] text in self?.copiedInAndroid(text) }, ended: { [weak self] fd in
+            DispatchQueue.main.async { if self?.clipboardWatch == fd { self?.clipboardWatch = -1 } }
+        })
+    }
+
+    /// Text copied in Android goes to the Mac's clipboard, only while this window is in front:
+    /// apps in the background must not be able to write to the Mac's clipboard.
+    private func copiedInAndroid(_ text: String) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.window.isKeyWindow, NSApp.isActive else { return }
+            let pasteboard = NSPasteboard.general
+            if pasteboard.string(forType: .string) != text {
+                pasteboard.clearContents()
+                pasteboard.setString(text, forType: .string)
+            }
+        }
+    }
 
     /// The app's Android screen follows the window, as on a desktop Android or a Mac app: a
     /// bigger window shows more of the app, at the same size, not a bigger picture. For apps
@@ -314,17 +338,7 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate, 
     private func connect(_ session: ScrcpySession) {
         displayView.session = session
         phoneInput.update(session: session)
-        session.onClipboard = { [weak self] text in
-            DispatchQueue.main.async {
-                // Background apps must not be able to write to the Mac's clipboard.
-                guard let self, self.window.isKeyWindow else { return }
-                let pasteboard = NSPasteboard.general
-                if pasteboard.string(forType: .string) != text {
-                    pasteboard.clearContents()
-                    pasteboard.setString(text, forType: .string)
-                }
-            }
-        }
+        session.onClipboard = { [weak self] text in self?.copiedInAndroid(text) }
         session.onSessionSize = { [weak self] width, height in
             self?.displayView.setDisplaySize(width: width, height: height)
             DispatchQueue.main.async {
@@ -371,6 +385,7 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate, 
                     self.gamepads = gamepads
                 }
                 if self.displayView.keyboard == nil { self.displayView.keyboard = KeyboardBridge(session: session) }
+                self.followAndroidCopies()
                 self.startPhoneRemote()
             }
         }
@@ -1471,6 +1486,10 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate, 
         fpsTimer?.invalidate()
         gamepads?.stop()
         displayView.keyboard?.stop()
+        if clipboardWatch >= 0 {
+            Darwin.shutdown(clipboardWatch, SHUT_RDWR)
+            clipboardWatch = -1
+        }
         session.stop()
     }
 }

@@ -15,6 +15,35 @@ enum ScrcpyServer {
         else { return nil }
         return String(decoding: data, as: UTF8.self)
     }
+    /// Calls `copied` on its own thread with each text copied in Android, as it is copied, until
+    /// the returned socket is shut down. Android tells the shell user of every copy, not the server.
+    /// `ended` is called when it stops, as when Android restarts.
+    static func watchClipboard(_ copied: @escaping (String) -> Void, ended: @escaping (Int32) -> Void) -> Int32 {
+        let fd: Int32
+        do {
+            fd = try AdbClient.open("shell,raw:CLASSPATH=\(remotePath) app_process / com.genymobile.scrcpy.ClipboardReader watch")
+        } catch {
+            AppLog.write("Android's copies can't be followed: \(error.localizedDescription)")
+            return -1
+        }
+        Thread.detachNewThread {
+            var pending = Data()
+            var chunk = [UInt8](repeating: 0, count: 64 * 1024)
+            while case let count = read(fd, &chunk, chunk.count), count > 0 {
+                pending.append(contentsOf: chunk[0..<count])
+                while let end = pending.firstIndex(of: 10) {
+                    let line = pending[pending.startIndex..<end]
+                    pending.removeSubrange(pending.startIndex...end)
+                    if let data = Data(base64Encoded: line), !data.isEmpty { copied(String(decoding: data, as: UTF8.self)) }
+                }
+            }
+            close(fd)
+            AppLog.write("Android's copies are no longer followed")
+            ended(fd)
+        }
+        return fd
+    }
+
     /// The server's native part, which names the GPU resource of each frame. It loads it from here.
     private static let framesLibraryPath = "/data/local/tmp/libinquiline-frames.so"
 
