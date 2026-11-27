@@ -129,7 +129,7 @@ index d7d1a76..9b5e1ed 100644
                  if (controller != null) {
                      controller.setSurfaceCapture(surfaceCapture);
 diff --git a/server/src/main/java/com/genymobile/scrcpy/control/ControlMessage.java b/server/src/main/java/com/genymobile/scrcpy/control/ControlMessage.java
-index 777873b..e5ab125 100644
+index 777873b..6590e15 100644
 --- a/server/src/main/java/com/genymobile/scrcpy/control/ControlMessage.java
 +++ b/server/src/main/java/com/genymobile/scrcpy/control/ControlMessage.java
 @@ -30,6 +30,8 @@ public final class ControlMessage {
@@ -141,11 +141,12 @@ index 777873b..e5ab125 100644
  
      public static final long SEQUENCE_INVALID = 0;
  
-@@ -58,9 +60,13 @@ public final class ControlMessage {
+@@ -58,9 +60,14 @@ public final class ControlMessage {
      private boolean on;
      private int vendorId;
      private int productId;
 +    private int country;
++    private int bus; // Inquiline: Linux's BUS_*, 0 for virtual
 +    private float[] motion; // Inquiline: acceleration (m/s²) then rotation (rad/s)
      private int width;
      private int height;
@@ -155,7 +156,7 @@ index 777873b..e5ab125 100644
      private ControlMessage() {
      }
  
-@@ -134,13 +140,20 @@ public final class ControlMessage {
+@@ -134,13 +141,20 @@ public final class ControlMessage {
          return msg;
      }
  
@@ -173,15 +174,16 @@ index 777873b..e5ab125 100644
      }
  
 -    public static ControlMessage createUhidCreate(int id, int vendorId, int productId, String name, byte[] reportDesc) {
-+    public static ControlMessage createUhidCreate(int id, int vendorId, int productId, String name, byte[] reportDesc, int country) {
++    public static ControlMessage createUhidCreate(int id, int vendorId, int productId, String name, byte[] reportDesc, int country, int bus) {
          ControlMessage msg = new ControlMessage();
          msg.type = TYPE_UHID_CREATE;
          msg.id = id;
-@@ -148,9 +161,25 @@ public final class ControlMessage {
+@@ -148,9 +162,30 @@ public final class ControlMessage {
          msg.productId = productId;
          msg.text = name;
          msg.data = reportDesc;
 +        msg.country = country;
++        msg.bus = bus;
          return msg;
      }
  
@@ -196,6 +198,10 @@ index 777873b..e5ab125 100644
 +        return msg;
 +    }
 +
++    public int getBus() {
++        return bus;
++    }
++
 +    public int getCountry() {
 +        return country;
 +    }
@@ -203,7 +209,7 @@ index 777873b..e5ab125 100644
      public static ControlMessage createUhidInput(int id, byte[] data) {
          ControlMessage msg = new ControlMessage();
          msg.type = TYPE_UHID_INPUT;
-@@ -195,6 +224,10 @@ public final class ControlMessage {
+@@ -195,6 +230,10 @@ public final class ControlMessage {
          return msg;
      }
  
@@ -215,7 +221,7 @@ index 777873b..e5ab125 100644
          return type;
      }
 diff --git a/server/src/main/java/com/genymobile/scrcpy/control/ControlMessageReader.java b/server/src/main/java/com/genymobile/scrcpy/control/ControlMessageReader.java
-index b2591d6..bc058cf 100644
+index b2591d6..df37662 100644
 --- a/server/src/main/java/com/genymobile/scrcpy/control/ControlMessageReader.java
 +++ b/server/src/main/java/com/genymobile/scrcpy/control/ControlMessageReader.java
 @@ -64,6 +64,14 @@ public class ControlMessageReader {
@@ -233,19 +239,22 @@ index b2591d6..bc058cf 100644
              default:
                  throw new ControlProtocolException("Unknown event type: " + type);
          }
-@@ -155,7 +163,9 @@ public class ControlMessageReader {
+@@ -155,7 +163,12 @@ public class ControlMessageReader {
          int productId = dis.readUnsignedShort();
          String name = parseString(1);
          byte[] data = parseByteArray(2);
 -        return ControlMessage.createUhidCreate(id, vendorId, productId, name, data);
 +        // Inquiline: the HID country code, as a real keyboard reports its layout.
 +        int country = dis.readUnsignedByte();
-+        return ControlMessage.createUhidCreate(id, vendorId, productId, name, data, country);
++        // Inquiline: the bus it says it came on (Linux's BUS_*), 0 for scrcpy's virtual one: a
++        // Bluetooth Xbox controller's driver (hid-microsoft) gives Android its rumble.
++        int bus = dis.readUnsignedByte();
++        return ControlMessage.createUhidCreate(id, vendorId, productId, name, data, country, bus);
      }
  
      private ControlMessage parseUhidInput() throws IOException {
 diff --git a/server/src/main/java/com/genymobile/scrcpy/control/Controller.java b/server/src/main/java/com/genymobile/scrcpy/control/Controller.java
-index 55d6e11..b81ff92 100644
+index 55d6e11..2e59cf3 100644
 --- a/server/src/main/java/com/genymobile/scrcpy/control/Controller.java
 +++ b/server/src/main/java/com/genymobile/scrcpy/control/Controller.java
 @@ -14,6 +14,7 @@ import com.genymobile.scrcpy.util.Ln;
@@ -292,7 +301,7 @@ index 55d6e11..b81ff92 100644
                      return true;
                  case ControlMessage.TYPE_UHID_CREATE:
 -                    getUhidManager().open(msg.getId(), msg.getVendorId(), msg.getProductId(), msg.getText(), msg.getData());
-+                    getUhidManager().open(msg.getId(), msg.getVendorId(), msg.getProductId(), msg.getText(), msg.getData(), msg.getCountry());
++                    getUhidManager().open(msg.getId(), msg.getVendorId(), msg.getProductId(), msg.getText(), msg.getData(), msg.getCountry(), msg.getBus());
 +                    return true;
 +                case ControlMessage.TYPE_MOTION:
 +                    InquilineSensors.send(msg.getMotion());
@@ -367,7 +376,7 @@ index 0000000..131cd57
 +    }
 +}
 diff --git a/server/src/main/java/com/genymobile/scrcpy/control/UhidManager.java b/server/src/main/java/com/genymobile/scrcpy/control/UhidManager.java
-index 20532c0..6f20ac5 100644
+index 20532c0..97d86d5 100644
 --- a/server/src/main/java/com/genymobile/scrcpy/control/UhidManager.java
 +++ b/server/src/main/java/com/genymobile/scrcpy/control/UhidManager.java
 @@ -55,7 +55,7 @@ public final class UhidManager {
@@ -375,7 +384,7 @@ index 20532c0..6f20ac5 100644
      }
  
 -    public void open(int id, int vendorId, int productId, String name, byte[] reportDesc) throws IOException {
-+    public void open(int id, int vendorId, int productId, String name, byte[] reportDesc, int country) throws IOException {
++    public void open(int id, int vendorId, int productId, String name, byte[] reportDesc, int country, int bus) throws IOException {
          try {
              FileDescriptor fd = Os.open("/dev/uhid", OsConstants.O_RDWR, 0);
              try {
@@ -384,7 +393,7 @@ index 20532c0..6f20ac5 100644
  
                  String phys = mustUseInputPort() ? INPUT_PORT : null;
 -                byte[] req = buildUhidCreate2Req(vendorId, productId, name, reportDesc, phys);
-+                byte[] req = buildUhidCreate2Req(vendorId, productId, name, reportDesc, phys, country);
++                byte[] req = buildUhidCreate2Req(vendorId, productId, name, reportDesc, phys, country, bus);
                  Os.write(fd, req, 0, req.length);
  
                  if (firstDevice) {
@@ -393,11 +402,16 @@ index 20532c0..6f20ac5 100644
      }
  
 -    private static byte[] buildUhidCreate2Req(int vendorId, int productId, String name, byte[] reportDesc, String phys) {
-+    private static byte[] buildUhidCreate2Req(int vendorId, int productId, String name, byte[] reportDesc, String phys, int country) {
++    private static byte[] buildUhidCreate2Req(int vendorId, int productId, String name, byte[] reportDesc, String phys, int country, int bus) {
          /*
           * struct uhid_event {
           *     uint32_t type;
-@@ -206,7 +206,7 @@ public final class UhidManager {
+@@ -202,11 +202,11 @@ public final class UhidManager {
+ 
+         buf.position(4 + 256);
+         buf.putShort((short) reportDesc.length);
+-        buf.putShort(BUS_VIRTUAL);
++        buf.putShort(bus != 0 ? (short) bus : BUS_VIRTUAL);
          buf.putInt(vendorId);
          buf.putInt(productId);
          buf.putInt(0); // version

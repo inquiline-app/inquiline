@@ -92,6 +92,9 @@ final class ScrcpySession {
     var beforeLaunch: (() -> Void)?
     /// Called on a background thread when Android's clipboard changes.
     var onClipboard: ((String) -> Void)?
+    /// Called on its own thread with what Android sent a HID device of ours (uhid's output): a
+    /// controller's rumble, a keyboard's lights.
+    var onHIDOutput: ((_ id: UInt16, _ report: [UInt8]) -> Void)?
 
     /// `restartsApp` stops the app first, so it starts again on this session's screen.
     /// Android's screen takes the window's size when it changes (sendResize), as on a desktop
@@ -201,7 +204,8 @@ final class ScrcpySession {
                 _ = try readExactly(8, from: controlFD)
             case 2: // HID output: id, then a sized payload
                 let header = try readExactly(4, from: controlFD)
-                _ = try readExactly(Int(header[2]) << 8 | Int(header[3]), from: controlFD)
+                let report = try readExactly(Int(header[2]) << 8 | Int(header[3]), from: controlFD)
+                onHIDOutput?(UInt16(header[0]) << 8 | UInt16(header[1]), [UInt8](report))
             default:
                 return
             }
@@ -352,7 +356,8 @@ final class ScrcpySession {
 
     /// Plugs a HID device into Android, on this app's display only.
     /// `country` is the HID country code a keyboard reports its layout with (0: none).
-    func sendHIDOpen(id: UInt16, vendor: UInt16, product: UInt16, name: String, descriptor: [UInt8], country: UInt8 = 0) {
+    /// `bus` is the one it says it came on, Linux's BUS_*, 0 for scrcpy's virtual one.
+    func sendHIDOpen(id: UInt16, vendor: UInt16, product: UInt16, name: String, descriptor: [UInt8], country: UInt8 = 0, bus: UInt8 = 0) {
         let nameBytes = Data(name.utf8.prefix(127))
         var message = Data([12])
         message.appendBigEndian(id)
@@ -363,6 +368,7 @@ final class ScrcpySession {
         message.appendBigEndian(UInt16(descriptor.count))
         message.append(contentsOf: descriptor)
         message.append(country)
+        message.append(bus)
         send(message)
     }
 

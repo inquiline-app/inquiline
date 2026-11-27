@@ -1,6 +1,5 @@
 #include "CMotion.h"
 #include "GamepadMotion.hpp"
-#include <math.h>
 
 static const float kDegrees = 57.29577951308232f;
 static const float kGravity = 9.80665f;
@@ -30,9 +29,6 @@ void inquiline_motion_process(InquilineMotion *motion, const float rotation[3], 
     calibrated[2] = z / kDegrees;
 }
 
-float inquiline_motion_roll(InquilineMotion *motion) {
-    float x, y, z;
-    motion->motion.GetGravity(x, y, z);
-    // Gravity points down: turned right, the controller's right side drops toward it.
-    return atan2f(x, sqrtf(y * y + z * z));
+void inquiline_motion_gravity(InquilineMotion *motion, float gravity[3]) {
+    motion->motion.GetGravity(gravity[0], gravity[1], gravity[2]);
 }

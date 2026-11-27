@@ -13,9 +13,9 @@ void inquiline_motion_destroy(InquilineMotion *motion);
 /// after the last. Gives the rotation with the gyro's bias taken away, in rad/s.
 void inquiline_motion_process(InquilineMotion *motion, const float rotation[3], const float acceleration[3],
                               float seconds, float calibrated[3]);
-/// How far the controller is turned like a steering wheel, in radians, right positive: from the
-/// gravity GamepadMotionHelpers follows with the gyro and the accelerometer together.
-float inquiline_motion_roll(InquilineMotion *motion);
+/// Which way is down for the controller, in g and SDL's axes: the gravity GamepadMotionHelpers
+/// follows with the gyro and the accelerometer together.
+void inquiline_motion_gravity(InquilineMotion *motion, float gravity[3]);
 
 #ifdef __cplusplus
 }

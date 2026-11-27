@@ -16,7 +16,8 @@ KERNEL=$(uname -r)
 MODULES="virtio_balloon nft_compat virtio_net virtio_gpu overlay loop dm_verity fuse veth bridge tun nf_tables nft_ct nft_fib_inet
 nft_fib_ipv4 nft_fib_ipv6 nft_masq nft_chain_nat nf_nat nf_conntrack ip_tables ip6_tables iptable_nat
 iptable_filter iptable_mangle ip6table_nat ip6table_filter xt_MASQUERADE xt_nat xt_comment xt_addrtype
-xt_conntrack xt_mark xt_multiport xt_tcpudp erofs squashfs uhid virtio_snd 9p 9pnet_virtio"
+xt_conntrack xt_mark xt_multiport xt_tcpudp erofs squashfs uhid virtio_snd 9p 9pnet_virtio
+hid_microsoft"
 
 mkfs.ext4 -q -F -L inquiline "$TARGET"
 mkdir -p "$ROOT"
@@ -187,8 +188,12 @@ for module in virtio_balloon dm_verity overlay virtio_gpu virtio_net veth bridge
 # The sound card, which QEMU plays on the Mac, for Android's audio server (group audio, 1005).
 chgrp -R 1005 /dev/snd && chmod 660 /dev/snd/*
 # Game controllers on the Mac reach Android as HID devices that scrcpy's server, running
-# as Android's system user, creates here.
+# as Android's system user, creates here: an Xbox Wireless Controller on Bluetooth, whose
+# Linux driver gives Android its rumble.
 chmod 666 /dev/uhid
+for module in input/ff-memless hid/hid-microsoft; do
+    insmod "/lib/modules/$(uname -r)/kernel/drivers/$module.ko" 2>/dev/null
+done
 mkdir -p /run/inquiline-input
 ip link set lo up
 ip link set eth0 up

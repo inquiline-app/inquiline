@@ -585,8 +585,7 @@ final class PhoneInput {
             // Plugged in with the first use, so a phone used only as a touchpad isn't a controller.
             if !plugged.contains(player) {
                 guard active else { return }
-                session.sendHIDOpen(id: Self.padID(player), vendor: 0x045E, product: 0x028E, name: "Microsoft X-Box 360 Pad",
-                                    descriptor: GamepadBridge.descriptor)
+                GamepadBridge.open(Self.padID(player), on: session)
                 plugged.insert(player)
             }
             // A controller's buttons go to the app in focus, which a click on the Mac doesn't change

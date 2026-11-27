@@ -128,6 +128,7 @@ final class AndroidRuntime {
         keepUnlocked()
         letHelperHostWidgets()
         nameDevice()
+        vibrateControllers()
         watchPackages()
         watchSleep()
         NotificationBridge.shared.start()
@@ -378,6 +379,12 @@ final class AndroidRuntime {
 
     private func turnOffBluetooth() {
         _ = try? shell("[ \"$(settings get global bluetooth_on)\" = 0 ] || cmd bluetooth_manager disable")
+    }
+
+    /// Android has no vibration motor of its own: as on a TV box, what a game vibrates goes to
+    /// the game controller in the player's hands (GamepadBridge's rumble) instead.
+    private func vibrateControllers() {
+        _ = try? shell("[ \"$(settings get system vibrate_input_devices)\" = 1 ] || settings put system vibrate_input_devices 1")
     }
 
     /// The name Android gives itself where a phone shows its own, set once from the old
@@ -737,7 +744,8 @@ final class AndroidRuntime {
     /// 44, 45: (tests, withdrawn.)
     /// 46: an accelerometer and a gyroscope (Vendor/sensors), which a game controller's motion
     /// moves, so games steer and aim by tilting as on a phone.
-    private static let diskRevision = 46
+    /// 47: Linux's Xbox controller driver (hid-microsoft), so a game's rumble reaches the Mac.
+    private static let diskRevision = 47
 
     private var builtInScreen: ScrcpySession.Screen { ScrcpySession.Resolution.forThisMac.screen(landscape: false) }
     /// The VM's memory map fits the 36-bit (64 GB) address space Apple's M1 and M2 give a VM:

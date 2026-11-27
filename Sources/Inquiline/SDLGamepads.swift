@@ -24,17 +24,12 @@ final class SDLGamepads {
     /// Called on the main thread with a controller whose state changed.
     var onState: ((_ id: UInt32, _ state: State) -> Void)?
     /// Called on the main thread with a controller's motion, as Android's sensors report it:
-    /// acceleration in m/s² with gravity, and rotation in rad/s with its gyro's bias taken
-    /// away (GamepadMotionHelpers), in SDL's axes, which are Android's for a device held up.
+    /// gravity in m/s², up as an accelerometer at rest reads it, followed by the gyro and the
+    /// accelerometer together so a hand's shake and jolts don't move it, and rotation in rad/s
+    /// with its gyro's bias taken away (GamepadMotionHelpers), in SDL's axes.
     var onMotion: ((_ id: UInt32, _ acceleration: [Float], _ rotation: [Float]) -> Void)?
     /// Each controller with motion sensors: its calibration, latest acceleration and last time.
     private var motion: [UInt32: (calibration: OpaquePointer, acceleration: [Float], time: UInt64)] = [:]
-    /// Each controller's turn like a steering wheel, -1 to 1, added to its left stick, as Steam
-    /// Input's gyro to joystick does: a game in controller mode steers by it with every button
-    /// still there. Its gyro switch (or none moving) lets the stick go.
-    private var tilt: [UInt32: (value: Double, seen: TimeInterval)] = [:]
-    /// Full lock at this many degrees, nothing under the first.
-    private static let tiltLock = 35.0, tiltDead = 2.0
     private(set) var states: [UInt32: State] = [:]
     private var pads: [UInt32: OpaquePointer] = [:]
     private var timer: Timer?
@@ -80,7 +75,6 @@ final class SDLGamepads {
                 let id = event.gdevice.which
                 if let pad = pads.removeValue(forKey: id) { SDL_CloseGamepad(pad) }
                 if let known = motion.removeValue(forKey: id) { inquiline_motion_destroy(known.calibration) }
-                tilt[id] = nil
                 states[id] = nil
                 plugged = true
             case SDL_EVENT_GAMEPAD_SENSOR_UPDATE:
@@ -92,16 +86,9 @@ final class SDLGamepads {
             }
         }
         if plugged { NotificationCenter.default.post(name: Self.didChange, object: nil) }
-        // A gyro switched off stops its samples: the stick goes back to the thumb alone.
-        let now = ProcessInfo.processInfo.systemUptime
-        for (id, known) in tilt where known.value != 0 && now - known.seen > 0.15 {
-            tilt[id] = (0, known.seen)
-            changed.insert(id)
-        }
         for id in changed {
             guard let pad = pads[id] else { continue }
-            var state = Self.read(pad)
-            if let turn = tilt[id]?.value, turn != 0 { state.leftX = min(max(state.leftX + turn, -1), 1) }
+            let state = Self.read(pad)
             guard state != states[id] else { continue }
             states[id] = state
             onState?(id, state)
@@ -128,27 +115,17 @@ final class SDLGamepads {
                                          seconds, &calibrated)
             }
         }
-        onMotion?(sample.which, known.acceleration, calibrated)
-        steer(sample.which, calibration: known.calibration, still: values == [0, 0, 0])
+        var down: [Float] = [0, 0, 0]
+        inquiline_motion_gravity(known.calibration, &down)
+        // Until it has one, the reading itself.
+        let up = down == [0, 0, 0] ? known.acceleration : down.map { -$0 * 9.80665 }
+        onMotion?(sample.which, up, calibrated)
     }
 
-    /// The controller's turn, as its left stick: a gyro reading exactly nothing is switched off.
-    private func steer(_ id: UInt32, calibration: OpaquePointer, still: Bool) {
-        let now = ProcessInfo.processInfo.systemUptime
-        var turn = 0.0
-        if !still {
-            let degrees = Double(inquiline_motion_roll(calibration)) * 180 / .pi
-            let past = max(abs(degrees) - Self.tiltDead, 0) / (Self.tiltLock - Self.tiltDead)
-            turn = min(past, 1) * (degrees < 0 ? -1 : 1)
-        }
-        let before = tilt[id]?.value ?? 0
-        tilt[id] = (turn, still ? tilt[id]?.seen ?? now : now)
-        guard abs(turn - before) > 0.004 || (turn == 0) != (before == 0), let pad = pads[id] else { return }
-        var state = Self.read(pad)
-        if turn != 0 { state.leftX = min(max(state.leftX + turn, -1), 1) }
-        guard state != states[id] else { return }
-        states[id] = state
-        onState?(id, state)
+    /// Rumbles a controller, its big (low) and small (high) motors from 0 to 1, for `ms`.
+    func rumble(_ id: UInt32, low: Double, high: Double, ms: UInt32) {
+        guard let pad = pads[id] else { return }
+        SDL_RumbleGamepad(pad, UInt16(min(max(low, 0), 1) * 65535), UInt16(min(max(high, 0), 1) * 65535), ms)
     }
 
     private static func read(_ pad: OpaquePointer) -> State {

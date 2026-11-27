@@ -139,6 +139,84 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate, 
     // MARK: - Keyboard controls
 
     private var controlsLabelsKey: String { "ShowControls.\(package)" }
+    /// What a controller's motion does here, for this app.
+    private var motionKey: String { "ControllerMotion.\(package)" }
+    private var motionMode: GamepadBridge.Motion {
+        UserDefaults.standard.string(forKey: motionKey).flatMap(GamepadBridge.Motion.init) ?? .off
+    }
+
+    /// How far the phone leans for the controller's lean, 0.2 to 1, for this app.
+    private var motionSensitivityKey: String { "ControllerMotionSensitivity.\(package)" }
+    private var motionSensitivity: Double {
+        let saved = UserDefaults.standard.double(forKey: motionSensitivityKey)
+        return saved > 0 ? saved : 0.5
+    }
+
+    @objc func changeMotionSensitivity(_ sender: NSSlider) {
+        UserDefaults.standard.set(sender.doubleValue, forKey: motionSensitivityKey)
+        gamepads?.tiltShare = Float(sender.doubleValue)
+    }
+
+    @objc private func showController(_ sender: Any?) {
+        guard let anchor = sender as? NSView else { return }
+        let popover = NSPopover()
+        popover.behavior = .transient
+        let controller = NSViewController()
+        controller.view = motionView()
+        popover.contentViewController = controller
+        present(popover, relativeTo: anchor.bounds, of: anchor, preferredEdge: anchor.isFlipped ? .maxY : .minY)
+    }
+
+    /// The Game Controller popover: the motion mode, its sensitivity, and Calibrate.
+    private func motionView() -> NSView {
+        func label(_ text: String) -> NSTextField {
+            let field = NSTextField(labelWithString: text)
+            field.font = .menuFont(ofSize: 0)
+            return field
+        }
+        let mode = NSPopUpButton(frame: .zero, pullsDown: false)
+        for each in GamepadBridge.Motion.allCases {
+            mode.addItem(withTitle: each.title)
+            mode.lastItem?.representedObject = each.rawValue
+        }
+        mode.selectItem(at: GamepadBridge.Motion.allCases.firstIndex(of: motionMode) ?? 0)
+        mode.target = self
+        mode.action = #selector(chooseMotion(_:))
+        let slider = NSSlider(value: motionSensitivity, minValue: 0.2, maxValue: 1, target: self,
+                              action: #selector(changeMotionSensitivity(_:)))
+        slider.isContinuous = true
+        let calibrate = NSButton(title: "Calibrate", target: self, action: #selector(calibrateMotion(_:)))
+        calibrate.toolTip = "Takes how the controller is held now as level, as a game's own calibration does"
+        let grid = NSGridView(views: [[label("Motion"), mode], [label("Sensitivity"), slider], [NSGridCell.emptyContentView, calibrate]])
+        grid.rowSpacing = 8
+        grid.columnSpacing = 10
+        grid.column(at: 0).xPlacement = .trailing
+        grid.translatesAutoresizingMaskIntoConstraints = false
+        let holder = NSView()
+        holder.addSubview(grid)
+        NSLayoutConstraint.activate([
+            grid.leadingAnchor.constraint(equalTo: holder.leadingAnchor, constant: 16),
+            grid.trailingAnchor.constraint(equalTo: holder.trailingAnchor, constant: -16),
+            grid.topAnchor.constraint(equalTo: holder.topAnchor, constant: 14),
+            grid.bottomAnchor.constraint(equalTo: holder.bottomAnchor, constant: -14),
+            slider.widthAnchor.constraint(equalToConstant: 160),
+        ])
+        return holder
+    }
+
+    /// The controller's up when the player chose level, for this app.
+    private var motionLevelKey: String { "ControllerMotionLevel.\(package)" }
+
+    @objc func calibrateMotion(_ sender: Any?) {
+        guard let level = gamepads?.calibrate() else { return }
+        UserDefaults.standard.set(level, forKey: motionLevelKey)
+    }
+
+    @objc func chooseMotion(_ sender: NSPopUpButton) {
+        guard let raw = sender.selectedItem?.representedObject as? String, let mode = GamepadBridge.Motion(rawValue: raw) else { return }
+        UserDefaults.standard.set(mode.rawValue, forKey: motionKey)
+        gamepads?.motion = mode
+    }
 
     private func setUpControls() {
         let set = KeyControlSet.load(package: package)
@@ -285,6 +363,9 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate, 
                 self.launchScreen.removeFromSuperview()
                 if self.gamepads == nil {
                     let gamepads = GamepadBridge(session: session, controls: self.displayView.controls)
+                    gamepads.motion = self.motionMode
+                    gamepads.tiltShare = Float(self.motionSensitivity)
+                    gamepads.level = UserDefaults.standard.array(forKey: self.motionLevelKey) as? [Float]
                     self.displayView.controls.playPad = { [weak gamepads] report in gamepads?.replay(report) }
                     gamepads.onEditPress = { [weak self] code in self?.overlay.padPressed(code) ?? false }
                     self.gamepads = gamepads
@@ -594,6 +675,7 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate, 
     private static let muteItem = NSToolbarItem.Identifier("mute")
     private static let rotateItem = NSToolbarItem.Identifier("rotate")
     private static let controlsItem = NSToolbarItem.Identifier("controls")
+    private static let controllerItem = NSToolbarItem.Identifier("controller")
     private static let clearCacheItem = NSToolbarItem.Identifier("clearCache")
     private static let clearDataItem = NSToolbarItem.Identifier("clearData")
     private static let settingsItem = NSToolbarItem.Identifier("settings")
@@ -650,7 +732,7 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate, 
                 self.showLoading(true)
             }
         }
-        let toolbar = NSToolbar(identifier: "AppWindowToolbar7")
+        let toolbar = NSToolbar(identifier: "AppWindowToolbar8")
         toolbar.delegate = self
         toolbar.displayMode = .iconOnly
         toolbar.allowsUserCustomization = true
@@ -663,7 +745,7 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate, 
         // The space keeps the buttons clear of the window's rounded corner. Android's Settings
         // is no app to set up or clear.
         package == AppShortcuts.settingsPackage ? [.flexibleSpace, Self.rotateItem, .space]
-            : [.flexibleSpace, Self.fpsItem, Self.assistantItem, Self.captureItem, Self.phoneItem, Self.controlsItem, Self.muteItem, Self.rotateItem,
+            : [.flexibleSpace, Self.fpsItem, Self.assistantItem, Self.captureItem, Self.phoneItem, Self.controlsItem, Self.controllerItem, Self.muteItem, Self.rotateItem,
                Self.settingsItem, .space]
     }
 
@@ -671,7 +753,7 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate, 
         // Clearing is in App Settings and the app's menu; these are there for those who want
         // them at hand.
         package == AppShortcuts.settingsPackage ? [.flexibleSpace, .space, Self.rotateItem]
-            : [.flexibleSpace, .space, Self.fpsItem, Self.assistantItem, Self.captureItem, Self.phoneItem, Self.controlsItem, Self.muteItem, Self.rotateItem,
+            : [.flexibleSpace, .space, Self.fpsItem, Self.assistantItem, Self.captureItem, Self.phoneItem, Self.controlsItem, Self.controllerItem, Self.muteItem, Self.rotateItem,
                Self.settingsItem, Self.clearCacheItem, Self.clearDataItem]
     }
 
@@ -733,6 +815,14 @@ final class AppWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate, 
         case Self.fpsItem:
             item.label = "FPS"
             item.view = fpsLabel
+        case Self.controllerItem:
+            // What a game controller's motion does here, in a popover as Sound's.
+            item.label = "Game Controller"
+            let button = NSButton(image: NSImage(systemSymbolName: "gamecontroller", accessibilityDescription: "Game Controller")!,
+                                  target: self, action: #selector(showController(_:)))
+            button.bezelStyle = .toolbar
+            item.view = button
+            item.toolTip = "Game Controller"
         case Self.muteItem:
             item.label = "Sound"
             // A button of its own, so the sound popover can point at it.
